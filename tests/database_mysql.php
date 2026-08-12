@@ -7,7 +7,7 @@ require dirname(__DIR__) . '/bootstrap.php';
 use App\Core\Database\DatabaseFactory;
 
 try {
-    $adapter = DatabaseFactory::createWithInitialization($config, false);
+    $adapter = DatabaseFactory::createWithInitialization($config, true);
     $report = $adapter->validate();
     $errors = array_values(array_filter($report['errors'] ?? []));
 
