@@ -1,0 +1,26 @@
+{
+  "name": "UDA Manager",
+  "short_name": "UDA",
+  "description": "Piattaforma di supporto didattico per gestire UDA, rubriche, test e pubblicazioni Classroom/Kahoot/Socrative.",
+  "lang": "it-IT",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#0f5f9f",
+  "background_color": "#ffffff",
+  "categories": ["education", "productivity"],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

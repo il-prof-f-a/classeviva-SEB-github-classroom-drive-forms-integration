@@ -1,0 +1,5 @@
+argomento,tipo,domanda,risposta_attesa,parole_chiave,difficolta,tempo_risposta_min,ordine_consigliato,note
+Argomento Esempio,aperta,"Prima domanda a risposta aperta?","Questa è la risposta che ti aspetti dallo studente. Più è dettagliata, migliore sarà la valutazione.","parola1;parola2;concetto3",3,5,1,"Note opzionali per questa domanda"
+Argomento Esempio,multipla,"Domanda a scelta multipla (usa | per separare risposte, * per corretta)?","Opzione A|Opzione B corretta*|Opzione C|Opzione D","concetto;tema",2,2,2,"Per multiple usa formato: risposta1|risposta2*|risposta3"
+Altro Argomento,aperta,"Seconda domanda aperta?","Risposta attesa per la seconda domanda","keyword1;keyword2",4,8,3,"Domande più difficili richiedono più tempo"
+Altro Argomento,vero_falso,"Affermazione da valutare come vera o falsa","true","concetto",1,1,4,"Per vero/falso usa 'true' o 'false'"

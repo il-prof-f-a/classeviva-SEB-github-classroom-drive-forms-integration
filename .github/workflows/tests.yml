@@ -1,0 +1,50 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  php:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: uda_test
+          MYSQL_USER: uda_test
+          MYSQL_PASSWORD: uda_test_password
+          MYSQL_ROOT_PASSWORD: root_test_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot_test_password --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: curl, dom, fileinfo, gd, intl, mbstring, openssl, pdo_mysql, simplexml, xml, xmlreader, xmlwriter, zip
+          coverage: none
+      - run: composer validate --strict
+      - run: composer install --no-interaction --no-progress --prefer-dist
+      - run: composer test
+        env:
+          TEST_MYSQL: 'true'
+          APP_ENV: testing
+          APP_DEBUG: 'false'
+          APP_URL: http://localhost:8080
+          ADMIN_EMAILS: email@email.it
+          DB_TYPE: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: '3306'
+          DB_DATABASE: uda_test
+          DB_USERNAME: uda_test
+          DB_PASSWORD: uda_test_password
+          DB_AUTO_INITIALIZE: 'true'
+          DB_AUTO_REPAIR: 'true'
+          ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef

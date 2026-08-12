@@ -1,0 +1,54 @@
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: uda_system
+      MYSQL_USER: uda_user
+      MYSQL_PASSWORD: uda_local_password
+      MYSQL_ROOT_PASSWORD: uda_local_root_password
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  app:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: ./config/.env
+        required: false
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      APP_URL: http://localhost:${APP_PORT:-8080}
+      GOOGLE_LOGIN_REDIRECT_URI: http://localhost:${APP_PORT:-8080}/public/oauth_callback.php
+      GOOGLE_REDIRECT_URI: http://localhost:${APP_PORT:-8080}/public/google_auth.php
+      DB_TYPE: mysql
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_DATABASE: uda_system
+      DB_USERNAME: uda_user
+      DB_PASSWORD: uda_local_password
+      DB_AUTO_INITIALIZE: "true"
+      DB_AUTO_REPAIR: "true"
+    ports:
+      - "${APP_PORT:-8080}:80"
+    volumes:
+      - ./config:/var/www/html/config:ro
+      - app_storage:/var/www/html/storage
+
+volumes:
+  app_storage:
+  mysql_data:

@@ -1,0 +1,13 @@
+# Blocca accesso HTTP diretto al database
+# Ma permette a PHP di leggere/scrivere il file Excel
+
+<IfModule mod_authz_core.c>
+    # Apache 2.4+
+    Require all denied
+</IfModule>
+
+<IfModule !mod_authz_core.c>
+    # Apache 2.2
+    Order deny,allow
+    Deny from all
+</IfModule>

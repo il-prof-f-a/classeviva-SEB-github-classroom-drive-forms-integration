@@ -1,0 +1,39 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+config/.env
+config/config.yaml
+config/google_credentials.json
+config/google_token.json
+config/*token*.json
+config/*credential*.json
+!config/google_credentials.example.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Runtime data
+*.part
+*.log
+*.sql
+*.db
+*.sqlite
+*.sqlite3
+database/*.xlsx
+!database/*.example.xlsx
+database/backup/
+database/export/
+/storage/*
+!/storage/
+!/storage/.htaccess
+!/storage/template_obiettivi.xlsx
+/public/storage/
+
+# Rebuildable dependencies and legacy staging material
+vendor/
+google*.html
+templates/*.seb
+_todelete/
+*connessione*remot*.txt

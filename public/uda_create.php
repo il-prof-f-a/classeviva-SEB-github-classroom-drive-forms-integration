@@ -1,0 +1,2081 @@
+<?php
+
+session_start();
+
+error_reporting(E_ALL);
+
+$config = require_once __DIR__ . '/../bootstrap.php';
+
+use App\Core\UDAManager;
+use App\Core\Database\DatabaseFactory;
+use App\Integration\ClasseVivaAPI;
+
+$udaManager = new UDAManager($config);
+$dbAdapter = DatabaseFactory::createWithInitialization($config, true);
+$pickerApiKey = $_ENV['GOOGLE_API_KEY'] ?? '';
+$pickerClientId = $config['google']['oauth_client_id'] ?? '';
+$driveRootId = trim($config['google']['drive']['root_folder_id'] ?? '');
+$driveRootConfigured = $driveRootId !== '';
+$allObiettivi = $dbAdapter->findAll('OBIETTIVI');
+
+function extractGoogleFormIdFromValue(string $value): ?string
+{
+    $value = trim($value);
+    if ($value === '') {
+        return null;
+    }
+
+    if (preg_match('/^[a-zA-Z0-9_-]{20,}$/', $value)) {
+        return $value;
+    }
+
+    $patterns = [
+        '/forms\/d\/e\/([a-zA-Z0-9_-]+)\/viewform/i',
+        '/forms\/d\/([a-zA-Z0-9_-]+)\/edit/i',
+        '/forms\/d\/([a-zA-Z0-9_-]+)/i'
+    ];
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $value, $matches)) {
+            return $matches[1] ?? null;
+        }
+    }
+
+    return null;
+}
+
+// ID UDA temporaneo per import domande durante il wizard (riciclato per sessione corrente)
+$tempUdaId = $_SESSION['uda_create_temp_id'] ?? ('UDA_TMP_' . session_id());
+$_SESSION['uda_create_temp_id'] = $tempUdaId;
+$domandeTempCount = count($dbAdapter->findWhere('DOMANDE_INTERROGAZIONE', ['id_uda' => $tempUdaId]));
+
+$cvClassSubjects = [];
+try {
+    $cvApi = new ClasseVivaAPI($config);
+    $classes = $cvApi->getClassesWithTeacherSubjects();
+    foreach ($classes as $class) {
+        $classId = $class['id'] ?? $class['classId'] ?? '';
+        $className = $class['name'] ?? $class['className'] ?? '';
+        $subjects = $class['subjects'] ?? [];
+        foreach ($subjects as $sub) {
+            $cvClassSubjects[] = [
+                'classId' => $classId,
+                'className' => $className,
+                'subjectId' => $sub['id'] ?? $sub['subjectId'] ?? '',
+                'subjectName' => $sub['name'] ?? $sub['subjectName'] ?? $sub['subjectDesc'] ?? ''
+            ];
+        }
+    }
+} catch (\Throwable $e) {
+    // in caso di errore si prosegue con inserimento manuale
+}
+
+$error_message = null;
+$success_message = null;
+
+// Gestione POST per la creazione della UDA
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'create_uda') {
+
+    try {
+        // 1. Dati base UDA (Step 1)
+        $udaId = 'UDA_' . date('Ymd') . '_' . uniqid();
+
+        $udaData = [
+            'id_uda' => $udaId,
+            'titolo' => $_POST['titolo'] ?? '',
+            'argomento' => $_POST['argomento'] ?? '',
+            'disciplina' => $_POST['disciplina'] ?? '',
+            'metodologia' => $_POST['metodologia'] ?? '',
+            'anno_scolastico' => $_POST['anno_scolastico'] ?? '',
+            'data_inizio' => $_POST['data_inizio'] ?? null,
+            'data_fine' => $_POST['data_fine'] ?? null,
+            'durata_ore' => intval($_POST['durata_ore'] ?? 0),
+            'progetto' => $_POST['progetto'] ?? '',
+            'descrizione' => $_POST['descrizione'] ?? '',
+            'note' => $_POST['note'] ?? '',
+            'classi_target' => $_POST['classi_target'] ?? '',
+            'stato' => $_POST['stato'] ?? 'bozza'
+        ];
+
+        // Validazione campi obbligatori
+        if (empty($udaData['titolo']) || empty($udaData['argomento'])) {
+            throw new Exception("I campi Titolo e Argomento sono obbligatori.");
+        }
+
+        // Inserisci UDA nel database
+        $dbAdapter->insertRow('UDA_ANAGRAFICA', $udaData);
+
+        // Se ci sono domande importate sul temp ID, riassegnale al nuovo ID
+        $tempId = $_SESSION['uda_create_temp_id'] ?? null;
+        if ($tempId) {
+            $domandeTemp = $dbAdapter->findWhere('DOMANDE_INTERROGAZIONE', ['id_uda' => $tempId]);
+            foreach ($domandeTemp as $d) {
+                $dbAdapter->updateRow('DOMANDE_INTERROGAZIONE', 'id_domanda', $d['id_domanda'], array_merge($d, ['id_uda' => $udaId]));
+            }
+            // rigenera temp id per la prossima creazione
+            $_SESSION['uda_create_temp_id'] = 'UDA_TMP_' . session_id() . '_' . uniqid();
+        }
+
+        // 2. Materiali (Step 2 - opzionale)
+        if (isset($_POST['materiali_nome']) && is_array($_POST['materiali_nome'])) {
+            foreach ($_POST['materiali_nome'] as $index => $nome) {
+                if (!empty($nome)) {
+                    $materialId = 'MAT_' . uniqid();
+                    $dbAdapter->insertRow('MATERIALI', [
+                        'id_materiale' => $materialId,
+                        'id_uda' => $udaId,
+                        'nome' => $nome,
+                        'tipo_materiale' => $_POST['materiali_tipo'][$index] ?? 'documento',
+                        'url_drive' => $_POST['materiali_url'][$index] ?? '',
+                        'file_id_drive' => $_POST['materiali_file_id'][$index] ?? '',
+                        'descrizione' => $_POST['materiali_descrizione'][$index] ?? '',
+                        'data_creazione' => date('Y-m-d H:i:s')
+                    ]);
+                }
+            }
+        }
+
+        // 3. Obiettivi (Step 3 - opzionale)
+        if (isset($_POST['obiettivi_descrizione']) && is_array($_POST['obiettivi_descrizione'])) {
+            foreach ($_POST['obiettivi_descrizione'] as $index => $descrizione) {
+                if (!empty($descrizione)) {
+                    $obiettivoId = 'OBJ_' . uniqid();
+                    $dbAdapter->insertRow('OBIETTIVI', [
+                        'id_obiettivo' => $obiettivoId,
+                        'id_uda' => $udaId,
+                        'tipo_obiettivo' => $_POST['obiettivi_tipo'][$index] ?? 'disciplinare',
+                        'codice' => $_POST['obiettivi_codice'][$index] ?? '',
+                        'descrizione' => $descrizione,
+                        'competenza' => $_POST['obiettivi_competenza'][$index] ?? '',
+                        'livello_tassonomia' => intval($_POST['obiettivi_livello'][$index] ?? 1),
+                        'peso' => intval($_POST['obiettivi_peso'][$index] ?? 10)
+                    ]);
+                }
+            }
+        }
+
+        // 4. Test (Step 4 - opzionale)
+        if (isset($_POST['test_nome']) && is_array($_POST['test_nome'])) {
+            foreach ($_POST['test_nome'] as $index => $nome) {
+                if (!empty($nome)) {
+                    $testId = 'TEST_' . uniqid();
+                    $platform = $_POST['test_piattaforma'][$index] ?? 'google-forms';
+                    $urlStud = $_POST['test_url_studenti'][$index] ?? ($_POST['test_url'][$index] ?? '');
+                    $urlDoc = $_POST['test_url_docente'][$index] ?? '';
+                    $urlMain = $_POST['test_url'][$index] ?? $urlStud;
+                    $formId = '';
+                    if ($platform === 'google-forms') {
+                        $formId = extractGoogleFormIdFromValue((string)$urlDoc)
+                            ?? extractGoogleFormIdFromValue((string)$urlStud)
+                            ?? extractGoogleFormIdFromValue((string)$urlMain)
+                            ?? '';
+                    }
+                    $dbAdapter->insertRow('TEST', [
+                        'id_test' => $testId,
+                        'id_uda' => $udaId,
+                        'nome' => $nome,
+                        'descrizione' => $_POST['test_descrizione'][$index] ?? '',
+                        'tipo_test' => $_POST['test_tipo'][$index] ?? 'finale',
+                        'piattaforma' => $platform,
+                        'url' => $urlStud,
+                        'url_studenti' => $urlStud,
+                        'url_docente' => $urlDoc,
+                        'id_esterno' => $formId,
+                        'num_domande' => intval($_POST['test_domande'][$index] ?? 0),
+                        'durata_minuti' => intval($_POST['test_durata'][$index] ?? 0),
+                        'punteggio_max' => floatval($_POST['test_punti'][$index] ?? 100),
+                        'pubblicato' => 'NO',
+                        'classroom_course_id' => $_POST['test_classroom_course_id'][$index] ?? '',
+                        'classroom_assignment_id' => $_POST['test_classroom_assignment_id'][$index] ?? '',
+                        'classroom_topic_id' => $_POST['test_classroom_topic_id'][$index] ?? ''
+                    ]);
+                }
+            }
+        }
+
+        // 5. Domande (Step 5 - opzionale)
+        if (isset($_POST['domanda_testo']) && is_array($_POST['domanda_testo'])) {
+            foreach ($_POST['domanda_testo'] as $index => $testo) {
+                if (!empty($testo)) {
+                    $domandaId = 'DOM_' . uniqid();
+                    $dbAdapter->insertRow('DOMANDE_INTERROGAZIONE', [
+                        'id_domanda' => $domandaId,
+                        'id_uda' => $udaId,
+                        'argomento' => $_POST['domanda_argomento'][$index] ?? '',
+                        'domanda' => $testo,
+                        'risposta_attesa' => $_POST['domanda_suggerimenti'][$index] ?? '',
+                        'parole_chiave' => $_POST['domanda_parole'][$index] ?? '',
+                        'difficolta' => $_POST['domanda_livello'][$index] ?? 3,
+                        'tempo_risposta_min' => $_POST['domanda_tempo'][$index] ?? 3,
+                        'collegata_a' => $_POST['domanda_collegata'][$index] ?? '',
+                        'ordine_consigliato' => $_POST['domanda_ordine'][$index] ?? 0,
+                        'note' => $_POST['domanda_note'][$index] ?? ''
+                    ]);
+                }
+            }
+        }
+
+        // 6. Classi (Step 6 - opzionale)
+        if (isset($_POST['classe_id']) && is_array($_POST['classe_id'])) {
+            $assignedKeys = [];
+            foreach ($_POST['classe_id'] as $index => $classeId) {
+                if (!empty($classeId)) {
+                    $materiaId = $_POST['classe_materia'][$index] ?? '';
+                    $assignmentKey = (string)$classeId . '|' . (string)$materiaId;
+                    if (isset($assignedKeys[$assignmentKey])) {
+                        continue;
+                    }
+                    $assegnazioneId = 'ASSEGN_' . uniqid();
+                    $dbAdapter->insertRow('CLASSI_ASSEGNATE', [
+                        'id_assegnazione' => $assegnazioneId,
+                        'id_uda' => $udaId,
+                        'id_classe' => $classeId,
+                        'nome_classe' => $_POST['classe_nome'][$index] ?? '',
+                        'id_materia_cv' => $materiaId,
+                        'nome_materia' => $_POST['classe_materia_nome'][$index] ?? '',
+                        'data_assegnazione' => date('Y-m-d H:i:s'),
+                        'pubblicato_classroom' => 0
+                    ]);
+                    $assignedKeys[$assignmentKey] = true;
+                }
+            }
+        }
+
+        // Redirect alla pagina di visualizzazione della nuova UDA
+        header("Location: uda_view.php?id=" . urlencode($udaId) . "&msg=create_success");
+        exit;
+
+    } catch (Exception $e) {
+        $error_message = "Errore durante la creazione della UDA: " . $e->getMessage();
+        error_log("Errore creazione UDA: " . $e->getMessage());
+    }
+}
+
+// Anno scolastico corrente (agosto-luglio) e successivo
+$currentYear = (int)date('Y');
+$currentMonth = (int)date('n');
+$startYear = $currentMonth >= 8 ? $currentYear : ($currentYear - 1);
+$currentAcademicYear = $startYear . '-' . substr((string)($startYear + 1), -2);
+$nextAcademicYear = ($startYear + 1) . '-' . substr((string)($startYear + 2), -2);
+
+// Carica classi disponibili da ClasseViva
+$allClasses = [];
+try {
+    $classiviva = $dbAdapter->findAll('CLASSI_CLASSEVIVA');
+    $allClasses = $classiviva;
+} catch (Exception $e) {
+    error_log("Errore caricamento classi: " . $e->getMessage());
+}
+
+?>
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crea Nuova UDA - Sistema Gestione UDA</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <style>
+        .step {
+            display: none;
+        }
+        .step.active {
+            display: block;
+        }
+        .step-indicator {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2rem;
+            position: relative;
+            overflow-x: auto;
+            padding-bottom: 1rem;
+        }
+        .step-indicator::before {
+            content: '';
+            position: absolute;
+            top: 20px;
+            left: 8%;
+            right: 8%;
+            height: 2px;
+            background: #dee2e6;
+            z-index: -1;
+        }
+        .step-indicator .step-item {
+            flex: 0 0 auto;
+            min-width: 120px;
+            text-align: center;
+            padding: 0.5rem;
+            position: relative;
+            cursor: pointer;
+        }
+        .step-indicator .step-item .step-number {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            line-height: 40px;
+            border-radius: 50%;
+            background: #e9ecef;
+            color: #6c757d;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+        .step-indicator .step-item.completed .step-number {
+            background: #198754;
+            color: white;
+        }
+        .step-indicator .step-item.active .step-number {
+            background: #0d6efd;
+            color: white;
+        }
+        .step-indicator .step-item.skipped .step-number {
+            background: #ffc107;
+            color: #000;
+        }
+        .step-indicator .step-item small {
+            display: block;
+            font-size: 0.75rem;
+        }
+        .dynamic-item {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 0.375rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .btn-skip {
+            background-color: #ffc107;
+            color: #000;
+            border-color: #ffc107;
+        }
+        .btn-skip:hover {
+            background-color: #ffca2c;
+            border-color: #ffc720;
+            color: #000;
+        }
+    </style>
+</head>
+<body class="bg-light">
+    <?php
+    $pageTitle = '<i class="bi bi-magic"></i> Creazione Guidata UDA';
+    include __DIR__ . '/partials/app_header.php';
+    ?>
+
+    <div class="container">
+        <?php if ($error_message): ?>
+            <div class="alert alert-danger alert-dismissible fade show">
+                <i class="bi bi-exclamation-triangle"></i> <?= htmlspecialchars($error_message) ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        <?php endif; ?>
+
+        <div class="card shadow">
+            <div class="card-body">
+                <!-- Step Indicator -->
+                <div class="step-indicator">
+                    <div class="step-item active" data-step="1" onclick="goToStep(1)">
+                        <div class="step-number">1</div>
+                        <small>Info Generali</small>
+                    </div>
+                    <div class="step-item" data-step="2" onclick="goToStep(2)">
+                        <div class="step-number">2</div>
+                        <small>Classi</small>
+                    </div>
+                    <div class="step-item" data-step="3" onclick="goToStep(3)">
+                        <div class="step-number">3</div>
+                        <small>Materiali</small>
+                    </div>
+                    <div class="step-item" data-step="4" onclick="goToStep(4)">
+                        <div class="step-number">4</div>
+                        <small>Obiettivi</small>
+                    </div>
+                    <div class="step-item" data-step="5" onclick="goToStep(5)">
+                        <div class="step-number">5</div>
+                        <small>Domande</small>
+                    </div>
+                    <div class="step-item" data-step="6" onclick="goToStep(6)">
+                        <div class="step-number">6</div>
+                        <small>Test</small>
+                    </div>
+                    <div class="step-item" data-step="7" onclick="goToStep(7)">
+                        <div class="step-number">7</div>
+                        <small>Riepilogo</small>
+                    </div>
+                </div>
+
+                <form method="POST" id="udaForm">
+                    <input type="hidden" name="action" value="create_uda">
+
+                    <!-- Step 1: Informazioni Generali (OBBLIGATORIO) -->
+                    <div class="step active" data-step="1">
+                        <h3 class="mb-4"><i class="bi bi-info-circle text-primary"></i> Informazioni Generali</h3>
+                        <p class="text-muted">Inserisci le informazioni di base dell'UDA. I campi con * sono obbligatori.</p>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Titolo UDA *</label>
+                                <input type="text" class="form-control" name="titolo" required>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Argomento *</label>
+                                <input type="text" class="form-control" name="argomento" required>
+                                <div class="mt-2">
+                                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="openWizardClassroomImportModal()">
+                                        <i class="bi bi-google"></i> Importa da Argomento Classroom
+                                    </button>
+                                    <small class="text-muted ms-2">Compila automaticamente Materiali e Test negli step successivi.</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Disciplina</label>
+                                <input list="disciplineList" class="form-control" name="disciplina" placeholder="Seleziona o digita...">
+                                <datalist id="disciplineList">
+                                    <option value="Sistemi e reti">
+                                    <option value="Telecomunicazioni">
+                                    <option value="GPOI">
+                                    <option value="Informatica">
+                                    <option value="TPSIT">
+                                    <option value="Matematica">
+                                    <option value="Inglese">
+                                    <option value="Italiano">
+                                    <option value="Storia">
+                                    <option value="Educazione Civica">
+                                    <?php
+                                    if (!empty($cvClassSubjects)) {
+                                        $uniqueSubs = [];
+                                        foreach ($cvClassSubjects as $cs) {
+                                            $name = trim($cs['subjectName']);
+                                            if ($name !== '' && !isset($uniqueSubs[$name])) {
+                                                $uniqueSubs[$name] = true;
+                                                echo '<option value="' . htmlspecialchars($name) . '"></option>';
+                                            }
+                                        }
+                                    }
+                                    ?>
+                                </datalist>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Metodologia</label>
+                                <input list="metodologiaList" class="form-control" name="metodologia" placeholder="Seleziona o digita...">
+                                <datalist id="metodologiaList">
+                                    <option value="Metodologie di insegnamento innovative">
+                                    <option value="Flipped classroom">
+                                    <option value="Jigsaw">
+                                    <option value="Debate">
+                                    <option value="Didattica laboratoriale">
+                                    <option value="PBL">
+                                    <option value="pbl">
+                                    <option value="Inquiry guidato">
+                                </datalist>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Anno Scolastico</label>
+                                <select class="form-select" name="anno_scolastico">
+                                    <option value="<?= htmlspecialchars($currentAcademicYear) ?>" selected><?= htmlspecialchars($currentAcademicYear) ?></option>
+                                    <option value="<?= htmlspecialchars($nextAcademicYear) ?>"><?= htmlspecialchars($nextAcademicYear) ?></option>
+                                </select>
+                                <small class="form-text text-muted">Anno corrente e successivo.</small>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Data Inizio</label>
+                                <input type="date" class="form-control" name="data_inizio">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Data Fine</label>
+                                <input type="date" class="form-control" name="data_fine">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Durata (ore)</label>
+                                <input type="number" class="form-control" name="durata_ore" min="0">
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Progetto</label>
+                            <input type="text" class="form-control" name="progetto" placeholder="es. PCTO, PON, etc.">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Descrizione</label>
+                            <textarea class="form-control" name="descrizione" rows="3" placeholder="Descrizione generale dell'UDA"></textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Note / Prerequisiti</label>
+                            <textarea class="form-control" name="note" rows="2" placeholder="Note aggiuntive o prerequisiti richiesti per questa UDA"></textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Classi Target / Destinatari</label>
+                            <input type="text" class="form-control" name="classi_target" placeholder="Es: Classe 3A, 3B, 4A">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Stato</label>
+                            <select class="form-select" name="stato">
+                                <option value="bozza" selected>Bozza</option>
+                                <option value="attiva">Attiva</option>
+                                <option value="completata">Completata</option>
+                                <option value="archiviata">Archiviata</option>
+                            </select>
+                            <small class="form-text text-muted">Di default l'UDA viene creata come "Bozza"</small>
+                        </div>
+
+                        <div class="d-flex justify-content-end">
+                            <button type="button" class="btn btn-primary btn-lg" onclick="nextStep(1)">
+                                Avanti <i class="bi bi-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Step 2: Classi Assegnate (OPZIONALE) -->
+                    <div class="step" data-step="2">
+                        <h3 class="mb-4"><i class="bi bi-people" style="color: #fd7e14;"></i> Classi Assegnate</h3>
+                        <p class="text-muted">Assegna questa UDA a una o più classi (opzionale).</p>
+
+                        <div id="classi-container">
+                            <!-- Template classe verrà inserito qui -->
+                        </div>
+
+                        <button type="button" class="btn btn-outline-primary btn-sm mb-3" onclick="addClasse()">
+                            <i class="bi bi-plus-circle"></i> Aggiungi Classe
+                        </button>
+
+                        <div class="d-flex justify-content-between">
+                            <button type="button" class="btn btn-secondary btn-lg" onclick="prevStep(2)">
+                                <i class="bi bi-arrow-left"></i> Indietro
+                            </button>
+                            <div>
+                                <button type="button" class="btn btn-skip btn-lg me-2" onclick="skipStep(2)">
+                                    Salta <i class="bi bi-skip-forward"></i>
+                                </button>
+                                <button type="button" class="btn btn-primary btn-lg" onclick="nextStep(2)">
+                                    Avanti <i class="bi bi-arrow-right"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Step 3: Materiali (OPZIONALE) -->
+                    <div class="step" data-step="3">
+                        <h3 class="mb-4"><i class="bi bi-folder-fill text-info"></i> Materiali Didattici</h3>
+                        <p class="text-muted">Aggiungi materiali didattici (documenti, link, video, ecc.) - opzionale.</p>
+
+                        <div id="materiali-container">
+                            <!-- Template materiali verrà inserito qui -->
+                        </div>
+
+                        <button type="button" class="btn btn-outline-info btn-sm mb-2" onclick="addMaterial()">
+                            <i class="bi bi-plus-circle"></i> Aggiungi Materiale
+                        </button>
+                        <div class="small text-muted mb-2">
+                            <i class="bi bi-gear"></i>
+                            Imposta la cartella Drive in
+                            <a href="/uda-system/public/user_integrations.php#google-section">Integrazioni Google</a>.
+                        </div>
+                        <?php if (!$driveRootConfigured): ?>
+                            <div class="small text-warning mb-3">
+                                <i class="bi bi-exclamation-triangle"></i>
+                                ID cartella Drive non configurato: i file caricati verranno salvati nella root di Drive.
+                            </div>
+                        <?php endif; ?>
+
+                        <div class="d-flex justify-content-between">
+                            <button type="button" class="btn btn-secondary btn-lg" onclick="prevStep(3)">
+                                <i class="bi bi-arrow-left"></i> Indietro
+                            </button>
+                            <div>
+                                <button type="button" class="btn btn-skip btn-lg me-2" onclick="skipStep(3)">
+                                    Salta <i class="bi bi-skip-forward"></i>
+                                </button>
+                                <button type="button" class="btn btn-primary btn-lg" onclick="nextStep(3)">
+                                    Avanti <i class="bi bi-arrow-right"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Step 4: Obiettivi (OPZIONALE) -->
+                    <div class="step" data-step="4">
+                        <h3 class="mb-4"><i class="bi bi-bullseye text-success"></i> Obiettivi Didattici e Disciplinari</h3>
+                        <p class="text-muted">Definisci gli obiettivi dell'UDA (opzionale).</p>
+
+                        <div id="obiettivi-container">
+                            <!-- Template obiettivi verrà inserito qui -->
+                        </div>
+
+                        <button type="button" class="btn btn-outline-success btn-sm mb-3" onclick="addObiettivo()">
+                            <i class="bi bi-plus-circle"></i> Aggiungi Obiettivo
+                        </button>
+
+                        <div class="d-flex justify-content-between">
+                            <button type="button" class="btn btn-secondary btn-lg" onclick="prevStep(4)">
+                                <i class="bi bi-arrow-left"></i> Indietro
+                            </button>
+                            <div>
+                                <button type="button" class="btn btn-skip btn-lg me-2" onclick="skipStep(4)">
+                                    Salta <i class="bi bi-skip-forward"></i>
+                                </button>
+                                <button type="button" class="btn btn-primary btn-lg" onclick="nextStep(4)">
+                                    Avanti <i class="bi bi-arrow-right"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Step 5: Domande (OPZIONALE) -->
+                    <div class="step" data-step="5">
+                        <h3 class="mb-4"><i class="bi bi-question-circle" style="color: #d63384;"></i> Domande per Interrogazioni</h3>
+                        <p class="text-muted">Inserisci domande tipiche per le interrogazioni orali (opzionale).</p>
+
+                        <div id="domande-container">
+                            <!-- Template domande verrà inserito qui -->
+                        </div>
+
+                        <div class="d-flex flex-wrap gap-2 mb-3">
+                            <button type="button" class="btn btn-sm" style="background-color: #d63384; color: white; border-color: #d63384;" onclick="addDomanda()">
+                                <i class="bi bi-plus-circle"></i> Aggiungi Domanda
+                            </button>
+                            <a class="btn btn-sm btn-outline-primary" href="import_questions.php?id=<?= urlencode($tempUdaId) ?>" target="_blank">
+                                <i class="bi bi-cloud-upload"></i> Importa Domande (CSV/Excel/JSON)
+                            </a>
+                        </div>
+
+                        <div class="d-flex justify-content-between">
+                            <button type="button" class="btn btn-secondary btn-lg" onclick="prevStep(5)">
+                                <i class="bi bi-arrow-left"></i> Indietro
+                            </button>
+                            <div>
+                                <button type="button" class="btn btn-skip btn-lg me-2" onclick="skipStep(5)">
+                                    Salta <i class="bi bi-skip-forward"></i>
+                                </button>
+                                <button type="button" class="btn btn-primary btn-lg" onclick="nextStep(5)">
+                                    Avanti <i class="bi bi-arrow-right"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Step 6: Test (OPZIONALE) -->
+                    <div class="step" data-step="6">
+                        <h3 class="mb-4"><i class="bi bi-clipboard-check" style="color: #6f42c1;"></i> Test e Valutazioni</h3>
+                        <p class="text-muted">Configura i test per questa UDA (opzionale).</p>
+
+                        <div id="test-container">
+                            <!-- Template test verrà inserito qui -->
+                        </div>
+
+                        <button type="button" class="btn btn-sm mb-3" style="background-color: #6f42c1; color: white; border-color: #6f42c1;" onclick="addTest()">
+                            <i class="bi bi-plus-circle"></i> Aggiungi Test
+                        </button>
+
+                        <div class="d-flex justify-content-between">
+                            <button type="button" class="btn btn-secondary btn-lg" onclick="prevStep(6)">
+                                <i class="bi bi-arrow-left"></i> Indietro
+                            </button>
+                            <div>
+                                <button type="button" class="btn btn-skip btn-lg me-2" onclick="skipStep(6)">
+                                    Salta <i class="bi bi-skip-forward"></i>
+                                </button>
+                                <button type="button" class="btn btn-primary btn-lg" onclick="nextStep(6)">
+                                    Avanti <i class="bi bi-arrow-right"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Step 7: Riepilogo e Conferma -->
+                    <div class="step" data-step="7">
+                        <h3 class="mb-4"><i class="bi bi-check-circle text-success"></i> Riepilogo e Conferma</h3>
+                        <p class="text-muted">Verifica i dati inseriti e crea l'UDA.</p>
+
+                        <div id="riepilogo-content">
+                            <!-- Il riepilogo verrà generato dinamicamente -->
+                        </div>
+
+                        <div class="d-flex justify-content-between mt-4">
+                            <button type="button" class="btn btn-secondary btn-lg" onclick="prevStep(7)">
+                                <i class="bi bi-arrow-left"></i> Indietro
+                            </button>
+                            <button type="submit" class="btn btn-success btn-lg">
+                                <i class="bi bi-check-circle"></i> Crea UDA
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Import da Argomento Classroom -->
+    <div class="modal fade" id="classroomTopicImportModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-google"></i> Importa da Argomento Classroom
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="wizardClassroomImportMsg" class="alert d-none" role="alert"></div>
+
+                    <div id="wizardClassroomImportControls">
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label for="wizardClassroomCourseSelect" class="form-label">Classroom</label>
+                                <select id="wizardClassroomCourseSelect" class="form-select" onchange="loadWizardClassroomResources()">
+                                    <option value="">Seleziona classroom...</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="wizardClassroomTopicSelect" class="form-label">Argomento</label>
+                                <select id="wizardClassroomTopicSelect" class="form-select" onchange="renderWizardClassroomResources()" disabled>
+                                    <option value="">Seleziona argomento...</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div id="wizardClassroomLoading" class="text-center text-muted py-3 d-none">
+                            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                            Caricamento risorse Classroom...
+                        </div>
+
+                        <div class="border rounded">
+                            <div class="d-flex justify-content-between align-items-center p-2 border-bottom bg-light">
+                                <div class="form-check mb-0">
+                                    <input class="form-check-input" type="checkbox" id="wizardClassroomSelectAll" checked onchange="toggleWizardClassroomSelectAll(this)">
+                                    <label class="form-check-label" for="wizardClassroomSelectAll">Seleziona tutti</label>
+                                </div>
+                                <small class="text-muted">Per ogni link scegli se importarlo come materiale o test</small>
+                            </div>
+                            <div class="table-responsive" style="max-height: 360px;">
+                                <table class="table table-sm align-middle mb-0">
+                                    <thead class="table-light position-sticky top-0">
+                                        <tr>
+                                            <th style="width: 55px;">Importa</th>
+                                            <th>Risorsa</th>
+                                            <th style="width: 185px;">Importa come</th>
+                                            <th style="width: 190px;">Tipo materiale</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="wizardClassroomResourcesBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div id="wizardClassroomResourcesEmpty" class="alert alert-light border mt-3 mb-0 d-none">
+                            Nessuna risorsa trovata per l'argomento selezionato.
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
+                    <button type="button" class="btn btn-primary" onclick="applyWizardClassroomImport()">
+                        <i class="bi bi-download"></i> Importa Selezionati
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://apis.google.com/js/api.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script>
+        let currentStep = 1;
+        const totalSteps = 7;
+        let skippedSteps = new Set();
+
+        // Counters for dynamic items
+        let materialeCounter = 0;
+        let obiettivoCounter = 0;
+        let testCounter = 0;
+        let domandaCounter = 0;
+        let classeCounter = 0;
+
+        const cvClassSubjects = <?= json_encode($cvClassSubjects, JSON_UNESCAPED_UNICODE) ?>;
+        const obiettiviCatalog = <?= json_encode(array_values($allObiettivi), JSON_UNESCAPED_UNICODE) ?>;
+        const pickerApiKey = "<?= htmlspecialchars($pickerApiKey) ?>";
+        const pickerClientId = "<?= htmlspecialchars($pickerClientId) ?>";
+        let pickerInited = false;
+        let tokenClient = null;
+        let driveAccessToken = null;
+        const driveTokenCacheKey = 'uda_drive_token';
+        let domandeTempCount = <?= (int)$domandeTempCount ?>;
+        const tempUdaId = "<?= htmlspecialchars($tempUdaId) ?>";
+        const classroomImportIntegrationUrl = 'user_integrations.php#google-section';
+        let wizardClassroomResources = [];
+
+        function loadCachedDriveToken() {
+            try {
+                const raw = localStorage.getItem(driveTokenCacheKey);
+                if (!raw) return null;
+                const data = JSON.parse(raw);
+                if (!data.access_token || !data.expiry) return null;
+                // Rinnova se manca meno di 60s alla scadenza
+                if (Date.now() > (data.expiry - 60000)) {
+                    localStorage.removeItem(driveTokenCacheKey);
+                    return null;
+                }
+                driveAccessToken = data.access_token;
+                return driveAccessToken;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function cacheDriveToken(token, expiresInSec = 3600) {
+            if (!token) return;
+            const expiry = Date.now() + (expiresInSec * 1000);
+            const data = { access_token: token, expiry };
+            try {
+                localStorage.setItem(driveTokenCacheKey, JSON.stringify(data));
+            } catch (e) { /* ignore quota issues */ }
+            driveAccessToken = token;
+        }
+
+        function clearCachedDriveToken() {
+            driveAccessToken = null;
+            localStorage.removeItem(driveTokenCacheKey);
+        }
+
+        function nextStep(step) {
+            // Validazione solo per step 1 (obbligatorio)
+            if (step === 1) {
+                const titolo = document.querySelector('input[name="titolo"]').value.trim();
+                const argomento = document.querySelector('input[name="argomento"]').value.trim();
+
+                if (!titolo || !argomento) {
+                    alert('I campi Titolo e Argomento sono obbligatori!');
+                    return;
+                }
+            }
+
+            // Mark step as completed
+            markStepCompleted(step);
+
+            currentStep++;
+            if (currentStep > totalSteps) {
+                currentStep = totalSteps;
+            }
+            showStep(currentStep);
+
+            // Se arriviamo al riepilogo, generalo
+            if (currentStep === 7) {
+                refreshTempQuestionsCount().then(generateRiepilogo).catch(generateRiepilogo);
+            }
+        }
+
+        function prevStep(step) {
+            currentStep--;
+            if (currentStep < 1) {
+                currentStep = 1;
+            }
+            showStep(currentStep);
+        }
+
+        function skipStep(step) {
+            skippedSteps.add(step);
+            markStepSkipped(step);
+            nextStep(step);
+        }
+
+        function goToStep(step) {
+            // Permetti di tornare agli step precedenti
+            if (step <= currentStep) {
+                currentStep = step;
+                showStep(currentStep);
+
+                if (currentStep === 7) {
+                    refreshTempQuestionsCount().then(generateRiepilogo).catch(generateRiepilogo);
+                }
+            }
+        }
+
+        function showStep(stepNumber) {
+            document.querySelectorAll('.step').forEach(step => {
+                step.classList.remove('active');
+            });
+            document.querySelector(`.step[data-step="${stepNumber}"]`).classList.add('active');
+
+            document.querySelectorAll('.step-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            document.querySelector(`.step-item[data-step="${stepNumber}"]`).classList.add('active');
+
+            // Scroll to top
+            window.scrollTo(0, 0);
+        }
+
+        function markStepCompleted(step) {
+            const stepItem = document.querySelector(`.step-item[data-step="${step}"]`);
+            stepItem.classList.add('completed');
+            stepItem.classList.remove('active', 'skipped');
+            skippedSteps.delete(step);
+        }
+
+        function markStepSkipped(step) {
+            const stepItem = document.querySelector(`.step-item[data-step="${step}"]`);
+            stepItem.classList.add('skipped');
+            stepItem.classList.remove('active');
+        }
+
+        // Add Material
+        function addMaterial() {
+            materialeCounter++;
+            const container = document.getElementById('materiali-container');
+            const item = document.createElement('div');
+            item.className = 'dynamic-item';
+            item.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6>Materiale ${materialeCounter}</h6>
+                    <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.parentElement.remove()">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+                <div class="row">
+                    <div class="col-md-6 mb-2">
+                        <label class="form-label">Nome</label>
+                        <input type="text" class="form-control" name="materiali_nome[]" placeholder="es. Dispensa PDF">
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <label class="form-label">Tipo</label>
+                        <select class="form-select" name="materiali_tipo[]">
+                            <option value="documento">Documento</option>
+                            <option value="foglio_calcolo">Foglio di Calcolo</option>
+                            <option value="presentazione">Presentazione</option>
+                            <option value="immagine">Immagine</option>
+                            <option value="video">Video</option>
+                            <option value="video_youtube">Video YouTube</option>
+                            <option value="link">Link</option>
+                            <option value="sito_web">Sito Web</option>
+                            <option value="risorsa_online">Risorsa Online</option>
+                            <option value="altro">Altro</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <label class="form-label">URL/Link</label>
+                        <input type="url" class="form-control" name="materiali_url[]" placeholder="https://...">
+                        <div class="d-flex flex-wrap gap-2 mt-1">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="openDrivePicker(this)">
+                                <i class="bi bi-cloud-arrow-down"></i> Seleziona da Drive
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-primary material-upload-btn" onclick="triggerMaterialUpload(this)">
+                                <i class="bi bi-cloud-upload"></i> Carica su Drive
+                            </button>
+                        </div>
+                        <input type="file" class="d-none material-drive-file" onchange="uploadMaterialFile(this)">
+                        <div class="small text-danger mt-1 material-upload-error d-none"></div>
+                    </div>
+                    <div class="col-12 mb-2">
+                        <label class="form-label">Descrizione</label>
+                        <textarea class="form-control" name="materiali_descrizione[]" rows="2"></textarea>
+                    </div>
+                    <input type="hidden" name="materiali_file_id[]" value="">
+                </div>
+            `;
+            container.appendChild(item);
+            return item;
+        }
+
+        function triggerMaterialUpload(button) {
+            const wrapper = button.closest('.dynamic-item');
+            if (!wrapper) return;
+            const input = wrapper.querySelector('.material-drive-file');
+            if (input) input.click();
+        }
+
+        function setMaterialUploadError(wrapper, message) {
+            if (!wrapper) return;
+            const errorBox = wrapper.querySelector('.material-upload-error');
+            if (!errorBox) return;
+            if (message) {
+                errorBox.textContent = message;
+                errorBox.classList.remove('d-none');
+            } else {
+                errorBox.textContent = '';
+                errorBox.classList.add('d-none');
+            }
+        }
+
+        function resolveMaterialTypeFromMime(mimeType) {
+            if (!mimeType) return '';
+            const normalized = mimeType.toLowerCase();
+            if (normalized.startsWith('image/')) return 'immagine';
+            if (normalized.startsWith('video/')) return 'video';
+            if (normalized.startsWith('audio/')) return 'altro';
+            const map = {
+                'application/pdf': 'documento',
+                'application/msword': 'documento',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'documento',
+                'application/vnd.google-apps.document': 'documento',
+                'text/plain': 'documento',
+                'text/html': 'documento',
+                'application/vnd.ms-powerpoint': 'presentazione',
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'presentazione',
+                'application/vnd.google-apps.presentation': 'presentazione',
+                'application/vnd.ms-excel': 'foglio_calcolo',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'foglio_calcolo',
+                'application/vnd.google-apps.spreadsheet': 'foglio_calcolo',
+                'application/vnd.google-apps.drawing': 'immagine',
+                'application/vnd.google-apps.video': 'video',
+                'application/vnd.google-apps.form': 'link',
+                'application/vnd.google-apps.site': 'sito_web',
+                'application/vnd.google-apps.folder': 'link'
+            };
+            return map[normalized] || '';
+        }
+
+        function applyMaterialTypeFromMime(selectEl, mimeType, fallbackValue = '') {
+            if (!selectEl) return;
+            const resolved = resolveMaterialTypeFromMime(mimeType);
+            if (resolved) {
+                selectEl.value = resolved;
+            } else if (fallbackValue) {
+                selectEl.value = fallbackValue;
+            }
+        }
+
+        async function uploadMaterialFile(fileInput) {
+            const wrapper = fileInput.closest('.dynamic-item');
+            if (!wrapper) return;
+            const files = fileInput.files;
+            if (!files || files.length === 0) return;
+            const file = files[0];
+            const uploadButton = wrapper.querySelector('.material-upload-btn');
+            const tipoSelect = wrapper.querySelector('select[name="materiali_tipo[]"]');
+
+            setMaterialUploadError(wrapper, '');
+            applyMaterialTypeFromMime(tipoSelect, file.type || '');
+            if (uploadButton) uploadButton.disabled = true;
+
+            let response = null;
+            let rawText = '';
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                response = await fetch('ajax_upload_drive_file.php', {
+                    method: 'POST',
+                    body: formData,
+                    credentials: 'same-origin'
+                });
+
+                rawText = await response.text();
+                let data = null;
+                try {
+                    data = JSON.parse(rawText);
+                } catch (e) {
+                    data = null;
+                }
+
+                if (!response.ok || !data || !data.success) {
+                    const message = (data && data.error) ? data.error : (rawText || 'Errore upload file.');
+                    throw new Error(message);
+                }
+
+                const nomeInput = wrapper.querySelector('input[name="materiali_nome[]"]');
+                const urlInput = wrapper.querySelector('input[name="materiali_url[]"]');
+                const fileIdInput = wrapper.querySelector('input[name="materiali_file_id[]"]');
+
+                if (nomeInput && !nomeInput.value) nomeInput.value = data.name || file.name;
+                if (urlInput) urlInput.value = data.viewLink || '';
+                if (fileIdInput) fileIdInput.value = data.fileId || '';
+                applyMaterialTypeFromMime(tipoSelect, data.mimeType || '');
+            } catch (err) {
+                const message = (err && err.message) ? err.message : 'Errore upload file.';
+                setMaterialUploadError(wrapper, message);
+            } finally {
+                if (uploadButton) uploadButton.disabled = false;
+                fileInput.value = '';
+            }
+        }
+
+        // Add Obiettivo
+        function addObiettivo() {
+            obiettivoCounter++;
+            const container = document.getElementById('obiettivi-container');
+            const item = document.createElement('div');
+            item.className = 'dynamic-item';
+            const obOptions = obiettiviCatalog.map(o => {
+                const label = `${o.codice || o.id_obiettivo || ''} - ${o.descrizione || ''}`.trim();
+                return `<option value="${o.id_obiettivo || ''}" data-codice="${o.codice || ''}" data-descrizione="${(o.descrizione || '').replace(/"/g,'&quot;')}" data-competenza="${(o.competenza || '').replace(/"/g,'&quot;')}" data-tipo="${o.tipo_obiettivo || ''}" data-livello="${o.livello_tassonomia || ''}" data-peso="${o.peso || ''}">${label}</option>`;
+            }).join('');
+            item.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6>Obiettivo ${obiettivoCounter}</h6>
+                    <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.parentElement.remove()">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+                <div class="row">
+                    <div class="col-12 mb-2">
+                        <label class="form-label">Seleziona da catalogo</label>
+                        <select class="form-select" onchange="fillObiettivo(this)">
+                            <option value="">-- Scegli --</option>
+                            ${obOptions}
+                        </select>
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <label class="form-label">Tipo</label>
+                        <select class="form-select" name="obiettivi_tipo[]">
+                            <option value="disciplinare">Disciplinare</option>
+                            <option value="trasversale">Trasversale</option>
+                            <option value="competenza">Competenza</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <label class="form-label">Codice</label>
+                        <input type="text" class="form-control" name="obiettivi_codice[]" placeholder="es. OBJ001">
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <label class="form-label">Livello Bloom</label>
+                        <select class="form-select" name="obiettivi_livello[]">
+                            <option value="1">1 - Ricordare</option>
+                            <option value="2">2 - Comprendere</option>
+                            <option value="3">3 - Applicare</option>
+                            <option value="4">4 - Analizzare</option>
+                            <option value="5">5 - Valutare</option>
+                            <option value="6">6 - Creare</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <label class="form-label">Peso</label>
+                        <input type="number" class="form-control" name="obiettivi_peso[]" value="10" min="1">
+                    </div>
+                    <div class="col-12 mb-2">
+                        <label class="form-label">Descrizione</label>
+                        <textarea class="form-control" name="obiettivi_descrizione[]" rows="2" placeholder="Descrizione dell'obiettivo"></textarea>
+                    </div>
+                    <div class="col-12 mb-2">
+                        <label class="form-label">Competenza</label>
+                        <input type="text" class="form-control" name="obiettivi_competenza[]" placeholder="es. Competenze digitali">
+                    </div>
+                </div>
+            `;
+            container.appendChild(item);
+        }
+
+        function fillObiettivo(select) {
+            const option = select.selectedOptions[0];
+            if (!option) return;
+            const wrapper = select.closest('.dynamic-item');
+            if (!wrapper) return;
+            const tipo = wrapper.querySelector('select[name="obiettivi_tipo[]"]');
+            const codice = wrapper.querySelector('input[name="obiettivi_codice[]"]');
+            const descrizione = wrapper.querySelector('textarea[name="obiettivi_descrizione[]"]');
+            const competenza = wrapper.querySelector('input[name="obiettivi_competenza[]"]');
+            const livello = wrapper.querySelector('select[name="obiettivi_livello[]"]');
+            const peso = wrapper.querySelector('input[name="obiettivi_peso[]"]');
+
+            if (tipo) tipo.value = option.getAttribute('data-tipo') || 'disciplinare';
+            if (codice) codice.value = option.getAttribute('data-codice') || '';
+            if (descrizione) descrizione.value = option.getAttribute('data-descrizione') || '';
+            if (competenza) competenza.value = option.getAttribute('data-competenza') || '';
+            if (livello) livello.value = option.getAttribute('data-livello') || '1';
+            if (peso) peso.value = option.getAttribute('data-peso') || '10';
+        }
+
+        // Add Test
+        function addTest() {
+            testCounter++;
+            const container = document.getElementById('test-container');
+            const item = document.createElement('div');
+            item.className = 'dynamic-item';
+            item.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6>Test ${testCounter}</h6>
+                    <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.parentElement.remove()">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+                <div class="row">
+                    <div class="col-md-4 mb-2">
+                        <label class="form-label">Nome Test</label>
+                        <input type="text" class="form-control" name="test_nome[]" placeholder="es. Test Finale">
+                    </div>
+                    <div class="col-md-4 mb-2">
+                        <label class="form-label">Tipo</label>
+                        <select class="form-select" name="test_tipo[]">
+                            <option value="prerequisiti">Prerequisiti</option>
+                            <option value="intermedio">Intermedio</option>
+                            <option value="finale">Finale</option>
+                            <option value="altro">Altro</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4 mb-2">
+                        <label class="form-label">Piattaforma</label>
+                        <select class="form-select" name="test_piattaforma[]">
+                            <option value="google-forms">Google Forms</option>
+                            <option value="kahoot">Kahoot</option>
+                            <option value="socrative">Socrative</option>
+                            <option value="google-classroom">Google Classroom</option>
+                            <option value="altro">Altro</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4 mb-2">
+                        <label class="form-label">N. Domande</label>
+                        <input type="number" class="form-control" name="test_domande[]" min="0">
+                    </div>
+                    <div class="col-md-4 mb-2">
+                        <label class="form-label">Durata (min)</label>
+                        <input type="number" class="form-control" name="test_durata[]" min="0">
+                    </div>
+                    <div class="col-md-4 mb-2">
+                        <label class="form-label">Punti Max</label>
+                        <input type="number" class="form-control" name="test_punti[]" value="100" min="0" step="0.1">
+                    </div>
+                    <div class="col-md-6 mb-2">
+                        <label class="form-label">URL Studenti</label>
+                        <input type="url" class="form-control" name="test_url_studenti[]" placeholder="Link per studenti">
+                    </div>
+                    <div class="col-md-6 mb-2">
+                        <label class="form-label">URL Docente/Gestione</label>
+                        <input type="url" class="form-control" name="test_url_docente[]" placeholder="Link gestione o risultati">
+                    </div>
+                    <div class="col-12 mb-2">
+                        <label class="form-label">URL Test</label>
+                        <input type="url" class="form-control" name="test_url[]" placeholder="https://...">
+                    </div>
+                    <div class="col-12 mb-2">
+                        <label class="form-label">Descrizione</label>
+                        <textarea class="form-control" name="test_descrizione[]" rows="2"></textarea>
+                    </div>
+                    <input type="hidden" name="test_classroom_course_id[]" value="">
+                    <input type="hidden" name="test_classroom_assignment_id[]" value="">
+                    <input type="hidden" name="test_classroom_topic_id[]" value="">
+                </div>
+            `;
+            container.appendChild(item);
+            return item;
+        }
+
+        // Add Domanda
+        function addDomanda() {
+            domandaCounter++;
+            const container = document.getElementById('domande-container');
+            const item = document.createElement('div');
+            item.className = 'dynamic-item';
+            item.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6>Domanda ${domandaCounter}</h6>
+                    <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.parentElement.remove()">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+                <div class="row">
+                    <div class="col-md-4 mb-2">
+                        <label class="form-label">Argomento</label>
+                        <input type="text" class="form-control" name="domanda_argomento[]" placeholder="es. Algoritmi">
+                    </div>
+                    <div class="col-md-2 mb-2">
+                        <label class="form-label">Difficoltà (1-5)</label>
+                        <select class="form-select" name="domanda_livello[]">
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3" selected>3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2 mb-2">
+                        <label class="form-label">Tempo (min)</label>
+                        <input type="number" class="form-control" name="domanda_tempo[]" value="3" min="1">
+                    </div>
+                    <div class="col-md-4 mb-2">
+                        <label class="form-label">Parole chiave</label>
+                        <input type="text" class="form-control" name="domanda_parole[]" placeholder="separa con virgola">
+                    </div>
+                    <div class="col-12 mb-2">
+                        <label class="form-label">Testo Domanda</label>
+                        <textarea class="form-control" name="domanda_testo[]" rows="2" placeholder="Inserisci la domanda"></textarea>
+                    </div>
+                    <div class="col-12 mb-2">
+                        <label class="form-label">Risposta attesa / Note di correzione</label>
+                        <textarea class="form-control" name="domanda_suggerimenti[]" rows="2" placeholder="Punti chiave o risposta attesa"></textarea>
+                    </div>
+                    <div class="col-md-4 mb-2">
+                        <label class="form-label">Ordine consigliato</label>
+                        <input type="number" class="form-control" name="domanda_ordine[]" value="0" min="0">
+                    </div>
+                    <div class="col-md-4 mb-2">
+                        <label class="form-label">Collegata a (ID)</label>
+                        <input type="text" class="form-control" name="domanda_collegata[]" placeholder="ID domanda correlata">
+                    </div>
+                    <div class="col-md-4 mb-2">
+                        <label class="form-label">Note</label>
+                        <input type="text" class="form-control" name="domanda_note[]" placeholder="Note interne">
+                    </div>
+                </div>
+            `;
+            container.appendChild(item);
+        }
+
+        // Add Classe
+        function addClasse() {
+            classeCounter++;
+            const container = document.getElementById('classi-container');
+            const item = document.createElement('div');
+            item.className = 'dynamic-item';
+            const cvOptions = cvClassSubjects.map(c => `<option value="${c.classId}||${c.className}||${c.subjectId}||${c.subjectName}">${c.className} - ${c.subjectName}</option>`).join('');
+            item.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6>Classe ${classeCounter}</h6>
+                    <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.parentElement.remove()">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+                <div class="row">
+                    <div class="col-md-12 mb-2">
+                        <label class="form-label">Seleziona da ClasseViva (classe - materia)</label>
+                        <select class="form-select" onchange="fillClasseFromSelect(this)">
+                            <option value="">-- Seleziona --</option>
+                            ${cvOptions}
+                        </select>
+                    </div>
+                    <div class="col-md-4 mb-2">
+                        <label class="form-label">ID Classe</label>
+                        <input type="text" class="form-control" name="classe_id[]" placeholder="es. 12345">
+                    </div>
+                    <div class="col-md-4 mb-2">
+                        <label class="form-label">Nome Classe</label>
+                        <input type="text" class="form-control" name="classe_nome[]" placeholder="es. 5A INF">
+                    </div>
+                    <div class="col-md-4 mb-2">
+                        <label class="form-label">Materia</label>
+                        <input type="text" class="form-control" name="classe_materia_nome[]" placeholder="es. Informatica">
+                    </div>
+                    <div class="col-md-12 mb-2">
+                        <label class="form-label">ID Materia (ClasseViva)</label>
+                        <input type="text" class="form-control" name="classe_materia[]" placeholder="es. 213064">
+                    </div>
+                </div>
+            `;
+            container.appendChild(item);
+        }
+
+        function fillClasseFromSelect(select) {
+            const val = select.value;
+            if (!val) return;
+            const parts = val.split('||');
+            const wrapper = select.closest('.dynamic-item');
+            if (!wrapper) return;
+            const idInput = wrapper.querySelector('input[name="classe_id[]"]');
+            const nomeInput = wrapper.querySelector('input[name="classe_nome[]"]');
+            const materiaNomeInput = wrapper.querySelector('input[name="classe_materia_nome[]"]');
+            const materiaIdInput = wrapper.querySelector('input[name="classe_materia[]"]');
+
+            if (idInput) idInput.value = parts[0] || '';
+            if (nomeInput) nomeInput.value = parts[1] || '';
+            if (materiaIdInput) materiaIdInput.value = parts[2] || '';
+            if (materiaNomeInput) materiaNomeInput.value = parts[3] || '';
+        }
+
+        // --- Google Drive Picker (GIS) ---
+        function ensurePickerLoaded() {
+            return new Promise((resolve, reject) => {
+                if (pickerInited) return resolve();
+                gapi.load('picker', {
+                    callback: () => { pickerInited = true; resolve(); },
+                    onerror: () => reject('Errore caricamento Google Picker')
+                });
+            });
+        }
+
+        function ensureTokenClient() {
+            if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+                alert('Google Identity non è stato caricato. Ricarica la pagina (verifica che accounts.google.com/gsi/client non sia bloccato).');
+                return null;
+            }
+            if (tokenClient) return tokenClient;
+            if (!pickerClientId) {
+                alert('Config Picker mancante: imposta web.client_id in google_credentials.json');
+                return null;
+            }
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: pickerClientId,
+                scope: 'https://www.googleapis.com/auth/drive.file',
+                callback: (res) => {
+                    if (res && res.access_token) {
+                        driveAccessToken = res.access_token;
+                    } else {
+                        alert('Autorizzazione negata.');
+                    }
+                }
+            });
+            return tokenClient;
+        }
+
+        async function openDrivePicker(button) {
+            if (!pickerApiKey || !pickerClientId) {
+                alert('Config Picker mancante: definire GOOGLE_API_KEY e web.client_id in google_credentials.json');
+                return;
+            }
+            // Prova a riutilizzare token memorizzato
+            loadCachedDriveToken();
+            const tc = ensureTokenClient();
+            if (!tc) return;
+            const openPickerNow = async () => {
+                try {
+                    await ensurePickerLoaded();
+                    const view = new google.picker.DocsView(google.picker.ViewId.DOCS);
+                    view.setIncludeFolders(true);
+                    view.setSelectFolderEnabled(true);
+                    const picker = new google.picker.PickerBuilder()
+                        .setDeveloperKey(pickerApiKey)
+                        .setOAuthToken(driveAccessToken)
+                        .addView(view)
+                        .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
+                        .enableFeature(google.picker.Feature.NAV_HIDDEN)
+                        .setCallback(data => pickerCallback(data, button))
+                        .build();
+                    picker.setVisible(true);
+                } catch (err) {
+                    alert('Errore apertura picker: ' + err);
+                }
+            };
+
+            // Se abbiamo già un token, prova ad aprire subito senza prompt aggiuntivi
+            if (driveAccessToken) {
+                openPickerNow();
+                return;
+            }
+
+            // Richiedi token una sola volta (prompt di consenso solo al primo giro)
+            tc.callback = (res) => {
+                if (res && res.access_token) {
+                    cacheDriveToken(res.access_token, res.expires_in || 3600);
+                    openPickerNow();
+                } else {
+                    clearCachedDriveToken();
+                    alert('Autorizzazione negata.');
+                }
+            };
+            const hasCached = !!loadCachedDriveToken();
+            tc.requestAccessToken({
+                prompt: hasCached ? 'none' : 'consent'
+            });
+        }
+
+        function pickerCallback(data, button) {
+            if (data.action !== google.picker.Action.PICKED) return;
+            const doc = data.docs[0];
+            if (!doc) return;
+            const url = doc.url || doc.alternateLink || '';
+            const name = doc.name || doc.title || '';
+            const wrapper = button.closest('.dynamic-item');
+            if (!wrapper) return;
+            const urlInput = wrapper.querySelector('input[name="materiali_url[]"]');
+            const nomeInput = wrapper.querySelector('input[name="materiali_nome[]"]');
+            const tipoSelect = wrapper.querySelector('select[name="materiali_tipo[]"]');
+            const descrInput = wrapper.querySelector('textarea[name="materiali_descrizione[]"]');
+            const fileIdInput = wrapper.querySelector('input[name="materiali_file_id[]"]');
+
+            if (urlInput) urlInput.value = url;
+            if (nomeInput && !nomeInput.value) nomeInput.value = name;
+            if (descrInput && !descrInput.value) descrInput.value = doc.mimeType || '';
+            applyMaterialTypeFromMime(tipoSelect, doc.mimeType || '', 'link');
+            if (fileIdInput) fileIdInput.value = doc.id || '';
+        }
+
+        function escapeWizardImportHtml(value) {
+            return String(value || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function detectWizardTestPlatform(url, isAssignment = false) {
+            const normalized = String(url || '').toLowerCase().trim();
+            if (!normalized) return isAssignment ? 'google-classroom' : 'altro';
+            if (normalized.includes('docs.google.com/forms') || normalized.includes('forms.gle')) return 'google-forms';
+            if (normalized.includes('kahoot.it') || normalized.includes('create.kahoot.it')) return 'kahoot';
+            if (normalized.includes('socrative.com') || normalized.includes('b.socrative.com')) return 'socrative';
+            if (normalized.includes('classroom.google.com') && isAssignment) return 'google-classroom';
+            return isAssignment ? 'google-classroom' : 'altro';
+        }
+
+        function detectWizardMaterialType(url, suggested = '') {
+            if (suggested) return suggested;
+            const normalized = String(url || '').toLowerCase().trim();
+            if (!normalized) return 'link';
+            if (normalized.includes('youtube.com') || normalized.includes('youtu.be')) return 'video_youtube';
+            if (normalized.includes('docs.google.com/spreadsheets')) return 'foglio_calcolo';
+            if (normalized.includes('docs.google.com/presentation')) return 'presentazione';
+            if (normalized.includes('docs.google.com/document') || /\.(pdf|doc|docx|txt)$/i.test(normalized)) return 'documento';
+            if (/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(normalized)) return 'immagine';
+            if (/\.(mp4|avi|mov|webm)$/i.test(normalized)) return 'video';
+            return 'link';
+        }
+
+        function getWizardMaterialTypeOptions(selectedValue = 'link') {
+            const options = [
+                ['documento', 'Documento'],
+                ['foglio_calcolo', 'Foglio di Calcolo'],
+                ['presentazione', 'Presentazione'],
+                ['immagine', 'Immagine'],
+                ['video', 'Video'],
+                ['video_youtube', 'Video YouTube'],
+                ['link', 'Link'],
+                ['sito_web', 'Sito Web'],
+                ['risorsa_online', 'Risorsa Online'],
+                ['altro', 'Altro']
+            ];
+            return options.map(([value, label]) => {
+                const selected = value === selectedValue ? ' selected' : '';
+                return `<option value="${value}"${selected}>${label}</option>`;
+            }).join('');
+        }
+
+        function setWizardClassroomMessage(type, message, withIntegrationLink = false) {
+            const box = document.getElementById('wizardClassroomImportMsg');
+            if (!box) return;
+            if (!message) {
+                box.className = 'alert d-none';
+                box.innerHTML = '';
+                return;
+            }
+            box.className = `alert alert-${type || 'info'}`;
+            if (withIntegrationLink) {
+                box.innerHTML = `${escapeWizardImportHtml(message)} <a href="${classroomImportIntegrationUrl}" class="alert-link">Apri integrazioni</a>`;
+            } else {
+                box.textContent = message;
+            }
+        }
+
+        function setWizardClassroomLoading(isLoading) {
+            const loading = document.getElementById('wizardClassroomLoading');
+            if (!loading) return;
+            loading.classList.toggle('d-none', !isLoading);
+        }
+
+        function toggleWizardClassroomSelectAll(masterCheckbox) {
+            const checked = masterCheckbox ? !!masterCheckbox.checked : false;
+            document.querySelectorAll('.wizard-classroom-check').forEach(input => {
+                input.checked = checked;
+            });
+        }
+
+        function updateWizardDestination(selectEl) {
+            const row = selectEl.closest('tr');
+            if (!row) return;
+            const materialTypeSelect = row.querySelector('.wizard-classroom-material-type');
+            if (!materialTypeSelect) return;
+            materialTypeSelect.disabled = selectEl.value === 'test';
+        }
+
+        function getWizardClassroomResourceById(resourceId) {
+            return wizardClassroomResources.find((item) => String(item.resource_id || '') === String(resourceId || '')) || null;
+        }
+
+        function fillWizardTopicSelect(topics, resources) {
+            const topicSelect = document.getElementById('wizardClassroomTopicSelect');
+            if (!topicSelect) return;
+
+            topicSelect.innerHTML = '';
+            const noTopicResources = resources.filter(r => !(r.topic_id || '').trim());
+            if (topics.length > 0) {
+                topics.forEach((topic, idx) => {
+                    const option = document.createElement('option');
+                    option.value = topic.id;
+                    option.textContent = topic.name;
+                    if (idx === 0) option.selected = true;
+                    topicSelect.appendChild(option);
+                });
+                if (noTopicResources.length > 0) {
+                    const noTopicOption = document.createElement('option');
+                    noTopicOption.value = '__NO_TOPIC__';
+                    noTopicOption.textContent = 'Senza argomento';
+                    topicSelect.appendChild(noTopicOption);
+                }
+                topicSelect.disabled = false;
+                return;
+            }
+
+            if (noTopicResources.length > 0) {
+                const option = document.createElement('option');
+                option.value = '__NO_TOPIC__';
+                option.textContent = 'Senza argomento';
+                option.selected = true;
+                topicSelect.appendChild(option);
+                topicSelect.disabled = false;
+                return;
+            }
+
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = 'Nessun argomento disponibile';
+            topicSelect.appendChild(placeholder);
+            topicSelect.disabled = true;
+        }
+
+        function renderWizardClassroomResources() {
+            const body = document.getElementById('wizardClassroomResourcesBody');
+            const emptyBox = document.getElementById('wizardClassroomResourcesEmpty');
+            const masterSelect = document.getElementById('wizardClassroomSelectAll');
+            const topicSelect = document.getElementById('wizardClassroomTopicSelect');
+            if (!body || !emptyBox || !topicSelect || !masterSelect) return;
+
+            const selectedTopicId = String(topicSelect.value || '');
+            const filtered = wizardClassroomResources.filter(resource => {
+                const resourceTopic = String(resource.topic_id || '').trim();
+                if (selectedTopicId === '__NO_TOPIC__') {
+                    return resourceTopic === '';
+                }
+                if (!selectedTopicId) {
+                    return false;
+                }
+                return resourceTopic === selectedTopicId;
+            });
+
+            body.innerHTML = '';
+            if (filtered.length === 0) {
+                emptyBox.classList.remove('d-none');
+                masterSelect.checked = false;
+                return;
+            }
+
+            emptyBox.classList.add('d-none');
+            masterSelect.checked = true;
+
+            filtered.forEach(resource => {
+                const destination = resource.default_destination === 'test' ? 'test' : 'materiale';
+                const suggestedMaterialType = detectWizardMaterialType(resource.url || '', resource.suggested_material_type || '');
+                const row = document.createElement('tr');
+                row.dataset.resourceId = String(resource.resource_id || '');
+                row.innerHTML = `
+                    <td>
+                        <input type="checkbox" class="form-check-input wizard-classroom-check" checked>
+                    </td>
+                    <td>
+                        <div class="fw-semibold">${escapeWizardImportHtml(resource.title || 'Risorsa Classroom')}</div>
+                        <div class="small text-muted">
+                            <span class="badge bg-light text-dark border me-1">${escapeWizardImportHtml(resource.source_label || 'Classroom')}</span>
+                            ${(resource.work_type ? `<span class="badge bg-light text-dark border me-1">${escapeWizardImportHtml(resource.work_type)}</span>` : '')}
+                            ${destination === 'test' ? '<span class="badge bg-warning text-dark">Test suggerito</span>' : ''}
+                        </div>
+                        ${(resource.description ? `<div class="small text-muted mt-1">${escapeWizardImportHtml(resource.description)}</div>` : '')}
+                        <div class="small mt-1">
+                            <a href="${escapeWizardImportHtml(resource.url || '')}" target="_blank" rel="noopener">Apri link</a>
+                        </div>
+                    </td>
+                    <td>
+                        <select class="form-select form-select-sm wizard-classroom-destination" onchange="updateWizardDestination(this)">
+                            <option value="materiale"${destination === 'materiale' ? ' selected' : ''}>Materiale</option>
+                            <option value="test"${destination === 'test' ? ' selected' : ''}>Test</option>
+                        </select>
+                    </td>
+                    <td>
+                        <select class="form-select form-select-sm wizard-classroom-material-type" ${destination === 'test' ? 'disabled' : ''}>
+                            ${getWizardMaterialTypeOptions(suggestedMaterialType)}
+                        </select>
+                    </td>
+                `;
+                body.appendChild(row);
+            });
+        }
+
+        async function loadWizardClassroomCourses() {
+            const courseSelect = document.getElementById('wizardClassroomCourseSelect');
+            if (!courseSelect) return false;
+
+            setWizardClassroomLoading(true);
+            setWizardClassroomMessage('info', 'Caricamento classroom...');
+            try {
+                const response = await fetch('ajax_get_classroom_courses_import.php', { credentials: 'same-origin' });
+                const raw = await response.text();
+                let result = null;
+                try {
+                    result = JSON.parse(raw);
+                } catch (e) {
+                    result = null;
+                }
+
+                if (!response.ok || !result || !result.success) {
+                    throw new Error((result && result.error) ? result.error : 'Impossibile caricare le classroom.');
+                }
+
+                const courses = Array.isArray(result.courses) ? result.courses : [];
+                courseSelect.innerHTML = '';
+                if (courses.length === 0) {
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = 'Nessuna classroom disponibile';
+                    courseSelect.appendChild(option);
+                    setWizardClassroomMessage('warning', 'Classroom non collegato o senza corsi disponibili.', true);
+                    return false;
+                }
+
+                courses.forEach((course, idx) => {
+                    const option = document.createElement('option');
+                    option.value = course.id || '';
+                    option.textContent = course.name || `Classroom ${idx + 1}`;
+                    if (idx === 0) option.selected = true;
+                    courseSelect.appendChild(option);
+                });
+                setWizardClassroomMessage('', '');
+                return true;
+            } catch (error) {
+                setWizardClassroomMessage('warning', error.message || 'Impossibile caricare le classroom.', true);
+                return false;
+            } finally {
+                setWizardClassroomLoading(false);
+            }
+        }
+
+        async function loadWizardClassroomResources() {
+            const courseSelect = document.getElementById('wizardClassroomCourseSelect');
+            if (!courseSelect) return;
+            const courseId = String(courseSelect.value || '').trim();
+            if (!courseId) {
+                wizardClassroomResources = [];
+                renderWizardClassroomResources();
+                return;
+            }
+
+            setWizardClassroomLoading(true);
+            setWizardClassroomMessage('info', 'Caricamento argomenti e risorse...');
+            try {
+                const response = await fetch(`ajax_get_classroom_topic_resources.php?course_id=${encodeURIComponent(courseId)}`, {
+                    credentials: 'same-origin'
+                });
+                const raw = await response.text();
+                let result = null;
+                try {
+                    result = JSON.parse(raw);
+                } catch (e) {
+                    result = null;
+                }
+
+                if (!response.ok || !result || !result.success) {
+                    throw new Error((result && result.error) ? result.error : 'Errore durante il caricamento delle risorse.');
+                }
+
+                const topics = Array.isArray(result.topics) ? result.topics : [];
+                const resources = Array.isArray(result.resources) ? result.resources : [];
+                wizardClassroomResources = resources.filter(r => {
+                    const url = String(r.url || '').trim();
+                    return url !== '';
+                });
+                fillWizardTopicSelect(topics, wizardClassroomResources);
+                renderWizardClassroomResources();
+                setWizardClassroomMessage('', '');
+            } catch (error) {
+                wizardClassroomResources = [];
+                renderWizardClassroomResources();
+                setWizardClassroomMessage('danger', error.message || 'Impossibile caricare le risorse Classroom.');
+            } finally {
+                setWizardClassroomLoading(false);
+            }
+        }
+
+        async function openWizardClassroomImportModal() {
+            const modalElement = document.getElementById('classroomTopicImportModal');
+            if (!modalElement || typeof bootstrap === 'undefined') return;
+
+            const modal = bootstrap.Modal.getInstance(modalElement) || new bootstrap.Modal(modalElement);
+            modal.show();
+
+            const hasCourses = await loadWizardClassroomCourses();
+            if (hasCourses) {
+                await loadWizardClassroomResources();
+            } else {
+                const body = document.getElementById('wizardClassroomResourcesBody');
+                const emptyBox = document.getElementById('wizardClassroomResourcesEmpty');
+                if (body) body.innerHTML = '';
+                if (emptyBox) {
+                    emptyBox.classList.remove('d-none');
+                    emptyBox.textContent = 'Collega Google Classroom dalle integrazioni per usare questo import.';
+                }
+            }
+        }
+
+        function fillWizardMaterialRowFromResource(wrapper, resource, chosenMaterialType) {
+            if (!wrapper || !resource) return;
+            const nameInput = wrapper.querySelector('input[name="materiali_nome[]"]');
+            const urlInput = wrapper.querySelector('input[name="materiali_url[]"]');
+            const typeSelect = wrapper.querySelector('select[name="materiali_tipo[]"]');
+            const descriptionInput = wrapper.querySelector('textarea[name="materiali_descrizione[]"]');
+
+            if (nameInput) nameInput.value = resource.title || 'Materiale Classroom';
+            if (urlInput) urlInput.value = resource.url || '';
+            if (typeSelect) typeSelect.value = chosenMaterialType || detectWizardMaterialType(resource.url || '', resource.suggested_material_type || '');
+            if (descriptionInput) {
+                const descParts = [];
+                if (resource.description) descParts.push(resource.description);
+                if (resource.source_label) descParts.push(`Import da ${resource.source_label}`);
+                descriptionInput.value = descParts.join(' | ');
+            }
+        }
+
+        function fillWizardTestRowFromResource(wrapper, resource) {
+            if (!wrapper || !resource) return;
+            const nameInput = wrapper.querySelector('input[name="test_nome[]"]');
+            const typeSelect = wrapper.querySelector('select[name="test_tipo[]"]');
+            const platformSelect = wrapper.querySelector('select[name="test_piattaforma[]"]');
+            const questionsInput = wrapper.querySelector('input[name="test_domande[]"]');
+            const durataInput = wrapper.querySelector('input[name="test_durata[]"]');
+            const puntiInput = wrapper.querySelector('input[name="test_punti[]"]');
+            const urlStudentiInput = wrapper.querySelector('input[name="test_url_studenti[]"]');
+            const urlDocenteInput = wrapper.querySelector('input[name="test_url_docente[]"]');
+            const urlInput = wrapper.querySelector('input[name="test_url[]"]');
+            const descInput = wrapper.querySelector('textarea[name="test_descrizione[]"]');
+            const classroomCourseInput = wrapper.querySelector('input[name="test_classroom_course_id[]"]');
+            const classroomAssignmentInput = wrapper.querySelector('input[name="test_classroom_assignment_id[]"]');
+            const classroomTopicInput = wrapper.querySelector('input[name="test_classroom_topic_id[]"]');
+
+            const platform = detectWizardTestPlatform(resource.url || '', !!resource.is_assignment);
+            if (nameInput) nameInput.value = resource.title || 'Test Classroom';
+            if (typeSelect) typeSelect.value = resource.is_assignment ? 'intermedio' : 'altro';
+            if (platformSelect) platformSelect.value = platform;
+            if (questionsInput) questionsInput.value = '';
+            if (durataInput) durataInput.value = '';
+            if (puntiInput && !puntiInput.value) puntiInput.value = '100';
+            if (urlStudentiInput) urlStudentiInput.value = resource.url || '';
+            if (urlDocenteInput) urlDocenteInput.value = resource.url || '';
+            if (urlInput) urlInput.value = resource.url || '';
+            const classroomCourseSelect = document.getElementById('wizardClassroomCourseSelect');
+            const selectedCourseId = classroomCourseSelect ? (classroomCourseSelect.value || '') : '';
+            if (classroomCourseInput) classroomCourseInput.value = (platform === 'google-classroom' ? selectedCourseId : '');
+            if (classroomAssignmentInput) classroomAssignmentInput.value = (platform === 'google-classroom' ? (resource.source_id || '') : '');
+            if (classroomTopicInput) classroomTopicInput.value = resource.topic_id || '';
+
+            if (descInput) {
+                const descParts = [];
+                if (resource.description) descParts.push(resource.description);
+                if (resource.source_label) descParts.push(`Import da ${resource.source_label}`);
+                if (resource.work_type) descParts.push(`Tipo Classroom: ${resource.work_type}`);
+                descInput.value = descParts.join(' | ');
+            }
+        }
+
+        function applyWizardTopicToArgomento() {
+            const topicSelect = document.getElementById('wizardClassroomTopicSelect');
+            const argomentoInput = document.querySelector('input[name="argomento"]');
+            if (!topicSelect || !argomentoInput) return;
+            if (!topicSelect.selectedOptions || topicSelect.selectedOptions.length === 0) return;
+            const topicLabel = String(topicSelect.selectedOptions[0].textContent || '').trim();
+            if (!topicLabel || topicLabel.toLowerCase() === 'senza argomento') return;
+
+            if (argomentoInput.value.trim() && argomentoInput.value.trim() !== topicLabel) {
+                const shouldReplace = confirm(`Vuoi sostituire l'Argomento UDA con "${topicLabel}"?`);
+                if (!shouldReplace) return;
+            }
+            argomentoInput.value = topicLabel;
+        }
+
+        function applyWizardCourseTitleIfMissing() {
+            const titoloInput = document.querySelector('input[name="titolo"]');
+            const courseSelect = document.getElementById('wizardClassroomCourseSelect');
+            if (!titoloInput || !courseSelect) return;
+            if (titoloInput.value.trim() !== '') return;
+            const selectedOption = (courseSelect.selectedOptions && courseSelect.selectedOptions.length > 0)
+                ? courseSelect.selectedOptions[0]
+                : courseSelect.options[courseSelect.selectedIndex];
+            const courseLabel = selectedOption ? String(selectedOption.textContent || '').trim() : '';
+            if (courseLabel !== '') {
+                titoloInput.value = courseLabel;
+            }
+        }
+
+        function applyWizardClassroomImport() {
+            const rows = document.querySelectorAll('#wizardClassroomResourcesBody tr[data-resource-id]');
+            if (!rows.length) {
+                alert('Nessuna risorsa disponibile da importare.');
+                return;
+            }
+
+            let importedMaterials = 0;
+            let importedTests = 0;
+            rows.forEach(row => {
+                const check = row.querySelector('.wizard-classroom-check');
+                if (!check || !check.checked) return;
+
+                const resourceId = row.dataset.resourceId || '';
+                const resource = getWizardClassroomResourceById(resourceId);
+                if (!resource) return;
+
+                const destinationSelect = row.querySelector('.wizard-classroom-destination');
+                const destination = destinationSelect ? destinationSelect.value : 'materiale';
+                if (destination === 'test') {
+                    const testRow = addTest();
+                    if (testRow) {
+                        fillWizardTestRowFromResource(testRow, resource);
+                    }
+                    importedTests++;
+                } else {
+                    const materialTypeSelect = row.querySelector('.wizard-classroom-material-type');
+                    const chosenMaterialType = materialTypeSelect ? materialTypeSelect.value : 'link';
+                    const materialRow = addMaterial();
+                    fillWizardMaterialRowFromResource(materialRow, resource, chosenMaterialType);
+                    importedMaterials++;
+                }
+            });
+
+            const total = importedMaterials + importedTests;
+            if (total === 0) {
+                alert('Seleziona almeno una risorsa da importare.');
+                return;
+            }
+
+            applyWizardTopicToArgomento();
+            applyWizardCourseTitleIfMissing();
+
+            const modalElement = document.getElementById('classroomTopicImportModal');
+            if (modalElement && typeof bootstrap !== 'undefined') {
+                const modal = bootstrap.Modal.getInstance(modalElement) || new bootstrap.Modal(modalElement);
+                modal.hide();
+            }
+
+            alert(`Import completato: ${importedMaterials} materiali e ${importedTests} test aggiunti al wizard.`);
+        }
+
+        // Generate Riepilogo
+        function generateRiepilogo() {
+            const container = document.getElementById('riepilogo-content');
+            let html = '';
+
+            // Info Generali
+            const titolo = document.querySelector('input[name="titolo"]').value;
+            const argomento = document.querySelector('input[name="argomento"]').value;
+            const disciplina = document.querySelector('input[name="disciplina"]').value;
+            const metodologia = document.querySelector('input[name="metodologia"]').value;
+            const annoScolastico = document.querySelector('[name="anno_scolastico"]').value;
+            const dataInizio = document.querySelector('input[name="data_inizio"]').value;
+            const dataFine = document.querySelector('input[name="data_fine"]').value;
+            const durataOre = document.querySelector('input[name="durata_ore"]').value;
+            const progetto = document.querySelector('input[name="progetto"]').value;
+            const descrizione = document.querySelector('textarea[name="descrizione"]').value;
+            const note = document.querySelector('textarea[name="note"]').value;
+            const classiTarget = document.querySelector('input[name="classi_target"]').value;
+            const stato = document.querySelector('select[name="stato"]').value;
+
+            html += `
+                <div class="card mb-3">
+                    <div class="card-header bg-primary text-white">
+                        <h6 class="mb-0"><i class="bi bi-info-circle"></i> Informazioni Generali</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <p><strong>Titolo:</strong> ${titolo || 'N/D'}</p>
+                                <p><strong>Argomento:</strong> ${argomento || 'N/D'}</p>
+                                <p><strong>Disciplina:</strong> ${disciplina || 'N/D'}</p>
+                                <p><strong>Metodologia:</strong> ${metodologia || 'N/D'}</p>
+                                <p><strong>Anno Scolastico:</strong> ${annoScolastico || 'N/D'}</p>
+                                <p><strong>Stato:</strong> <span class="badge bg-secondary">${stato || 'bozza'}</span></p>
+                            </div>
+                            <div class="col-md-6">
+                                <p><strong>Progetto:</strong> ${progetto || 'N/D'}</p>
+                                <p><strong>Data Inizio:</strong> ${dataInizio || 'N/D'}</p>
+                                <p><strong>Data Fine:</strong> ${dataFine || 'N/D'}</p>
+                                <p><strong>Durata:</strong> ${durataOre || '0'} ore</p>
+                                <p><strong>Classi Target:</strong> ${classiTarget || 'N/D'}</p>
+                            </div>
+                        </div>
+                        ${descrizione ? `<hr><p><strong>Descrizione:</strong><br>${descrizione}</p>` : ''}
+                        ${note ? `<hr><p><strong>Note/Prerequisiti:</strong><br>${note}</p>` : ''}
+                    </div>
+                </div>
+            `;
+
+            // Classi
+            const classiCount = document.querySelectorAll('input[name="classe_id[]"]').length;
+            html += `
+                <div class="card mb-3">
+                    <div class="card-header" style="background-color: #fd7e14; color: white;">
+                        <h6 class="mb-0"><i class="bi bi-people"></i> Classi Assegnate</h6>
+                    </div>
+                    <div class="card-body">
+                        <p>${classiCount > 0 ? classiCount + ' classe/i' : 'Nessuna classe assegnata'}</p>
+                    </div>
+                </div>
+            `;
+
+            // Materiali
+            const materialiCount = document.querySelectorAll('input[name="materiali_nome[]"]').length;
+            html += `
+                <div class="card mb-3">
+                    <div class="card-header bg-info text-white">
+                        <h6 class="mb-0"><i class="bi bi-folder-fill"></i> Materiali Didattici</h6>
+                    </div>
+                    <div class="card-body">
+                        <p>${materialiCount > 0 ? materialiCount + ' materiale/i' : 'Nessun materiale aggiunto'}</p>
+                    </div>
+                </div>
+            `;
+
+            // Obiettivi
+            const obiettiviCount = document.querySelectorAll('textarea[name="obiettivi_descrizione[]"]').length;
+            html += `
+                <div class="card mb-3">
+                    <div class="card-header bg-success text-white">
+                        <h6 class="mb-0"><i class="bi bi-bullseye"></i> Obiettivi Didattici</h6>
+                    </div>
+                    <div class="card-body">
+                        <p>${obiettiviCount > 0 ? obiettiviCount + ' obiettivo/i' : 'Nessun obiettivo definito'}</p>
+                    </div>
+                </div>
+            `;
+
+            // Test
+            const testCount = document.querySelectorAll('input[name="test_nome[]"]').length;
+            html += `
+                <div class="card mb-3">
+                    <div class="card-header" style="background-color: #6f42c1; color: white;">
+                        <h6 class="mb-0"><i class="bi bi-clipboard-check"></i> Test e Valutazioni</h6>
+                    </div>
+                    <div class="card-body">
+                        <p>${testCount > 0 ? testCount + ' test' : 'Nessun test configurato'}</p>
+                    </div>
+                </div>
+            `;
+
+            // Domande
+            const domandeCount = document.querySelectorAll('textarea[name="domanda_testo[]"]').length;
+            const domandeTot = domandeCount + domandeTempCount;
+            html += `
+                <div class="card mb-3">
+                    <div class="card-header" style="background-color: #d63384; color: white;">
+                        <h6 class="mb-0"><i class="bi bi-question-circle"></i> Domande per Interrogazioni</h6>
+                    </div>
+                    <div class="card-body">
+                        <p>${domandeTot > 0 ? domandeTot + ' domanda/e' : 'Nessuna domanda inserita/importata'}</p>
+                        ${domandeTempCount > 0 ? `<small class="text-muted">Include ${domandeTempCount} domanda/e importate sull'UDA temporanea.</small>` : ''}
+                    </div>
+                </div>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        async function refreshTempQuestionsCount() {
+            if (!tempUdaId) return domandeTempCount;
+            try {
+                const res = await fetch(`ajax_domande_temp_count.php?id=${encodeURIComponent(tempUdaId)}`);
+                const data = await res.json();
+                if (data && data.success) {
+                    domandeTempCount = data.count || 0;
+                }
+            } catch (e) {
+                console.warn('Impossibile aggiornare il conteggio domande temporanee', e);
+            }
+            return domandeTempCount;
+        }
+
+        window.addEventListener('focus', () => {
+            refreshTempQuestionsCount().then(() => {
+                if (currentStep === 7) generateRiepilogo();
+            });
+        });
+    </script>
+</body>
+</html>

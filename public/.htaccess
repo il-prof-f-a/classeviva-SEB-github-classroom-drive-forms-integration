@@ -1,0 +1,16 @@
+# Nessun rewrite necessario qui - i file PHP vengono serviti direttamente
+
+# Nega accesso a file sensibili
+<FilesMatch "\.(env|ini|log|sh|sql)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Content-Type corretti
+<IfModule mod_mime.c>
+    AddType application/javascript .js
+    AddType text/css .css
+</IfModule>
+
+php_flag display_errors on
+php_value error_reporting 32767

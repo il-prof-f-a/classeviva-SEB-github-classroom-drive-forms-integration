@@ -1,0 +1,355 @@
+<?php
+/**
+ * Gestione Repository Template GitHub
+ * Gestisce i repository template utilizzabili per gli assignment
+ */
+
+require_once '../bootstrap.php';
+
+use App\Core\Database\DatabaseFactory;
+
+$pageTitle = "Gestione Repository Template";
+
+// Inizializza servizi
+$dbAdapter = DatabaseFactory::createWithInitialization($config, true);
+
+$successMessage = null;
+$errorMessage = null;
+
+// Gestione salvataggio nuovo template
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_template') {
+    try {
+        $nome = trim($_POST['nome'] ?? '');
+        $urlRepository = trim($_POST['url_repository'] ?? '');
+        $descrizione = trim($_POST['descrizione'] ?? '');
+        $visibilita = $_POST['visibilita'] ?? 'private';
+        $linguaggio = trim($_POST['linguaggio'] ?? '');
+        $categoria = trim($_POST['categoria'] ?? '');
+        $note = trim($_POST['note'] ?? '');
+
+        if (!$nome || !$urlRepository) {
+            throw new Exception("Nome e URL repository sono obbligatori");
+        }
+
+        // Valida URL GitHub
+        if (!preg_match('#^https://github\.com/[^/]+/[^/]+/?$#', $urlRepository)) {
+            throw new Exception("URL repository non valido. Formato atteso: https://github.com/username/repo");
+        }
+
+        // Verifica se template esiste già
+        $existing = $dbAdapter->findAll('GITHUB_REPO_TEMPLATES');
+        foreach ($existing as $tmpl) {
+            if ($tmpl['url_repository'] === $urlRepository) {
+                throw new Exception("Un template con questo URL esiste già");
+            }
+        }
+
+        // Crea nuovo template
+        $templateId = 'GHRT_' . uniqid();
+        $newTemplate = [
+            'id_template' => $templateId,
+            'nome' => $nome,
+            'url_repository' => $urlRepository,
+            'descrizione' => $descrizione,
+            'visibilita' => $visibilita,
+            'linguaggio' => $linguaggio,
+            'categoria' => $categoria,
+            'data_creazione' => date('d/m/Y H:i:s'),
+            'ultima_modifica' => date('d/m/Y H:i:s'),
+            'attivo' => 'si',
+            'note' => $note
+        ];
+
+        $dbAdapter->insertRow('GITHUB_REPO_TEMPLATES', $newTemplate);
+        $successMessage = "Template aggiunto con successo!";
+
+    } catch (Exception $e) {
+        $errorMessage = "Errore: " . $e->getMessage();
+    }
+}
+
+// Gestione modifica stato (attivo/inattivo)
+if (isset($_GET['action']) && $_GET['action'] === 'toggle_status' && isset($_GET['id'])) {
+    try {
+        $templates = $dbAdapter->findAll('GITHUB_REPO_TEMPLATES');
+        foreach ($templates as $index => $tmpl) {
+            if ($tmpl['id_template'] === $_GET['id']) {
+                $newStatus = $tmpl['attivo'] === 'si' ? 'no' : 'si';
+                $tmpl['attivo'] = $newStatus;
+                $tmpl['ultima_modifica'] = date('d/m/Y H:i:s');
+                $dbAdapter->updateRow('GITHUB_REPO_TEMPLATES', 'id_template', $_GET['id'], $tmpl);
+                $successMessage = "Stato template aggiornato!";
+                break;
+            }
+        }
+    } catch (Exception $e) {
+        $errorMessage = "Errore nell'aggiornamento: " . $e->getMessage();
+    }
+}
+
+// Gestione eliminazione template
+if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])) {
+    try {
+        $dbAdapter->deleteRow('GITHUB_REPO_TEMPLATES', 'id_template', $_GET['id']);
+        $successMessage = "Template eliminato con successo!";
+    } catch (Exception $e) {
+        $errorMessage = "Errore nell'eliminazione: " . $e->getMessage();
+    }
+}
+
+// Carica templates esistenti
+$templates = $dbAdapter->findAll('GITHUB_REPO_TEMPLATES');
+
+// Categorie predefinite
+$categorieDisponibili = [
+    'Web Development',
+    'Mobile Development',
+    'Data Science',
+    'Machine Learning',
+    'Desktop Application',
+    'Game Development',
+    'DevOps',
+    'Database',
+    'API Development',
+    'Altro'
+];
+
+// Linguaggi predefiniti
+$linguaggiDisponibili = [
+    'JavaScript', 'TypeScript', 'Python', 'Java', 'C++', 'C#',
+    'PHP', 'Ruby', 'Go', 'Rust', 'Swift', 'Kotlin',
+    'HTML/CSS', 'SQL', 'Shell', 'Altro'
+];
+
+?>
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?= $pageTitle ?> - Sistema UDA</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+</head>
+<body>
+    <?php
+    $pageTitle = $pageTitle ?? 'Template GitHub';
+    $headerActions = '<a href="index.php" class="btn btn-outline-light btn-sm"><i class="bi bi-arrow-left"></i> Torna alla Dashboard</a>';
+    $headerContainerClass = 'container-fluid';
+    include __DIR__ . '/partials/app_header.php';
+    ?>
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-md-12">
+<?php if ($successMessage): ?>
+                <div class="alert alert-success alert-dismissible fade show">
+                    <i class="bi bi-check-circle"></i> <?= htmlspecialchars($successMessage) ?>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($errorMessage): ?>
+                <div class="alert alert-danger alert-dismissible fade show">
+                    <i class="bi bi-exclamation-triangle"></i> <?= htmlspecialchars($errorMessage) ?>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            <?php endif; ?>
+
+            <!-- Informazioni sull'utilizzo -->
+            <div class="alert alert-info">
+                <h5><i class="bi bi-info-circle"></i> Informazioni</h5>
+                <p class="mb-2">
+                    I repository template sono repository GitHub che contengono codice starter per gli assignment.
+                    Gli studenti riceveranno una copia del template quando accettano l'assignment.
+                </p>
+                <ul class="mb-0">
+                    <li>I template devono essere repository pubblici su GitHub</li>
+                    <li>Assicurati che il repository contenga un file README.md con le istruzioni</li>
+                    <li>Puoi disattivare temporaneamente un template senza eliminarlo</li>
+                </ul>
+            </div>
+
+            <!-- Templates Esistenti -->
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-folder-symlink"></i> Repository Template Disponibili
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <?php if (empty($templates)): ?>
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i> Nessun template configurato.
+                            Usa il form qui sotto per aggiungerne uno.
+                        </div>
+                    <?php else: ?>
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Nome</th>
+                                        <th>Repository</th>
+                                        <th>Linguaggio</th>
+                                        <th>Categoria</th>
+                                        <th>Visibilità</th>
+                                        <th>Stato</th>
+                                        <th>Azioni</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($templates as $template): ?>
+                                        <tr class="<?= $template['attivo'] === 'no' ? 'table-secondary' : '' ?>">
+                                            <td>
+                                                <strong><?= htmlspecialchars($template['nome']) ?></strong>
+                                                <?php if (!empty($template['descrizione'])): ?>
+                                                    <br><small class="text-muted"><?= htmlspecialchars($template['descrizione']) ?></small>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <a href="<?= htmlspecialchars($template['url_repository']) ?>"
+                                                   target="_blank" class="text-decoration-none">
+                                                    <i class="bi bi-github"></i>
+                                                    <?php
+                                                    // Estrai username/repo dall'URL
+                                                    preg_match('#github\.com/([^/]+/[^/]+)#', $template['url_repository'], $matches);
+                                                    echo htmlspecialchars($matches[1] ?? $template['url_repository']);
+                                                    ?>
+                                                </a>
+                                            </td>
+                                            <td>
+                                                <?php if (!empty($template['linguaggio'])): ?>
+                                                    <span class="badge bg-secondary"><?= htmlspecialchars($template['linguaggio']) ?></span>
+                                                <?php else: ?>
+                                                    <span class="text-muted">-</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td><?= htmlspecialchars($template['categoria'] ?: '-') ?></td>
+                                            <td>
+                                                <span class="badge bg-<?= $template['visibilita'] === 'public' ? 'success' : 'warning' ?>">
+                                                    <?= htmlspecialchars($template['visibilita']) ?>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-<?= $template['attivo'] === 'si' ? 'success' : 'secondary' ?>">
+                                                    <?= $template['attivo'] === 'si' ? 'Attivo' : 'Inattivo' ?>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <div class="btn-group" role="group">
+                                                    <a href="?action=toggle_status&id=<?= urlencode($template['id_template']) ?>"
+                                                       class="btn btn-sm btn-outline-<?= $template['attivo'] === 'si' ? 'warning' : 'success' ?>"
+                                                       title="<?= $template['attivo'] === 'si' ? 'Disattiva' : 'Attiva' ?>">
+                                                        <i class="bi bi-<?= $template['attivo'] === 'si' ? 'pause' : 'play' ?>-circle"></i>
+                                                    </a>
+                                                    <a href="?action=delete&id=<?= urlencode($template['id_template']) ?>"
+                                                       class="btn btn-sm btn-outline-danger"
+                                                       onclick="return confirm('Sei sicuro di voler eliminare questo template?')"
+                                                       title="Elimina">
+                                                        <i class="bi bi-trash"></i>
+                                                    </a>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <!-- Form Nuovo Template -->
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-plus-circle"></i> Aggiungi Nuovo Template
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="">
+                        <input type="hidden" name="action" value="add_template">
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Nome Template *</label>
+                                <input type="text" name="nome" class="form-control" required
+                                       placeholder="Es: Starter Java Spring Boot">
+                                <small class="form-text text-muted">
+                                    Nome descrittivo che apparirà nella selezione
+                                </small>
+                            </div>
+
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">URL Repository GitHub *</label>
+                                <input type="url" name="url_repository" class="form-control" required
+                                       placeholder="https://github.com/username/repo-template"
+                                       pattern="https://github\.com/[^/]+/[^/]+/?">
+                                <small class="form-text text-muted">
+                                    URL completo del repository template
+                                </small>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Linguaggio Principale</label>
+                                <select name="linguaggio" class="form-select">
+                                    <option value="">-- Seleziona --</option>
+                                    <?php foreach ($linguaggiDisponibili as $lang): ?>
+                                        <option value="<?= htmlspecialchars($lang) ?>"><?= htmlspecialchars($lang) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Categoria</label>
+                                <select name="categoria" class="form-select">
+                                    <option value="">-- Seleziona --</option>
+                                    <?php foreach ($categorieDisponibili as $cat): ?>
+                                        <option value="<?= htmlspecialchars($cat) ?>"><?= htmlspecialchars($cat) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Visibilità Repository</label>
+                                <select name="visibilita" class="form-select">
+                                    <option value="public">Public (consigliato)</option>
+                                    <option value="private">Private</option>
+                                </select>
+                                <small class="form-text text-muted">
+                                    I template pubblici sono più facili da usare
+                                </small>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Descrizione</label>
+                            <textarea name="descrizione" class="form-control" rows="2"
+                                      placeholder="Breve descrizione del template e del suo contenuto"></textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Note</label>
+                            <textarea name="note" class="form-control" rows="2"
+                                      placeholder="Note interne (opzionale)"></textarea>
+                        </div>
+
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-success">
+                                <i class="bi bi-save"></i> Aggiungi Template
+                            </button>
+                            <button type="reset" class="btn btn-outline-secondary">
+                                <i class="bi bi-x-circle"></i> Annulla
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

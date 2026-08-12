@@ -1,0 +1,112 @@
+{
+  "id_uda": "UDA_XXX",
+  "metadata": {
+    "titolo": "Titolo della banca domande",
+    "descrizione": "Descrizione opzionale",
+    "autore": "Nome Docente",
+    "data_creazione": "2025-01-15",
+    "versione": "1.0"
+  },
+  "domande": [
+    {
+      "argomento": "Nome Argomento",
+      "tipo": "aperta",
+      "domanda": "Testo della domanda a risposta aperta?",
+      "risposta_attesa": "Risposta che ti aspetti dallo studente. Più dettagliata possibile per valutazione oggettiva.",
+      "parole_chiave": ["parola1", "parola2", "concetto3"],
+      "difficolta": 3,
+      "tempo_risposta_min": 5,
+      "ordine_consigliato": 1,
+      "note": "Note opzionali per l'insegnante"
+    },
+    {
+      "argomento": "Nome Argomento",
+      "tipo": "multipla",
+      "domanda": "Domanda a scelta multipla (una sola risposta corretta)?",
+      "risposte": [
+        {
+          "testo": "Prima opzione (errata)",
+          "corretta": false
+        },
+        {
+          "testo": "Seconda opzione (corretta)",
+          "corretta": true
+        },
+        {
+          "testo": "Terza opzione (errata)",
+          "corretta": false
+        },
+        {
+          "testo": "Quarta opzione (errata)",
+          "corretta": false
+        }
+      ],
+      "spiegazione": "Spiegazione del perché la risposta corretta è quella giusta",
+      "parole_chiave": ["concetto", "tema"],
+      "difficolta": 2,
+      "tempo_risposta_min": 2,
+      "ordine_consigliato": 2
+    },
+    {
+      "argomento": "Nome Argomento",
+      "tipo": "multipla_multi",
+      "domanda": "Domanda con più risposte corrette. Quali delle seguenti affermazioni sono vere?",
+      "risposte": [
+        {
+          "testo": "Affermazione 1 (vera)",
+          "corretta": true
+        },
+        {
+          "testo": "Affermazione 2 (falsa)",
+          "corretta": false
+        },
+        {
+          "testo": "Affermazione 3 (vera)",
+          "corretta": true
+        },
+        {
+          "testo": "Affermazione 4 (falsa)",
+          "corretta": false
+        }
+      ],
+      "spiegazione": "Spiegazione delle risposte corrette",
+      "difficolta": 4,
+      "tempo_risposta_min": 4,
+      "ordine_consigliato": 3
+    },
+    {
+      "argomento": "Nome Argomento",
+      "tipo": "vero_falso",
+      "domanda": "Affermazione da valutare come vera o falsa",
+      "risposta_corretta": true,
+      "spiegazione": "Spiegazione del perché è vero/falso",
+      "parole_chiave": ["concetto"],
+      "difficolta": 1,
+      "tempo_risposta_min": 1,
+      "ordine_consigliato": 4
+    },
+    {
+      "argomento": "Nome Argomento",
+      "tipo": "breve",
+      "domanda": "Domanda che richiede una risposta breve (una parola o frase corta)?",
+      "risposte_accettate": ["risposta1", "sinonimo1", "variante1"],
+      "case_sensitive": false,
+      "parole_chiave": ["termine", "definizione"],
+      "difficolta": 2,
+      "tempo_risposta_min": 2,
+      "ordine_consigliato": 5
+    },
+    {
+      "argomento": "Nome Argomento",
+      "tipo": "numerica",
+      "domanda": "Domanda che richiede un valore numerico come risposta?",
+      "valore_corretto": 42.5,
+      "tolleranza": 0.5,
+      "unita_misura": "secondi",
+      "spiegazione": "Spiegazione del calcolo",
+      "difficolta": 3,
+      "tempo_risposta_min": 5,
+      "ordine_consigliato": 6
+    }
+  ]
+}

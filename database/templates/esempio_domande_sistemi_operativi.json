@@ -1,0 +1,324 @@
+{
+  "id_uda": "UDA_SO_2025",
+  "metadata": {
+    "titolo": "Domande Sistemi Operativi - Scheduling e Processi",
+    "descrizione": "Banca domande completa per verifica su scheduling, gestione processi e memoria",
+    "autore": "Sistema UDA",
+    "data_creazione": "2025-01-15",
+    "versione": "1.0",
+    "disciplina": "Informatica - Sistemi e Reti"
+  },
+  "domande": [
+    {
+      "argomento": "Introduzione Processi",
+      "tipo": "aperta",
+      "domanda": "Che cos'è un processo e quali sono le sue componenti principali?",
+      "risposta_attesa": "Un processo è un programma in esecuzione. Le sue componenti principali sono: il codice del programma (text section), il program counter che indica l'istruzione corrente, i registri del processore, lo stack per chiamate a funzione e variabili locali, la sezione dati per variabili globali e l'heap per allocazione dinamica della memoria.",
+      "parole_chiave": ["processo", "programma in esecuzione", "text section", "program counter", "registri", "stack", "heap"],
+      "difficolta": 2,
+      "tempo_risposta_min": 4,
+      "ordine_consigliato": 1,
+      "note": "Domanda fondamentale introduttiva"
+    },
+    {
+      "argomento": "Stati Processo",
+      "tipo": "multipla",
+      "domanda": "Quando un processo passa dallo stato READY a RUNNING?",
+      "risposte": [
+        {
+          "testo": "Quando termina un'operazione di I/O",
+          "corretta": false
+        },
+        {
+          "testo": "Quando lo scheduler seleziona il processo per l'esecuzione",
+          "corretta": true
+        },
+        {
+          "testo": "Quando il processo viene creato",
+          "corretta": false
+        },
+        {
+          "testo": "Quando il processo fa una system call",
+          "corretta": false
+        }
+      ],
+      "spiegazione": "Il passaggio da READY a RUNNING avviene quando lo scheduler (dispatcher) seleziona il processo dalla coda dei processi pronti e gli assegna la CPU",
+      "parole_chiave": ["stati processo", "scheduler", "dispatch", "ready", "running"],
+      "difficolta": 2,
+      "tempo_risposta_min": 2,
+      "ordine_consigliato": 2
+    },
+    {
+      "argomento": "Stati Processo",
+      "tipo": "vero_falso",
+      "domanda": "Un processo può esistere contemporaneamente in più stati (ad esempio READY e RUNNING)",
+      "risposta_corretta": false,
+      "spiegazione": "Un processo può trovarsi in un solo stato alla volta. Gli stati tipici sono: NEW, READY, RUNNING, WAITING, TERMINATED. Il processo transita tra questi stati ma non può essere in più stati simultaneamente.",
+      "parole_chiave": ["stati processo", "ciclo vita"],
+      "difficolta": 1,
+      "tempo_risposta_min": 1,
+      "ordine_consigliato": 3
+    },
+    {
+      "argomento": "Scheduling FCFS",
+      "tipo": "multipla",
+      "domanda": "Quale delle seguenti affermazioni su First Come First Served (FCFS) è corretta?",
+      "risposte": [
+        {
+          "testo": "È un algoritmo pre-emptive",
+          "corretta": false
+        },
+        {
+          "testo": "Minimizza sempre il tempo medio di attesa",
+          "corretta": false
+        },
+        {
+          "testo": "Può soffrire del convoy effect",
+          "corretta": true
+        },
+        {
+          "testo": "Richiede la conoscenza anticipata del burst time",
+          "corretta": false
+        }
+      ],
+      "spiegazione": "FCFS è non-preemptive e soffre del convoy effect quando processi brevi devono attendere un processo lungo. Non minimizza il tempo di attesa e non richiede conoscenza anticipata.",
+      "parole_chiave": ["FCFS", "convoy effect", "non-preemptive"],
+      "difficolta": 3,
+      "tempo_risposta_min": 2,
+      "ordine_consigliato": 4
+    },
+    {
+      "argomento": "Scheduling Round Robin",
+      "tipo": "aperta",
+      "domanda": "Spiega il funzionamento dell'algoritmo Round Robin e il ruolo del time quantum",
+      "risposta_attesa": "Round Robin è un algoritmo di scheduling pre-emptive progettato per sistemi time-sharing. I processi sono organizzati in una coda circolare FIFO. Ogni processo riceve un time quantum (o time slice) di tempo CPU. Se il processo non termina entro il suo quantum, viene interrotto (preempted) e rimesso in fondo alla coda. Il time quantum deve essere sufficientemente grande da ammortizzare il context switch overhead ma abbastanza piccolo da garantire buona responsiveness.",
+      "parole_chiave": ["round robin", "preemptive", "quantum", "time slice", "coda circolare", "FIFO", "context switch"],
+      "difficolta": 4,
+      "tempo_risposta_min": 6,
+      "ordine_consigliato": 5,
+      "collegata_a": 1,
+      "note": "Domanda importante che richiede comprensione approfondita"
+    },
+    {
+      "argomento": "Scheduling SJF",
+      "tipo": "multipla_multi",
+      "domanda": "Quali delle seguenti affermazioni su Shortest Job First (SJF) sono vere?",
+      "risposte": [
+        {
+          "testo": "Minimizza il tempo medio di attesa",
+          "corretta": true
+        },
+        {
+          "testo": "Può causare starvation per processi lunghi",
+          "corretta": true
+        },
+        {
+          "testo": "È sempre implementabile in pratica",
+          "corretta": false
+        },
+        {
+          "testo": "Richiede la conoscenza del prossimo CPU burst",
+          "corretta": true
+        },
+        {
+          "testo": "È sempre preemptive",
+          "corretta": false
+        }
+      ],
+      "spiegazione": "SJF minimizza il tempo medio di attesa (proprietà ottimale) ma richiede predizione del CPU burst, può causare starvation e non è sempre preemptive (esiste anche SRTF come versione preemptive)",
+      "parole_chiave": ["SJF", "shortest job first", "optimal", "starvation", "CPU burst"],
+      "difficolta": 4,
+      "tempo_risposta_min": 4,
+      "ordine_consigliato": 6
+    },
+    {
+      "argomento": "Scheduling Priority",
+      "tipo": "aperta",
+      "domanda": "Spiega il problema della starvation nello scheduling a priorità e come l'aging lo risolve",
+      "risposta_attesa": "Nello scheduling a priorità, i processi con priorità bassa possono soffrire di starvation: potrebbero non essere mai eseguiti se arrivano continuamente processi ad alta priorità. L'aging risolve questo problema aumentando gradualmente la priorità dei processi che attendono da molto tempo. In questo modo, anche un processo inizialmente a bassa priorità eventualmente raggiungerà una priorità sufficientemente alta da essere schedulato.",
+      "parole_chiave": ["priority scheduling", "starvation", "aging", "priorità dinamica"],
+      "difficolta": 4,
+      "tempo_risposta_min": 5,
+      "ordine_consigliato": 7
+    },
+    {
+      "argomento": "Context Switch",
+      "tipo": "multipla",
+      "domanda": "Cosa include il context switch di un processo?",
+      "risposte": [
+        {
+          "testo": "Solo il salvataggio del program counter",
+          "corretta": false
+        },
+        {
+          "testo": "Salvataggio e ripristino dello stato completo del processo (registri, program counter, ecc.)",
+          "corretta": true
+        },
+        {
+          "testo": "Solo il cambio della memoria allocata",
+          "corretta": false
+        },
+        {
+          "testo": "La terminazione del processo precedente",
+          "corretta": false
+        }
+      ],
+      "spiegazione": "Il context switch comporta il salvataggio dello stato completo del processo corrente (registri CPU, program counter, informazioni di scheduling) nel suo PCB e il caricamento dello stato del prossimo processo da eseguire",
+      "parole_chiave": ["context switch", "PCB", "process control block", "overhead"],
+      "difficolta": 3,
+      "tempo_risposta_min": 3,
+      "ordine_consigliato": 8
+    },
+    {
+      "argomento": "IPC",
+      "tipo": "multipla_multi",
+      "domanda": "Quali sono meccanismi di Inter-Process Communication (IPC)?",
+      "risposte": [
+        {
+          "testo": "Shared Memory",
+          "corretta": true
+        },
+        {
+          "testo": "Message Passing",
+          "corretta": true
+        },
+        {
+          "testo": "Pipes",
+          "corretta": true
+        },
+        {
+          "testo": "Context Switch",
+          "corretta": false
+        },
+        {
+          "testo": "Sockets",
+          "corretta": true
+        }
+      ],
+      "spiegazione": "IPC include shared memory, message passing, pipes, signals, sockets. Il context switch non è un meccanismo IPC ma un overhead dello scheduling.",
+      "parole_chiave": ["IPC", "comunicazione tra processi", "shared memory", "message passing"],
+      "difficolta": 3,
+      "tempo_risposta_min": 3,
+      "ordine_consigliato": 9
+    },
+    {
+      "argomento": "Thread",
+      "tipo": "aperta",
+      "domanda": "Qual è la differenza principale tra processo e thread?",
+      "risposta_attesa": "Un processo è un programma in esecuzione con il proprio spazio di indirizzamento, mentre i thread sono unità di esecuzione leggere all'interno di un processo che condividono lo stesso spazio di indirizzamento. I thread hanno il proprio stack e registri ma condividono il codice, i dati e le risorse del processo. La creazione e il context switch tra thread sono più veloci rispetto ai processi.",
+      "parole_chiave": ["thread", "processo", "lightweight", "spazio indirizzamento condiviso", "context switch"],
+      "difficolta": 3,
+      "tempo_risposta_min": 4,
+      "ordine_consigliato": 10
+    },
+    {
+      "argomento": "Thread",
+      "tipo": "vero_falso",
+      "domanda": "I thread all'interno dello stesso processo condividono lo spazio di indirizzamento ma hanno ciascuno il proprio stack",
+      "risposta_corretta": true,
+      "spiegazione": "Corretto. I thread condividono il codice, i dati globali e l'heap del processo, ma ciascun thread ha il proprio stack per variabili locali e chiamate a funzione, e i propri registri (incluso il program counter).",
+      "parole_chiave": ["thread", "stack", "spazio condiviso"],
+      "difficolta": 2,
+      "tempo_risposta_min": 1,
+      "ordine_consigliato": 11
+    },
+    {
+      "argomento": "Sincronizzazione",
+      "tipo": "multipla",
+      "domanda": "Quale problema si verifica quando due thread accedono contemporaneamente a una risorsa condivisa senza sincronizzazione?",
+      "risposte": [
+        {
+          "testo": "Deadlock",
+          "corretta": false
+        },
+        {
+          "testo": "Race Condition",
+          "corretta": true
+        },
+        {
+          "testo": "Starvation",
+          "corretta": false
+        },
+        {
+          "testo": "Priority Inversion",
+          "corretta": false
+        }
+      ],
+      "spiegazione": "La race condition si verifica quando il risultato dell'esecuzione dipende dall'ordine temporale non deterministico degli accessi. Il deadlock è un blocco reciproco, la starvation è l'attesa indefinita, la priority inversion è quando un processo a bassa priorità blocca uno ad alta priorità.",
+      "parole_chiave": ["race condition", "sincronizzazione", "risorsa condivisa"],
+      "difficolta": 3,
+      "tempo_risposta_min": 2,
+      "ordine_consigliato": 12
+    },
+    {
+      "argomento": "Memoria Virtuale",
+      "tipo": "aperta",
+      "domanda": "Spiega il concetto di memoria virtuale e i suoi vantaggi",
+      "risposta_attesa": "La memoria virtuale è una tecnica che permette l'esecuzione di processi che non sono completamente in memoria fisica (RAM). Ogni processo ha il proprio spazio di indirizzamento virtuale che viene mappato in memoria fisica tramite paginazione o segmentazione. Vantaggi: permette di eseguire programmi più grandi della RAM disponibile, facilita la condivisione di memoria tra processi, isola gli spazi di indirizzamento per sicurezza, e permette allocazione non contigua della memoria.",
+      "parole_chiave": ["memoria virtuale", "paginazione", "spazio indirizzamento", "RAM", "isolamento"],
+      "difficolta": 4,
+      "tempo_risposta_min": 6,
+      "ordine_consigliato": 13
+    },
+    {
+      "argomento": "Paginazione",
+      "tipo": "multipla",
+      "domanda": "Qual è la funzione della Translation Lookaside Buffer (TLB)?",
+      "risposte": [
+        {
+          "testo": "Memorizza le pagine più usate del disco",
+          "corretta": false
+        },
+        {
+          "testo": "Cache per le traduzioni da indirizzo virtuale a fisico",
+          "corretta": true
+        },
+        {
+          "testo": "Gestisce i page fault",
+          "corretta": false
+        },
+        {
+          "testo": "Alloca pagine libere ai processi",
+          "corretta": false
+        }
+      ],
+      "spiegazione": "La TLB è una cache hardware che memorizza le traduzioni più recenti da indirizzo virtuale a indirizzo fisico, evitando l'accesso alla page table in memoria per ogni riferimento",
+      "parole_chiave": ["TLB", "cache", "page table", "traduzione indirizzi"],
+      "difficolta": 4,
+      "tempo_risposta_min": 3,
+      "ordine_consigliato": 14
+    },
+    {
+      "argomento": "Page Replacement",
+      "tipo": "multipla_multi",
+      "domanda": "Quali sono algoritmi di page replacement?",
+      "risposte": [
+        {
+          "testo": "FIFO (First In First Out)",
+          "corretta": true
+        },
+        {
+          "testo": "LRU (Least Recently Used)",
+          "corretta": true
+        },
+        {
+          "testo": "Round Robin",
+          "corretta": false
+        },
+        {
+          "testo": "Optimal",
+          "corretta": true
+        },
+        {
+          "testo": "Clock (Second Chance)",
+          "corretta": true
+        }
+      ],
+      "spiegazione": "FIFO, LRU, Optimal e Clock sono algoritmi di page replacement. Round Robin è un algoritmo di scheduling CPU, non di page replacement.",
+      "parole_chiave": ["page replacement", "FIFO", "LRU", "optimal", "clock"],
+      "difficolta": 3,
+      "tempo_risposta_min": 3,
+      "ordine_consigliato": 15
+    }
+  ]
+}
