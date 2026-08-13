@@ -23,6 +23,7 @@ use App\Core\Database\DatabaseFactory;
 use App\Core\UserIntegrationManager;
 use App\Integration\ClasseVivaAPI;
 use App\Integration\GoogleClassroomAPI;
+use App\Integration\GoogleFormsCatalog;
 use App\Core\NotificationManager;
 use App\Integration\GitHubIntegration;
 use Google\Client;
@@ -97,6 +98,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $returnToCandidate = $normalizeReturnUrl($returnToCandidate);
     if ($returnToCandidate !== '' && stripos($returnToCandidate, 'user_integrations.php') === false) {
         $_SESSION['cv_return_to'] = $returnToCandidate;
+        $returnPath = (string)(parse_url($returnToCandidate, PHP_URL_PATH) ?? '');
+        if (str_ends_with($returnPath, '/public/import_questions.php')) {
+            $_SESSION['google_return_to'] = $returnToCandidate;
+        } else {
+            unset($_SESSION['google_return_to']);
+        }
+    } else {
+        unset($_SESSION['google_return_to']);
     }
 }
 $returnTo = $normalizeReturnUrl($_SESSION['cv_return_to'] ?? '');
@@ -410,6 +419,7 @@ if (!$googleRedirectUri) {
 
 $googleScopes = [
     Drive::DRIVE_FILE,
+    Drive::DRIVE_METADATA_READONLY,
     Classroom::CLASSROOM_COURSES_READONLY,
     Classroom::CLASSROOM_COURSEWORK_ME,
     Classroom::CLASSROOM_COURSEWORK_STUDENTS,
@@ -431,9 +441,11 @@ $googleTokenStatus = [
 $googleAuthUrl = null;
 $googleAuthError = null;
 $googleTokenData = null;
+$googleMissingScopes = [];
 
 if (!empty($googleConfig['token']) && is_array($googleConfig['token'])) {
     $googleTokenData = $googleConfig['token'];
+    $googleMissingScopes = GoogleFormsCatalog::missingScopes($googleTokenData);
 }
 
 if (file_exists($googleCredentialsPath)) {
@@ -470,6 +482,10 @@ if (file_exists($googleCredentialsPath)) {
             $authClient->addScope($scope);
         }
 
+        $googleOAuthState = bin2hex(random_bytes(32));
+        $_SESSION['google_integration_oauth_state'] = $googleOAuthState;
+        $authClient->setState($googleOAuthState);
+
         $googleAuthUrl = $authClient->createAuthUrl();
     } catch (\Exception $e) {
         $googleAuthError = "Errore durante la generazione dell'URL di autorizzazione: " . $e->getMessage();
@@ -493,7 +509,7 @@ $tabStatus = [
     'classeviva' => $statusCvOk
         ? 'valid'
         : ($classevivaTokenState['token'] ? 'warning' : 'missing'),
-    'google' => ($googleTokenStatus['valid'] ?? false)
+    'google' => ($googleTokenStatus['valid'] ?? false) && !$googleMissingScopes
         ? 'valid'
         : (!empty($googleTokenStatus['exists']) ? 'warning' : 'missing'),
     'mail' => $statusMailOk ? 'valid' : 'missing',
@@ -501,7 +517,7 @@ $tabStatus = [
     'github' => $statusGithubOk ? 'valid' : 'missing',
 ];
 
-$configurationIssue = !$classevivaTokenState['ready'] || !(!empty($googleTokenStatus['exists']) && !empty($googleTokenStatus['valid']));
+$configurationIssue = !$classevivaTokenState['ready'] || !(!empty($googleTokenStatus['exists']) && !empty($googleTokenStatus['valid']) && !$googleMissingScopes);
 $configurationCardBorder = $configurationIssue ? 'border-danger config-issue' : 'border-primary';
 $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-primary text-white';
 
@@ -959,10 +975,10 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
             <div class="card border-0 shadow-sm mb-4">
                 <div class="card-body">
                     <h5 class="mb-3">Autenticazione Google</h5>
-                    <div class="card mb-3 status-card <?= ($googleTokenStatus['exists'] && $googleTokenStatus['valid']) ? 'valid' : ($googleTokenStatus['exists'] ? 'invalid' : '') ?>">
+                    <div class="card mb-3 status-card <?= ($googleTokenStatus['exists'] && $googleTokenStatus['valid'] && !$googleMissingScopes) ? 'valid' : ($googleTokenStatus['exists'] ? 'invalid' : '') ?>">
                         <div class="card-header">
                             <h6 class="mb-0">
-                                <?php if ($googleTokenStatus['exists'] && $googleTokenStatus['valid']): ?>
+                                <?php if ($googleTokenStatus['exists'] && $googleTokenStatus['valid'] && !$googleMissingScopes): ?>
                                     <i class="bi bi-check-circle-fill text-success"></i> Token Valido
                                 <?php elseif ($googleTokenStatus['exists']): ?>
                                     <i class="bi bi-exclamation-triangle-fill text-warning"></i> Token Scaduto
@@ -1020,9 +1036,15 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
                             <?= htmlspecialchars($googleAuthError) ?>
                         </div>
                     <?php endif; ?>
+                    <?php if ($googleMissingScopes): ?>
+                        <div class="alert alert-warning">
+                            <i class="bi bi-shield-exclamation"></i>
+                            Per elencare i Forms presenti nel Drive serve una nuova autorizzazione Google con lo scope Drive metadata.
+                        </div>
+                    <?php endif; ?>
 
                     <div class="d-grid mb-3">
-                        <?php if (!$googleTokenStatus['exists'] || !$googleTokenStatus['valid']): ?>
+                        <?php if (!$googleTokenStatus['exists'] || !$googleTokenStatus['valid'] || $googleMissingScopes): ?>
                             <?php if ($googleAuthUrl): ?>
                                 <a href="<?= htmlspecialchars($googleAuthUrl) ?>" class="btn btn-primary big-button">
                                     <i class="bi bi-box-arrow-in-right"></i>

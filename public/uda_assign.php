@@ -7,6 +7,7 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
 use App\Integration\ClasseVivaAPI;
+use App\Utils\UdaMetadataHelper;
 
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -84,6 +85,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $deleted = $dbAdapter->deleteRow('CLASSI_ASSEGNATE', $assegnId, 'id_assegnazione');
 
         if ($deleted) {
+            $udaManager->updateUDA($udaId, [
+                'classi_target' => UdaMetadataHelper::classTargetFromAssignments($dbAdapter->findClassiAssegnate($udaId))
+            ]);
             header("Location: uda_assign.php?id=" . urlencode($udaId) . "&msg=remove_success");
             exit;
         } else {
@@ -163,6 +167,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
 
         if ($assigned > 0) {
+            $udaManager->updateUDA($udaId, [
+                'classi_target' => UdaMetadataHelper::classTargetFromAssignments($dbAdapter->findClassiAssegnate($udaId))
+            ]);
             header("Location: uda_view.php?id=" . urlencode($udaId) . "&msg=assign_success&count=" . $assigned);
             exit;
         } else {

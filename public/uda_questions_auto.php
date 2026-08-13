@@ -10,6 +10,7 @@ use App\Core\Database\DatabaseFactory;
 use App\Core\UDAManager;
 use App\Core\ObiettiviManager;
 use App\Core\UserIntegrationManager;
+use App\Utils\UdaMetadataHelper;
 
 $db = DatabaseFactory::createWithInitialization($config, true);
 $udaManager = new UDAManager($config);
@@ -89,6 +90,10 @@ try {
     $attachmentsSeen = [];
 
     $udaComplete = $udaManager->getUDAComplete($udaId);
+    $assignedTarget = UdaMetadataHelper::classTargetFromAssignments($udaComplete['classi_assegnate'] ?? []);
+    if ($assignedTarget !== '') {
+        $udaDestinatari = $assignedTarget;
+    }
     if (!empty($udaComplete['materiali'])) {
         foreach ($udaComplete['materiali'] as $mat) {
             $name = $mat['nome'] ?? 'Allegato';

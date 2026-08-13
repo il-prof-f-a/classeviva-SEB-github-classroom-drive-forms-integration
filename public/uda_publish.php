@@ -284,16 +284,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         // Crea descrizione dettagliata (SENZA i link, ora vanno come allegati)
                         $udaDescription = "Descrizione:\n" . ($uda->descrizione ?? 'N/A') . "\n\n";
 
-                        if (!empty($uda->progetto)) {
-                            $udaDescription .= "Progetto:\n" . $uda->progetto . "\n\n";
-                        }
-
                         if (!empty($uda->note)) {
                             $udaDescription .= "Note:\n" . $uda->note . "\n\n";
-                        }
-
-                        if (!empty($uda->durata_ore)) {
-                            $udaDescription .= "Durata:\n" . $uda->durata_ore . " ore";
                         }
 
                         // Prepara array di materiali da allegare
@@ -692,7 +684,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                         <label class="form-check-label" for="publish_uda_material">
                                             <strong><i class="bi bi-file-earmark-text"></i> Materiale UDA Principale</strong>
                                             <small class="d-block text-muted">
-                                                Titolo: "<?= htmlspecialchars($uda->titolo) ?>" | Include: descrizione, progetto, note, durata + link a <?= count($materiali) ?> materiali
+                                                Titolo: "<?= htmlspecialchars($uda->titolo) ?>" | Include: descrizione, note + link a <?= count($materiali) ?> materiali
                                             </small>
                                         </label>
                                     </div>

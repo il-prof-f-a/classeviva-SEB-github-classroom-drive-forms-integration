@@ -127,6 +127,14 @@ GOOGLE_SHEETS_ENABLED=true
 
 Il redirect URI deve coincidere esattamente con quello registrato in Google Cloud, inclusi schema, porta, percorso e slash finali. Il token OAuth viene creato dal flusso applicativo e non deve essere aggiunto al repository.
 
+Per l'importazione guidata dei test Google Forms l'autorizzazione richiede anche lo scope `https://www.googleapis.com/auth/drive.metadata.readonly` (Drive metadata in sola lettura), oltre agli scope Forms body/responses. Questo permette di elencare i Forms già presenti nel Drive dell'utente, mostrando titolo, autore, data di creazione e numero di risposte. Dopo l'aggiunta dello scope, gli utenti già autorizzati devono cliccare nuovamente su **Autorizza Accesso a Google** o **Rinnova Token** nella sezione Integrazioni Google.
+
+In `public/import_questions.php`, scegliendo **Google Forms**, la piattaforma carica l'elenco dei moduli accessibili nel Drive e offre una ricerca per titolo, autore o data. Selezionando un modulo viene compilato automaticamente il **Link docente Google Forms**; il link manuale resta disponibile come fallback. Se il token manca, è scaduto o non contiene lo scope Drive metadata, la pagina mostra un pulsante verso la sezione Google delle Integrazioni e, al termine dell'autorizzazione, un pulsante per tornare all'importazione.
+
+Nella modalità **JSON** dell'import strutturato il template viene caricato in una textarea editabile. Il pulsante accanto al selettore file legge il JSON localmente nel browser e lo copia nella textarea; **Mostra anteprima** invia il contenuto della textarea al server. CSV ed Excel continuano a usare il caricamento file tradizionale.
+
+Dopo **Mostra anteprima** la pagina nasconde i pannelli di selezione e mostra subito sotto il banner soltanto le domande da importare. Le domande sono visualizzate con la stessa card condivisa usata dal wizard e da `uda_questions.php`; il pulsante di modifica apre lo stesso editor per tipo, risposta, opzioni e parole chiave. **Annulla** torna alla pagina di importazione senza importare dati. La struttura tecnica non viene mostrata: per ottenere il formato si usano i pulsanti di download dei template.
+
 Per staging e produzione sostituire `APP_URL` e i due redirect con URL HTTPS dell'ambiente corrispondente e registrarli nel relativo client OAuth.
 
 ## GitHub Classroom

@@ -9,6 +9,9 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
 use App\Integration\ClasseVivaAPI;
+use App\Utils\AcademicPeriodHelper;
+use App\Utils\QuestionEditorHelper;
+use App\Utils\UdaMetadataHelper;
 
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -72,12 +75,52 @@ try {
 $error_message = null;
 $success_message = null;
 
+// Le date restano memorizzate per compatibilità, ma vengono calcolate dal periodo ClasseViva.
+$currentYear = (int)date('Y');
+$currentMonth = (int)date('n');
+$startYear = $currentMonth >= 8 ? $currentYear : ($currentYear - 1);
+$currentAcademicYear = $startYear . '-' . substr((string)($startYear + 1), -2);
+$nextAcademicYear = ($startYear + 1) . '-' . substr((string)($startYear + 2), -2);
+$classevivaPeriodConfig = $config['classeviva'] ?? [];
+$periodOptionsByYear = [];
+foreach ([$currentAcademicYear, $nextAcademicYear] as $academicYear) {
+    try {
+        $periodOptionsByYear[$academicYear] = AcademicPeriodHelper::options($academicYear, $classevivaPeriodConfig);
+    } catch (\Throwable $e) {
+        $periodOptionsByYear[$academicYear] = [];
+    }
+}
+
 // Gestione POST per la creazione della UDA
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'create_uda') {
 
     try {
         // 1. Dati base UDA (Step 1)
         $udaId = 'UDA_' . date('Ymd') . '_' . uniqid();
+
+        $academicYear = (string)($_POST['anno_scolastico'] ?? $currentAcademicYear);
+        $periodValue = trim((string)($_POST['periodo_scolastico'] ?? ''));
+        $periodOptions = $periodOptionsByYear[$academicYear] ?? [];
+        if ($periodOptions === []) {
+            try {
+                $periodOptions = AcademicPeriodHelper::options($academicYear, $classevivaPeriodConfig);
+            } catch (\Throwable $e) {
+                $periodOptions = [];
+            }
+        }
+        $selectedPeriod = null;
+        foreach ($periodOptions as $period) {
+            if ($period['value'] === $periodValue) {
+                $selectedPeriod = $period;
+                break;
+            }
+        }
+        $classroomImported = filter_var($_POST['classroom_imported'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $classroomNotes = UdaMetadataHelper::mergeClassroomNotes(
+            (string)($_POST['note'] ?? ''),
+            $_POST['classroom_section'] ?? null,
+            $_POST['classroom_room'] ?? null
+        );
 
         $udaData = [
             'id_uda' => $udaId,
@@ -86,14 +129,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             'disciplina' => $_POST['disciplina'] ?? '',
             'metodologia' => $_POST['metodologia'] ?? '',
             'anno_scolastico' => $_POST['anno_scolastico'] ?? '',
-            'data_inizio' => $_POST['data_inizio'] ?? null,
-            'data_fine' => $_POST['data_fine'] ?? null,
-            'durata_ore' => intval($_POST['durata_ore'] ?? 0),
-            'progetto' => $_POST['progetto'] ?? '',
+            'data_inizio' => $selectedPeriod['start'] ?? ($_POST['data_inizio'] ?? null),
+            'data_fine' => $selectedPeriod['end'] ?? ($_POST['data_fine'] ?? null),
             'descrizione' => $_POST['descrizione'] ?? '',
-            'note' => $_POST['note'] ?? '',
-            'classi_target' => $_POST['classi_target'] ?? '',
-            'stato' => $_POST['stato'] ?? 'bozza'
+            'note' => $classroomNotes,
+            'classi_target' => '',
+            'stato' => UdaMetadataHelper::statusAfterClassroomImport($classroomImported, (string)($_POST['stato'] ?? 'bozza'))
         ];
 
         // Validazione campi obbligatori
@@ -146,8 +187,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         'codice' => $_POST['obiettivi_codice'][$index] ?? '',
                         'descrizione' => $descrizione,
                         'competenza' => $_POST['obiettivi_competenza'][$index] ?? '',
-                        'livello_tassonomia' => intval($_POST['obiettivi_livello'][$index] ?? 1),
-                        'peso' => intval($_POST['obiettivi_peso'][$index] ?? 10)
+                        'livello_tassonomia' => intval($_POST['obiettivi_livello'][$index] ?? 1)
                     ]);
                 }
             }
@@ -197,19 +237,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             foreach ($_POST['domanda_testo'] as $index => $testo) {
                 if (!empty($testo)) {
                     $domandaId = 'DOM_' . uniqid();
-                    $dbAdapter->insertRow('DOMANDE_INTERROGAZIONE', [
-                        'id_domanda' => $domandaId,
-                        'id_uda' => $udaId,
+                    $questionPayload = QuestionEditorHelper::normalizePayload([
                         'argomento' => $_POST['domanda_argomento'][$index] ?? '',
                         'domanda' => $testo,
+                        'tipo_domanda' => $_POST['domanda_tipo'][$index] ?? 'aperta',
                         'risposta_attesa' => $_POST['domanda_suggerimenti'][$index] ?? '',
+                        'risposte' => $_POST['domanda_risposte'][$index] ?? '',
                         'parole_chiave' => $_POST['domanda_parole'][$index] ?? '',
                         'difficolta' => $_POST['domanda_livello'][$index] ?? 3,
-                        'tempo_risposta_min' => $_POST['domanda_tempo'][$index] ?? 3,
-                        'collegata_a' => $_POST['domanda_collegata'][$index] ?? '',
-                        'ordine_consigliato' => $_POST['domanda_ordine'][$index] ?? 0,
-                        'note' => $_POST['domanda_note'][$index] ?? ''
                     ]);
+                    unset($questionPayload['opzioni']);
+                    $dbAdapter->insertRow('DOMANDE_INTERROGAZIONE', array_merge([
+                        'id_domanda' => $domandaId,
+                        'id_uda' => $udaId,
+                    ], $questionPayload));
                 }
             }
         }
@@ -238,6 +279,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     $assignedKeys[$assignmentKey] = true;
                 }
             }
+            $dbAdapter->updateRow('UDA_ANAGRAFICA', 'id_uda', $udaId, [
+                'classi_target' => UdaMetadataHelper::classTargetFromAssignments($dbAdapter->findClassiAssegnate($udaId))
+            ]);
         }
 
         // Redirect alla pagina di visualizzazione della nuova UDA
@@ -249,13 +293,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         error_log("Errore creazione UDA: " . $e->getMessage());
     }
 }
-
-// Anno scolastico corrente (agosto-luglio) e successivo
-$currentYear = (int)date('Y');
-$currentMonth = (int)date('n');
-$startYear = $currentMonth >= 8 ? $currentYear : ($currentYear - 1);
-$currentAcademicYear = $startYear . '-' . substr((string)($startYear + 1), -2);
-$nextAcademicYear = ($startYear + 1) . '-' . substr((string)($startYear + 2), -2);
 
 // Carica classi disponibili da ClasseViva
 $allClasses = [];
@@ -275,6 +312,7 @@ try {
     <title>Crea Nuova UDA - Sistema Gestione UDA</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="assets/css/question-card.css">
     <style>
         .step {
             display: none;
@@ -404,6 +442,11 @@ try {
 
                 <form method="POST" id="udaForm">
                     <input type="hidden" name="action" value="create_uda">
+                    <input type="hidden" name="data_inizio" id="data_inizio">
+                    <input type="hidden" name="data_fine" id="data_fine">
+                    <input type="hidden" name="classroom_imported" id="classroom_imported" value="0">
+                    <input type="hidden" name="classroom_section" id="classroom_section">
+                    <input type="hidden" name="classroom_room" id="classroom_room">
 
                     <!-- Step 1: Informazioni Generali (OBBLIGATORIO) -->
                     <div class="step active" data-step="1">
@@ -480,24 +523,19 @@ try {
                             </div>
                         </div>
 
-                        <div class="row">
-                            <div class="col-md-4 mb-3">
-                                <label class="form-label">Data Inizio</label>
-                                <input type="date" class="form-control" name="data_inizio">
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <label class="form-label">Data Fine</label>
-                                <input type="date" class="form-control" name="data_fine">
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <label class="form-label">Durata (ore)</label>
-                                <input type="number" class="form-control" name="durata_ore" min="0">
-                            </div>
-                        </div>
-
                         <div class="mb-3">
-                            <label class="form-label">Progetto</label>
-                            <input type="text" class="form-control" name="progetto" placeholder="es. PCTO, PON, etc.">
+                            <label class="form-label">Periodo scolastico</label>
+                            <select class="form-select" name="periodo_scolastico" id="periodo_scolastico" onchange="applyAcademicPeriod(this)">
+                                <option value="">Seleziona un periodo (facoltativo)</option>
+                                <?php foreach ($periodOptionsByYear[$currentAcademicYear] ?? [] as $period): ?>
+                                    <option value="<?= htmlspecialchars($period['value']) ?>"
+                                            data-start="<?= htmlspecialchars($period['start']) ?>"
+                                            data-end="<?= htmlspecialchars($period['end']) ?>">
+                                        <?= htmlspecialchars($period['label']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <small class="form-text text-muted">Le date vengono calcolate automaticamente in base ai periodi configurati in ClasseViva. <a href="user_integrations.php#classeviva-section">Imposta i periodi ClasseViva</a></small>
                         </div>
 
                         <div class="mb-3">
@@ -512,7 +550,8 @@ try {
 
                         <div class="mb-3">
                             <label class="form-label">Classi Target / Destinatari</label>
-                            <input type="text" class="form-control" name="classi_target" placeholder="Es: Classe 3A, 3B, 4A">
+                            <div class="form-control bg-light text-muted" aria-readonly="true">Verranno compilate automaticamente dopo l'assegnazione delle classi.</div>
+                            <small class="form-text text-muted">Le classi vengono gestite nello step Classi e non sono modificabili come testo libero.</small>
                         </div>
 
                         <div class="mb-3">
@@ -523,7 +562,7 @@ try {
                                 <option value="completata">Completata</option>
                                 <option value="archiviata">Archiviata</option>
                             </select>
-                            <small class="form-text text-muted">Di default l'UDA viene creata come "Bozza"</small>
+                            <small class="form-text text-muted">Un'importazione Classroom completata porta automaticamente l'UDA in "Attiva".</small>
                         </div>
 
                         <div class="d-flex justify-content-end">
@@ -712,6 +751,35 @@ try {
         </div>
     </div>
 
+    <!-- Modal condivisa per la costruzione delle domande del wizard -->
+    <div class="modal fade" id="wizardQuestionModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="wizardQuestionModalTitle"><i class="bi bi-plus-circle"></i> Aggiungi domanda</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <?php $questionEditorId = 'wizard-question-editor'; include __DIR__ . '/partials/question_editor.php'; ?>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
+                    <button type="button" class="btn btn-primary" id="wizardQuestionSave"><i class="bi bi-check-circle"></i> Conferma domanda</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <template id="question-card-template">
+        <?php
+        $questionCardTemplate = true;
+        $questionCardActions = 'wizard';
+        $questionCardData = [];
+        $questionCardLabel = '';
+        include __DIR__ . '/partials/question_card.php';
+        ?>
+    </template>
+
     <!-- Modal Import da Argomento Classroom -->
     <div class="modal fade" id="classroomTopicImportModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-xl modal-dialog-scrollable">
@@ -787,7 +855,11 @@ try {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://apis.google.com/js/api.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="assets/js/uda-editor-utils.js"></script>
+    <script src="assets/js/question-editor.js"></script>
+    <script src="assets/js/question-card.js"></script>
     <script>
+        const academicPeriodOptions = <?= json_encode($periodOptionsByYear, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
         let currentStep = 1;
         const totalSteps = 7;
         let skippedSteps = new Set();
@@ -811,6 +883,7 @@ try {
         const tempUdaId = "<?= htmlspecialchars($tempUdaId) ?>";
         const classroomImportIntegrationUrl = 'user_integrations.php#google-section';
         let wizardClassroomResources = [];
+        let wizardClassroomCourses = [];
 
         function loadCachedDriveToken() {
             try {
@@ -1102,11 +1175,7 @@ try {
             obiettivoCounter++;
             const container = document.getElementById('obiettivi-container');
             const item = document.createElement('div');
-            item.className = 'dynamic-item';
-            const obOptions = obiettiviCatalog.map(o => {
-                const label = `${o.codice || o.id_obiettivo || ''} - ${o.descrizione || ''}`.trim();
-                return `<option value="${o.id_obiettivo || ''}" data-codice="${o.codice || ''}" data-descrizione="${(o.descrizione || '').replace(/"/g,'&quot;')}" data-competenza="${(o.competenza || '').replace(/"/g,'&quot;')}" data-tipo="${o.tipo_obiettivo || ''}" data-livello="${o.livello_tassonomia || ''}" data-peso="${o.peso || ''}">${label}</option>`;
-            }).join('');
+            item.className = 'dynamic-item objective-editor';
             item.innerHTML = `
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <h6>Obiettivo ${obiettivoCounter}</h6>
@@ -1116,11 +1185,10 @@ try {
                 </div>
                 <div class="row">
                     <div class="col-12 mb-2">
-                        <label class="form-label">Seleziona da catalogo</label>
-                        <select class="form-select" onchange="fillObiettivo(this)">
-                            <option value="">-- Scegli --</option>
-                            ${obOptions}
-                        </select>
+                        <label class="form-label">Cerca nel catalogo</label>
+                        <input type="search" class="form-control objective-search" placeholder="Scrivi una frase per filtrare codice, descrizione o competenza..." autocomplete="off">
+                        <div class="list-group objective-results mt-2"></div>
+                        <div class="small text-muted objective-selection mt-2">Nessun obiettivo selezionato.</div>
                     </div>
                     <div class="col-md-3 mb-2">
                         <label class="form-label">Tipo</label>
@@ -1145,10 +1213,6 @@ try {
                             <option value="6">6 - Creare</option>
                         </select>
                     </div>
-                    <div class="col-md-3 mb-2">
-                        <label class="form-label">Peso</label>
-                        <input type="number" class="form-control" name="obiettivi_peso[]" value="10" min="1">
-                    </div>
                     <div class="col-12 mb-2">
                         <label class="form-label">Descrizione</label>
                         <textarea class="form-control" name="obiettivi_descrizione[]" rows="2" placeholder="Descrizione dell'obiettivo"></textarea>
@@ -1160,26 +1224,47 @@ try {
                 </div>
             `;
             container.appendChild(item);
+            const search = item.querySelector('.objective-search');
+            const results = item.querySelector('.objective-results');
+            search.addEventListener('input', () => renderObjectiveResults(item, search.value));
+            renderObjectiveResults(item, '');
         }
 
-        function fillObiettivo(select) {
-            const option = select.selectedOptions[0];
-            if (!option) return;
-            const wrapper = select.closest('.dynamic-item');
-            if (!wrapper) return;
+        function renderObjectiveResults(wrapper, query) {
+            const results = wrapper.querySelector('.objective-results');
+            const matches = UdaEditorUtils.filterObjectives(obiettiviCatalog, query).slice(0, 30);
+            results.innerHTML = '';
+            if (!matches.length) {
+                results.innerHTML = '<div class="list-group-item text-muted">Nessun obiettivo trovato.</div>';
+                return;
+            }
+            matches.forEach(objective => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'list-group-item list-group-item-action';
+                button.innerHTML = `<strong>${escapeWizardHtml(objective.codice || objective.id_obiettivo || '')}</strong> - ${escapeWizardHtml(objective.descrizione || '')}<br><small class="text-muted">${escapeWizardHtml(objective.competenza || '')}</small>`;
+                button.addEventListener('click', () => selectObjective(wrapper, objective));
+                results.appendChild(button);
+            });
+        }
+
+        function selectObjective(wrapper, objective) {
             const tipo = wrapper.querySelector('select[name="obiettivi_tipo[]"]');
             const codice = wrapper.querySelector('input[name="obiettivi_codice[]"]');
             const descrizione = wrapper.querySelector('textarea[name="obiettivi_descrizione[]"]');
             const competenza = wrapper.querySelector('input[name="obiettivi_competenza[]"]');
             const livello = wrapper.querySelector('select[name="obiettivi_livello[]"]');
-            const peso = wrapper.querySelector('input[name="obiettivi_peso[]"]');
+            if (tipo) tipo.value = objective.tipo_obiettivo || 'disciplinare';
+            if (codice) codice.value = objective.codice || objective.id_obiettivo || '';
+            if (descrizione) descrizione.value = objective.descrizione || '';
+            if (competenza) competenza.value = objective.competenza || '';
+            if (livello) livello.value = objective.livello_tassonomia || '1';
+            wrapper.querySelector('.objective-selection').textContent = `Selezionato: ${objective.codice || objective.id_obiettivo || ''} - ${objective.descrizione || ''}`;
+            wrapper.querySelector('.objective-results').innerHTML = '';
+        }
 
-            if (tipo) tipo.value = option.getAttribute('data-tipo') || 'disciplinare';
-            if (codice) codice.value = option.getAttribute('data-codice') || '';
-            if (descrizione) descrizione.value = option.getAttribute('data-descrizione') || '';
-            if (competenza) competenza.value = option.getAttribute('data-competenza') || '';
-            if (livello) livello.value = option.getAttribute('data-livello') || '1';
-            if (peso) peso.value = option.getAttribute('data-peso') || '10';
+        function escapeWizardHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
         }
 
         // Add Test
@@ -1256,8 +1341,8 @@ try {
             return item;
         }
 
-        // Add Domanda
-        function addDomanda() {
+        /* Legacy inline editor retained only as a non-executable migration reference.
+        function addDomandaLegacy() {
             domandaCounter++;
             const container = document.getElementById('domande-container');
             const item = document.createElement('div');
@@ -1315,6 +1400,80 @@ try {
                 </div>
             `;
             container.appendChild(item);
+        }
+        */
+
+        let wizardQuestionEditor = null;
+        let wizardQuestionTarget = null;
+
+        function initWizardQuestionEditor() {
+            const root = document.getElementById('wizard-question-editor');
+            wizardQuestionEditor = QuestionEditor.mount(root);
+            document.getElementById('wizardQuestionSave').addEventListener('click', () => {
+                const validation = root.validateEditor();
+                if (!validation.valid || !wizardQuestionTarget) return;
+                syncWizardQuestion(wizardQuestionTarget, root.getEditorState());
+                bootstrap.Modal.getOrCreateInstance(document.getElementById('wizardQuestionModal')).hide();
+            });
+        }
+
+        function addDomanda() {
+            domandaCounter++;
+            const container = document.getElementById('domande-container');
+            const template = document.getElementById('question-card-template');
+            const item = QuestionCard.createFromTemplate(template, {
+                argomento: '', difficolta: 3, domanda: '', tipo_domanda: 'aperta',
+                risposta_attesa: '', opzioni: [], parole_chiave: []
+            }, {
+                label: `Domanda ${domandaCounter}`,
+                onEdit: editWizardQuestion,
+                onDelete: card => card.remove()
+            });
+            item.classList.add('wizard-question-card');
+            [
+                ['domanda_argomento[]', ''],
+                ['domanda_livello[]', '3'],
+                ['domanda_testo[]', ''],
+                ['domanda_tipo[]', 'aperta'],
+                ['domanda_suggerimenti[]', ''],
+                ['domanda_risposte[]', ''],
+                ['domanda_parole[]', '']
+            ].forEach(([name, value]) => {
+                const input = document.createElement('input');
+                input.type = 'hidden'; input.name = name; input.value = value;
+                item.appendChild(input);
+            });
+            container.appendChild(item);
+            editWizardQuestion(item);
+        }
+
+        function editWizardQuestion(card) {
+            wizardQuestionTarget = card;
+            const state = {
+                argomento: card.querySelector('[name="domanda_argomento[]"]').value,
+                difficolta: card.querySelector('[name="domanda_livello[]"]').value || '3',
+                domanda: card.querySelector('[name="domanda_testo[]"]').value,
+                tipo_domanda: card.querySelector('[name="domanda_tipo[]"]').value || 'aperta',
+                risposta_attesa: card.querySelector('[name="domanda_suggerimenti[]"]').value,
+                opzioni: card.querySelector('[name="domanda_risposte[]"]').value,
+                parole_chiave: card.querySelector('[name="domanda_parole[]"]').value,
+            };
+            document.getElementById('wizard-question-editor').setEditorState(state);
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('wizardQuestionModal')).show();
+        }
+
+        function syncWizardQuestion(card, state) {
+            const optionsJson = state.tipo_domanda === 'multipla' ? UdaEditorUtils.serializeMultipleChoice(state.opzioni) : '';
+            card.querySelector('[name="domanda_argomento[]"]').value = state.argomento;
+            card.querySelector('[name="domanda_livello[]"]').value = state.difficolta;
+            card.querySelector('[name="domanda_testo[]"]').value = state.domanda;
+            card.querySelector('[name="domanda_tipo[]"]').value = state.tipo_domanda;
+            card.querySelector('[name="domanda_suggerimenti[]"]').value = state.tipo_domanda === 'aperta' ? state.risposta_attesa : '';
+            card.querySelector('[name="domanda_risposte[]"]').value = optionsJson;
+            card.querySelector('[name="domanda_parole[]"]').value = state.parole_chiave.join(',');
+            const label = card.querySelector('[data-question-card-label]')?.textContent || '';
+            QuestionCard.update(card, state, { label });
+            card.querySelector('.wizard-question-summary').innerHTML = `<strong>${escapeWizardHtml(state.domanda || 'Domanda non ancora compilata.')}</strong><br><span class="badge text-bg-secondary">${state.tipo_domanda === 'multipla' ? 'Risposta multipla' : 'Risposta aperta'}</span> <span class="badge text-bg-info">Difficoltà ${escapeWizardHtml(state.difficolta)}</span>`;
         }
 
         // Add Classe
@@ -1704,6 +1863,7 @@ try {
                 }
 
                 const courses = Array.isArray(result.courses) ? result.courses : [];
+                wizardClassroomCourses = courses;
                 courseSelect.innerHTML = '';
                 if (courses.length === 0) {
                     const option = document.createElement('option');
@@ -1886,6 +2046,18 @@ try {
             }
         }
 
+        function applyWizardClassroomCourseMetadata() {
+            const courseSelect = document.getElementById('wizardClassroomCourseSelect');
+            const course = wizardClassroomCourses.find(item => String(item.id || '') === String(courseSelect?.value || ''));
+            if (!course) return;
+            const disciplineInput = document.querySelector('input[name="disciplina"]');
+            if (disciplineInput) disciplineInput.value = String(course.name || '').trim();
+            const sectionInput = document.getElementById('classroom_section');
+            const roomInput = document.getElementById('classroom_room');
+            if (sectionInput) sectionInput.value = String(course.section || '').trim();
+            if (roomInput) roomInput.value = String(course.room || '').trim();
+        }
+
         function applyWizardClassroomImport() {
             const rows = document.querySelectorAll('#wizardClassroomResourcesBody tr[data-resource-id]');
             if (!rows.length) {
@@ -1928,6 +2100,11 @@ try {
 
             applyWizardTopicToArgomento();
             applyWizardCourseTitleIfMissing();
+            applyWizardClassroomCourseMetadata();
+            const importedInput = document.getElementById('classroom_imported');
+            if (importedInput) importedInput.value = '1';
+            const statusSelect = document.querySelector('select[name="stato"]');
+            if (statusSelect && statusSelect.value === 'bozza') statusSelect.value = 'attiva';
 
             const modalElement = document.getElementById('classroomTopicImportModal');
             if (modalElement && typeof bootstrap !== 'undefined') {
@@ -1937,6 +2114,35 @@ try {
 
             alert(`Import completato: ${importedMaterials} materiali e ${importedTests} test aggiunti al wizard.`);
         }
+
+        function applyAcademicPeriod(select) {
+            const option = select && select.selectedOptions ? select.selectedOptions[0] : null;
+            const start = document.getElementById('data_inizio');
+            const end = document.getElementById('data_fine');
+            if (start) start.value = option ? (option.dataset.start || '') : '';
+            if (end) end.value = option ? (option.dataset.end || '') : '';
+        }
+
+        function refreshAcademicPeriodOptions(academicYear) {
+            const select = document.getElementById('periodo_scolastico');
+            if (!select) return;
+            const current = select.value;
+            select.innerHTML = '<option value="">Seleziona un periodo (facoltativo)</option>';
+            (academicPeriodOptions[academicYear] || []).forEach(period => {
+                const option = document.createElement('option');
+                option.value = period.value;
+                option.textContent = period.label;
+                option.dataset.start = period.start;
+                option.dataset.end = period.end;
+                select.appendChild(option);
+            });
+            if ([...select.options].some(option => option.value === current)) select.value = current;
+            applyAcademicPeriod(select);
+        }
+
+        document.querySelector('[name="anno_scolastico"]')?.addEventListener('change', event => {
+            refreshAcademicPeriodOptions(event.target.value);
+        });
 
         // Generate Riepilogo
         function generateRiepilogo() {
@@ -1949,13 +2155,12 @@ try {
             const disciplina = document.querySelector('input[name="disciplina"]').value;
             const metodologia = document.querySelector('input[name="metodologia"]').value;
             const annoScolastico = document.querySelector('[name="anno_scolastico"]').value;
-            const dataInizio = document.querySelector('input[name="data_inizio"]').value;
-            const dataFine = document.querySelector('input[name="data_fine"]').value;
-            const durataOre = document.querySelector('input[name="durata_ore"]').value;
-            const progetto = document.querySelector('input[name="progetto"]').value;
+            const dataInizio = document.querySelector('input[name="data_inizio"]')?.value || '';
+            const dataFine = document.querySelector('input[name="data_fine"]')?.value || '';
+            const periodo = document.querySelector('#periodo_scolastico option:checked')?.textContent.trim() || '';
             const descrizione = document.querySelector('textarea[name="descrizione"]').value;
             const note = document.querySelector('textarea[name="note"]').value;
-            const classiTarget = document.querySelector('input[name="classi_target"]').value;
+            const classiTarget = 'Compilate dopo l\'assegnazione';
             const stato = document.querySelector('select[name="stato"]').value;
 
             html += `
@@ -1974,10 +2179,8 @@ try {
                                 <p><strong>Stato:</strong> <span class="badge bg-secondary">${stato || 'bozza'}</span></p>
                             </div>
                             <div class="col-md-6">
-                                <p><strong>Progetto:</strong> ${progetto || 'N/D'}</p>
-                                <p><strong>Data Inizio:</strong> ${dataInizio || 'N/D'}</p>
-                                <p><strong>Data Fine:</strong> ${dataFine || 'N/D'}</p>
-                                <p><strong>Durata:</strong> ${durataOre || '0'} ore</p>
+                                <p><strong>Periodo:</strong> ${periodo || 'N/D'}</p>
+                                ${dataInizio || dataFine ? `<p><strong>Intervallo:</strong> ${dataInizio || 'N/D'} - ${dataFine || 'N/D'}</p>` : ''}
                                 <p><strong>Classi Target:</strong> ${classiTarget || 'N/D'}</p>
                             </div>
                         </div>
@@ -2040,7 +2243,7 @@ try {
             `;
 
             // Domande
-            const domandeCount = document.querySelectorAll('textarea[name="domanda_testo[]"]').length;
+            const domandeCount = document.querySelectorAll('input[name="domanda_testo[]"]').length;
             const domandeTot = domandeCount + domandeTempCount;
             html += `
                 <div class="card mb-3">
@@ -2076,6 +2279,8 @@ try {
                 if (currentStep === 7) generateRiepilogo();
             });
         });
+
+        initWizardQuestionEditor();
     </script>
 </body>
 </html>

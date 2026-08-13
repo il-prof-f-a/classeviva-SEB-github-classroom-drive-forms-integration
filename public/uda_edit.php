@@ -7,6 +7,8 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
 use App\Integration\ClasseVivaAPI;
+use App\Utils\AcademicPeriodHelper;
+use App\Utils\UdaMetadataHelper;
 
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -30,6 +32,21 @@ try {
 $error_message = null;
 $success_message = null;
 
+$currentYear = (int)date('Y');
+$currentMonth = (int)date('n');
+$startYear = $currentMonth >= 8 ? $currentYear : ($currentYear - 1);
+$currentAcademicYear = $startYear . '-' . substr((string)($startYear + 1), -2);
+$nextAcademicYear = ($startYear + 1) . '-' . substr((string)($startYear + 2), -2);
+$classevivaPeriodConfig = $config['classeviva'] ?? [];
+$periodOptionsByYear = [];
+foreach ([$currentAcademicYear, $nextAcademicYear] as $academicYear) {
+    try {
+        $periodOptionsByYear[$academicYear] = AcademicPeriodHelper::options($academicYear, $classevivaPeriodConfig);
+    } catch (\Throwable $e) {
+        $periodOptionsByYear[$academicYear] = [];
+    }
+}
+
 // Verifica ID UDA
 $udaId = $_GET['id'] ?? null;
 if (!$udaId) {
@@ -46,6 +63,14 @@ try {
         throw new Exception("UDA non trovata");
     }
     $uda = $udaComplete['uda'];
+    $udaAcademicYear = (string)($uda->anno_scolastico ?? '');
+    if ($udaAcademicYear !== '' && !isset($periodOptionsByYear[$udaAcademicYear])) {
+        try {
+            $periodOptionsByYear[$udaAcademicYear] = AcademicPeriodHelper::options($udaAcademicYear, $classevivaPeriodConfig);
+        } catch (\Throwable $e) {
+            $periodOptionsByYear[$udaAcademicYear] = [];
+        }
+    }
 } catch (Exception $e) {
     $error_message = "Errore: " . $e->getMessage();
 }
@@ -55,18 +80,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     try {
         // Dati UDA aggiornati
+        $academicYear = (string)($_POST['anno_scolastico'] ?? ($uda->anno_scolastico ?? $currentAcademicYear));
+        $periodValue = trim((string)($_POST['periodo_scolastico'] ?? ''));
+        $selectedPeriod = null;
+        foreach ($periodOptionsByYear[$academicYear] ?? [] as $period) {
+            if ($period['value'] === $periodValue) {
+                $selectedPeriod = $period;
+                break;
+            }
+        }
         $udaData = [
             'titolo' => $_POST['titolo'] ?? '',
             'argomento' => $_POST['argomento'] ?? '',
             'disciplina' => $_POST['disciplina'] ?? '',
             'metodologia' => $_POST['metodologia'] ?? '',
             'anno_scolastico' => $_POST['anno_scolastico'] ?? '',
-            'data_inizio' => $_POST['data_inizio'] ?? null,
-            'data_fine' => $_POST['data_fine'] ?? null,
-            'durata_ore' => intval($_POST['durata_ore'] ?? 0),
+            'data_inizio' => $selectedPeriod['start'] ?? ($_POST['data_inizio'] ?? $uda->data_inizio ?? null),
+            'data_fine' => $selectedPeriod['end'] ?? ($_POST['data_fine'] ?? $uda->data_fine ?? null),
             'note' => $_POST['note'] ?? '',
-            'classi_target' => $_POST['classi_target'] ?? '',
-            'progetto' => $_POST['progetto'] ?? '',
+            'classi_target' => UdaMetadataHelper::classTargetFromAssignments($dbAdapter->findClassiAssegnate($udaId)),
             'descrizione' => $_POST['descrizione'] ?? '',
             'stato' => $_POST['stato'] ?? 'bozza'
         ];
@@ -211,32 +243,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                     <option value="Inquiry guidato">
                                 </datalist>
                             </div>
-                            <div class="col-md-6 mb-3">
-                                <label for="progetto" class="form-label">Progetto</label>
-                                <input type="text" class="form-control" id="progetto" name="progetto"
-                                       value="<?= htmlspecialchars($uda->progetto ?? '') ?>"
-                                       placeholder="Es: Analisi delle fonti storiche">
-                            </div>
                         </div>
 
                         <div class="row">
-                            <div class="col-md-4 mb-3">
-                                <label for="data_inizio" class="form-label">Data Inizio</label>
-                                <input type="date" class="form-control" id="data_inizio" name="data_inizio"
-                                       value="<?= htmlspecialchars($uda->data_inizio ?? '') ?>">
+                            <div class="col-md-8 mb-3">
+                                <label for="periodo_scolastico" class="form-label">Periodo scolastico</label>
+                                <select class="form-select" id="periodo_scolastico" name="periodo_scolastico" onchange="applyAcademicPeriod(this)">
+                                    <option value="">Nessun periodo selezionato</option>
+                                    <?php foreach ($periodOptionsByYear[$uda->anno_scolastico ?? $currentAcademicYear] ?? [] as $period): ?>
+                                        <?php $selected = (($uda->data_inizio ?? '') === $period['start'] && ($uda->data_fine ?? '') === $period['end']) ? 'selected' : ''; ?>
+                                        <option value="<?= htmlspecialchars($period['value']) ?>" data-start="<?= htmlspecialchars($period['start']) ?>" data-end="<?= htmlspecialchars($period['end']) ?>" <?= $selected ?>><?= htmlspecialchars($period['label']) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <small class="form-text text-muted"><a href="user_integrations.php#classeviva-section">Imposta i periodi ClasseViva</a></small>
                             </div>
-                            <div class="col-md-4 mb-3">
-                                <label for="data_fine" class="form-label">Data Fine</label>
-                                <input type="date" class="form-control" id="data_fine" name="data_fine"
-                                       value="<?= htmlspecialchars($uda->data_fine ?? '') ?>">
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <label for="durata_ore" class="form-label">Durata (ore)</label>
-                                <input type="number" class="form-control" id="durata_ore" name="durata_ore"
-                                       value="<?= htmlspecialchars($uda->durata_ore ?? '') ?>"
-                                       min="0" placeholder="Es: 10">
+                            <div class="col-md-4 mb-3 d-flex align-items-end">
+                                <small class="text-muted">Le date vengono salvate automaticamente in base al periodo scelto.</small>
                             </div>
                         </div>
+                        <input type="hidden" id="data_inizio" name="data_inizio" value="<?= htmlspecialchars($uda->data_inizio ?? '') ?>">
+                        <input type="hidden" id="data_fine" name="data_fine" value="<?= htmlspecialchars($uda->data_fine ?? '') ?>">
 
                         <div class="mb-3">
                             <label for="note" class="form-label">Note / Prerequisiti</label>
@@ -246,9 +272,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
                         <div class="mb-3">
                             <label for="classi_target" class="form-label">Classi Target / Destinatari</label>
-                            <input type="text" class="form-control" id="classi_target" name="classi_target"
-                                   value="<?= htmlspecialchars($uda->classi_target ?? '') ?>"
-                                   placeholder="Es: Classe 3A, 3B">
+                            <div class="form-control bg-light text-muted" id="classi_target" aria-readonly="true">
+                                <?= htmlspecialchars($uda->classi_target ?: 'Compilate automaticamente dopo l\'assegnazione') ?>
+                            </div>
+                            <small class="form-text text-muted">Gestisci le classi dalla <a href="uda_assign.php?id=<?= urlencode($udaId) ?>">pagina di assegnazione</a>.</small>
                         </div>
 
                         <div class="mb-3">
@@ -358,6 +385,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        const academicPeriodOptions = <?= json_encode($periodOptionsByYear, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
+
+        function applyAcademicPeriod(select) {
+            const option = select && select.selectedOptions ? select.selectedOptions[0] : null;
+            const start = document.getElementById('data_inizio');
+            const end = document.getElementById('data_fine');
+            if (start) start.value = option ? (option.dataset.start || '') : '';
+            if (end) end.value = option ? (option.dataset.end || '') : '';
+        }
+
+        function refreshAcademicPeriodOptions(academicYear) {
+            const select = document.getElementById('periodo_scolastico');
+            if (!select) return;
+            select.innerHTML = '<option value="">Nessun periodo selezionato</option>';
+            (academicPeriodOptions[academicYear] || []).forEach(period => {
+                const option = document.createElement('option');
+                option.value = period.value;
+                option.textContent = period.label;
+                option.dataset.start = period.start;
+                option.dataset.end = period.end;
+                select.appendChild(option);
+            });
+        }
+
+        document.getElementById('anno_scolastico')?.addEventListener('change', event => refreshAcademicPeriodOptions(event.target.value));
+
         // Conferma prima di abbandonare il form con modifiche non salvate
         let formModified = false;
         const form = document.getElementById('udaEditForm');

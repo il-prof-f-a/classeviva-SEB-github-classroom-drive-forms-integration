@@ -194,7 +194,6 @@ class ExportManager
         $this->aggiungiRigaTabella($table, 'ID UDA:', $uda->id_uda ?? 'N/D');
         $this->aggiungiRigaTabella($table, 'Stato:', ucfirst($uda->stato ?? 'N/D'));
         $this->aggiungiRigaTabella($table, 'Disciplina:', $uda->disciplina ?? 'N/D');
-        $this->aggiungiRigaTabella($table, 'Durata:', ($uda->durata_ore ?? 'N/D') . ' ore');
         $this->aggiungiRigaTabella($table, 'Data Inizio:', $uda->data_inizio ?? 'N/D');
         $this->aggiungiRigaTabella($table, 'Data Fine:', $uda->data_fine ?? 'N/D');
 

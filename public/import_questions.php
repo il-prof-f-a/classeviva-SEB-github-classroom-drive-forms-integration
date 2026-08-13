@@ -15,6 +15,7 @@ use App\Core\QuestionImporter;
 use Google\Client;
 use Google\Service\Forms;
 use Smalot\PdfParser\Parser as PdfParser;
+use App\Utils\QuestionImportParser;
 
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -55,6 +56,11 @@ $successMessage = null;
 $errorMessage = null;
 $importResult = null;
 $previewQuestions = [];
+$jsonTemplatePath = ROOT_PATH . '/database/templates/template_domande.json';
+$jsonTemplateContent = is_file($jsonTemplatePath) ? (string)file_get_contents($jsonTemplatePath) : "{\n  \"domande\": []\n}";
+$jsonTextareaContent = (string)($_POST['json_content'] ?? $jsonTemplateContent);
+$importReturnUrl = app_url('public/import_questions.php?id=' . rawurlencode((string)$udaId));
+$googleIntegrationUrl = 'user_integrations.php?return_to=' . rawurlencode($importReturnUrl) . '#google-section';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
@@ -71,8 +77,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($action === 'preview') {
-            $fileKey = $modalita === 'json' ? 'file_json' : ($modalita === 'csv' ? 'file_csv' : 'file_excel');
-            $parseResult = parseQuestionsFromFile($modalita, $_FILES[$fileKey] ?? null);
+            if ($modalita === 'json') {
+                $parseResult = buildPreviewFromJSONContent($jsonTextareaContent);
+            } else {
+                $fileKey = $modalita === 'csv' ? 'file_csv' : 'file_excel';
+                $parseResult = parseQuestionsFromFile($modalita, $_FILES[$fileKey] ?? null);
+            }
 
             if ($parseResult['success']) {
                 $previewQuestions = $parseResult['questions'];
@@ -130,6 +140,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errorMessage = "Errore: " . $e->getMessage();
     }
 }
+
+$importCompleted = $action === 'import_selected'
+    && is_array($importResult)
+    && !empty($importResult['success']);
 
 /**
  * Importa domande da JSON
@@ -363,6 +377,9 @@ function parseQuestionsFromFile($modalita, $file)
 
 function buildPreviewFromJSON(string $path): array
 {
+    return buildPreviewFromJSONContent((string)(file_get_contents($path) ?: ''));
+    /* Legacy file parser retained below for reference; JSON now flows through the textarea parser. */
+    /*
     $jsonContent = file_get_contents($path);
     // Rimuovi BOM se presente
     $jsonContent = preg_replace('/^\xEF\xBB\xBF/', '', $jsonContent);
@@ -433,6 +450,41 @@ function buildPreviewFromJSON(string $path): array
         ];
     }
 
+    return ['success' => true, 'questions' => $questions];
+}
+
+    */
+}
+
+function buildPreviewFromJSONContent(string $jsonContent): array
+{
+    try {
+        $domande = QuestionImportParser::parseJsonContent($jsonContent);
+    } catch (\InvalidArgumentException $e) {
+        @file_put_contents(
+            __DIR__ . '/../storage/logs/import_questions_debug.log',
+            "IMPORT JSON ERROR: {$e->getMessage()}\nFirst 200 chars: " . substr($jsonContent, 0, 200) . "\n\n",
+            FILE_APPEND
+        );
+        return ['success' => false, 'error' => $e->getMessage() . '. Verifica che il contenuto rispetti il template.'];
+    }
+
+    $questions = [];
+    foreach ($domande as $d) {
+        $questions[] = [
+            'argomento' => trim((string)($d['argomento'] ?? 'Generale')),
+            'tipo' => $d['tipo'] ?? 'aperta',
+            'domanda' => trim((string)($d['domanda'] ?? '')),
+            'risposta_attesa' => convertRispostaAttesa($d),
+            'parole_chiave' => convertParoleChiave($d['parole_chiave'] ?? ''),
+            'difficolta' => intval($d['difficolta'] ?? 3),
+            'tempo_risposta_min' => intval($d['tempo_risposta_min'] ?? 3),
+            'ordine_consigliato' => intval($d['ordine_consigliato'] ?? 1),
+            'note' => trim((string)($d['note'] ?? '')),
+            'opzioni' => is_array($d['risposte'] ?? null) ? $d['risposte'] : [],
+            'data_creazione' => date('Y-m-d H:i:s'),
+        ];
+    }
     return ['success' => true, 'questions' => $questions];
 }
 
@@ -1109,6 +1161,7 @@ function buildQuestionPreviewItem(
     $tipo = 'aperta';
     $rispostaAttesa = '[Risposta aperta]';
     $paroleChiave = '';
+    $previewOptions = [];
     $source = mb_strtolower(trim($source));
     $openEndedHint = questionLooksOpenEnded($domanda);
     $choiceHint = questionLooksChoiceBased($domanda);
@@ -1147,6 +1200,13 @@ function buildQuestionPreviewItem(
                 $rispostaAttesa = 'VERO/FALSO';
                 $paroleChiave = 'VERO,FALSO';
             }
+            $correctMap = buildCorrectAnswerMap($correctAnswers, $options);
+            foreach ($options as $opt) {
+                $previewOptions[] = [
+                    'text' => $opt,
+                    'correct' => isset($correctMap[mb_strtolower((string)$opt)]),
+                ];
+            }
         } else {
             $isLikelyChoice = false;
 
@@ -1178,6 +1238,7 @@ function buildQuestionPreviewItem(
                 $markedOptions = [];
                 foreach ($options as $opt) {
                     $isCorrect = isset($correctMap[mb_strtolower((string)$opt)]);
+                    $previewOptions[] = ['text' => $opt, 'correct' => $isCorrect];
                     $markedOptions[] = ($isCorrect ? '[CORRETTA] ' : '') . $opt;
                 }
                 $tipo = count($correctAnswers) > 1 ? 'multipla_multi' : 'multipla';
@@ -1241,7 +1302,8 @@ function buildQuestionPreviewItem(
         'difficolta' => 3,
         'tempo_risposta_min' => 3,
         'ordine_consigliato' => $ordine,
-        'note' => $note
+        'note' => $note,
+        'opzioni' => $previewOptions,
     ];
 }
 
@@ -2194,6 +2256,7 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
     <title>Importa Domande - <?= htmlspecialchars($uda->titolo) ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="assets/css/question-card.css">
     <style>
         .modalita-card {
             cursor: pointer;
@@ -2217,6 +2280,10 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
             font-family: 'Courier New', monospace;
             font-size: 0.9em;
         }
+        #formsCatalogList {
+            max-height: 320px;
+            overflow-y: auto;
+        }
     </style>
 </head>
 <body>
@@ -2227,7 +2294,7 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
     include __DIR__ . '/partials/app_header.php';
     ?>
 
-    <div class="container mt-4">
+    <div class="container mt-4" data-preview-mode="<?= !empty($previewQuestions) ? 'true' : 'false' ?>" data-import-completed="<?= $importCompleted ? 'true' : 'false' ?>">
         <?php if ($isTempUda): ?>
             <div class="alert alert-success d-flex justify-content-between align-items-center">
                 <div>
@@ -2282,7 +2349,10 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
             </div>
         <?php endif; ?>
 
-        <form method="POST" enctype="multipart/form-data" id="existingTestForm" class="mb-4">
+        <?php include __DIR__ . '/partials/import_preview.php'; ?>
+
+        <?php $selectionHiddenClass = ($importCompleted || !empty($previewQuestions)) ? ' d-none' : ''; ?>
+        <form method="POST" enctype="multipart/form-data" id="existingTestForm" class="mb-4<?= $selectionHiddenClass ?>">
             <input type="hidden" name="action" value="preview_existing_test">
             <input type="hidden" name="existing_source" id="existingSourceInput" value="<?= htmlspecialchars($existingSource) ?>">
 
@@ -2329,10 +2399,24 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
                         <label class="form-label">Link docente Google Forms</label>
                         <input type="url"
                                name="forms_url"
+                               id="formsUrlInput"
                                class="form-control"
                                placeholder="https://docs.google.com/forms/d/.../edit"
                                value="<?= htmlspecialchars($formsUrlInput) ?>">
                         <div class="form-text">Usa il link di modifica del modulo (docente).</div>
+                        <div id="googleFormsCatalogStatus" class="alert alert-info mt-3 mb-2 d-none" role="status"></div>
+                        <div id="googleFormsAuthorizationNotice" class="alert alert-warning mt-3 mb-2 d-none">
+                            <i class="bi bi-shield-lock"></i>
+                            Autorizzazione Google Drive e Forms non presente o insufficiente.
+                            <a class="btn btn-sm btn-warning ms-2" href="<?= htmlspecialchars($googleIntegrationUrl, ENT_QUOTES) ?>">
+                                <i class="bi bi-box-arrow-in-right"></i> Vai alle Integrazioni Google
+                            </a>
+                        </div>
+                        <div id="googleFormsCatalog" class="mt-3 d-none">
+                            <label for="formsCatalogSearch" class="form-label">Forms disponibili nel Drive</label>
+                            <input type="search" id="formsCatalogSearch" class="form-control mb-2" placeholder="Cerca per titolo, autore o data..." autocomplete="off">
+                            <div id="formsCatalogList" class="list-group" role="listbox" aria-label="Google Forms disponibili"></div>
+                        </div>
                     </div>
 
                     <div id="existing_input_kahoot" class="existing-input" style="display:none;">
@@ -2386,7 +2470,7 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
                 </div>
             </div>
         </form>
-        <form method="POST" enctype="multipart/form-data" id="previewForm">
+        <form method="POST" enctype="multipart/form-data" id="previewForm" class="<?= trim($selectionHiddenClass) ?>">
             <input type="hidden" name="action" value="preview">
             <input type="hidden" name="modalita" id="modalitaInput" value="<?= htmlspecialchars($modalita) ?>">
 
@@ -2447,11 +2531,8 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
                         </h5>
                     </button>
                     <div class="d-flex gap-2">
-                        <a id="templateDownload" href="../database/templates/template_domande.json" class="btn btn-outline-light btn-sm" download>
+                        <a id="templateDownload" href="download_template_domande.php?format=json" class="btn btn-outline-light btn-sm" download>
                             <i class="bi bi-download"></i> Template selezionato
-                        </a>
-                        <a href="../database/templates/esempio_domande_sistemi_operativi.json" class="btn btn-outline-light btn-sm" download>
-                            <i class="bi bi-file-earmark-text"></i> Esempio compilato
                         </a>
                     </div>
                 </div>
@@ -2460,12 +2541,22 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
                     <div id="input_json" class="import-input">
                         <div class="mb-3">
                             <label class="form-label">Carica file JSON</label>
-                            <input type="file" name="file_json" class="form-control" accept=".json">
-                            <div class="form-text">Usa il template JSON per compilare le domande.</div>
+                            <div class="input-group">
+                                <input type="file" id="jsonFileLoader" class="form-control" accept=".json">
+                                <button type="button" class="btn btn-outline-primary" id="loadJsonFileButton">
+                                    <i class="bi bi-upload"></i> Carica nella textarea
+                                </button>
+                            </div>
+                            <div class="form-text">Usa il template JSON per compilare le domande. Il file viene letto nel browser e non viene caricato direttamente.</div>
                         </div>
 
-                        <div class="format-example">
-  <strong>Esempio JSON</strong>
+                        <div class="mb-3">
+                            <label for="jsonContent" class="form-label">Contenuto JSON modificabile</label>
+                            <textarea id="jsonContent" name="json_content" class="form-control font-monospace" rows="22" spellcheck="false"><?= htmlspecialchars($jsonTextareaContent) ?></textarea>
+                        </div>
+
+                        <div class="format-example d-none" aria-hidden="true">
+  <strong>Struttura di riferimento</strong>
   <pre><code>{
   "id_uda": "UDA_XXX",
   "metadata": {
@@ -2615,101 +2706,40 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
                     <i class="bi bi-x-circle"></i> Annulla
                 </a>
                 <button type="submit" class="btn btn-primary">
-                    <i class="bi bi-eye"></i> Carica e mostra anteprima
+                    <i class="bi bi-eye"></i> Mostra anteprima
                 </button>
             </div>
         </form>
+    </div>
 
-
-        <?php if (!empty($previewQuestions)): ?>
-            <form method="POST" id="importForm">
-                <input type="hidden" name="action" value="import_selected">
-                <input type="hidden" name="modalita" value="<?= htmlspecialchars($modalita) ?>">
-
-                <div class="card mb-4">
-                    <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
-                        <div>
-                            <h5 class="mb-0"><i class="bi bi-list-check"></i> Anteprima domande da importare</h5>
-                            <small>Spunta le domande da importare e modifica i campi prima di confermare.</small>
-                        </div>
-                        <span class="badge bg-light text-success">Totale trovate: <?= count($previewQuestions) ?></span>
-                    </div>
-                    <div class="card-body table-responsive">
-                        <table class="table table-striped align-middle">
-                            <thead>
-                                <tr>
-                                    <th style="width:40px;">Importa</th>
-                                    <th>Argomento</th>
-                                    <th style="min-width:220px;">Domanda</th>
-                                    <th>Tipo</th>
-                                    <th>Risposta attesa</th>
-                                    <th>Parole chiave</th>
-                                    <th>Difficoltà</th>
-                                    <th>Ordine</th>
-                                    <th>Note</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($previewQuestions as $index => $domanda): ?>
-                                    <tr>
-                                        <td>
-                                            <input type="checkbox" class="form-check-input" name="questions[<?= $index ?>][import]" value="1" checked>
-                                        </td>
-                                        <td>
-                                            <input type="text" class="form-control form-control-sm" name="questions[<?= $index ?>][argomento]" value="<?= htmlspecialchars($domanda['argomento']) ?>" required>
-                                        </td>
-                                        <td>
-                                            <textarea class="form-control form-control-sm" name="questions[<?= $index ?>][domanda]" rows="2" required><?= htmlspecialchars($domanda['domanda']) ?></textarea>
-                                        </td>
-                                        <td>
-                                            <select class="form-select form-select-sm" name="questions[<?= $index ?>][tipo]">
-                                                <?php foreach (['aperta','multipla','multipla_multi','vero_falso','breve','numerica'] as $tipo): ?>
-                                                    <option value="<?= $tipo ?>" <?= ($domanda['tipo'] ?? '') === $tipo ? 'selected' : '' ?>><?= ucfirst(str_replace('_', ' ', $tipo)) ?></option>
-                                                <?php endforeach; ?>
-                                            </select>
-                                        </td>
-                                        <td>
-                                            <textarea class="form-control form-control-sm" name="questions[<?= $index ?>][risposta_attesa]" rows="2"><?= htmlspecialchars($domanda['risposta_attesa']) ?></textarea>
-                                        </td>
-                                        <td>
-                                            <input type="text" class="form-control form-control-sm" name="questions[<?= $index ?>][parole_chiave]" value="<?= htmlspecialchars($domanda['parole_chiave']) ?>" placeholder="Separare con virgole">
-                                        </td>
-                                        <td style="width:80px;">
-                                            <input type="number" min="1" max="5" class="form-control form-control-sm" name="questions[<?= $index ?>][difficolta]" value="<?= htmlspecialchars($domanda['difficolta']) ?>">
-                                        </td>
-                                        <td style="width:90px;">
-                                            <input type="number" class="form-control form-control-sm" name="questions[<?= $index ?>][ordine_consigliato]" value="<?= htmlspecialchars($domanda['ordine_consigliato']) ?>">
-                                        </td>
-                                        <td>
-                                            <input type="text" class="form-control form-control-sm" name="questions[<?= $index ?>][note]" value="<?= htmlspecialchars($domanda['note']) ?>">
-                                        </td>
-                                        <input type="hidden" name="questions[<?= $index ?>][tempo_risposta_min]" value="<?= htmlspecialchars($domanda['tempo_risposta_min']) ?>">
-                                        <input type="hidden" name="questions[<?= $index ?>][collegata_a]" value="">
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
+    <div class="modal fade" id="importQuestionEditModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-pencil"></i> Modifica domanda importata</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
                 </div>
-
-                <div class="d-grid gap-2 d-md-flex justify-content-md-end mb-5">
-                    <a href="import_questions.php?id=<?= urlencode($udaId) ?>" class="btn btn-outline-secondary">
-                        <i class="bi bi-arrow-clockwise"></i> Ricarica file
-                    </a>
-                    <button type="submit" class="btn btn-success btn-lg">
-                        <i class="bi bi-cloud-upload"></i> Importa le domande selezionate
-                    </button>
+                <div class="modal-body">
+                    <?php $questionEditorId = 'import-question-editor'; include __DIR__ . '/partials/question_editor.php'; ?>
                 </div>
-            </form>
-        <?php endif; ?>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
+                    <button type="button" class="btn btn-primary" id="importQuestionEditSave"><i class="bi bi-check-circle"></i> Conferma modifica</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="assets/js/uda-editor-utils.js"></script>
+    <script src="assets/js/question-card.js"></script>
+    <script src="assets/js/question-editor.js"></script>
+    <script src="assets/js/import-questions.js"></script>
     <script>
         const templateLinks = {
-            json: '../public/download_template_domande.php?format=json',
-            csv: '../public/download_template_domande.php?format=csv',
-            excel: '../public/download_template_domande.php?format=xlsx'
+            json: 'download_template_domande.php?format=json',
+            csv: 'download_template_domande.php?format=csv',
+            excel: 'download_template_domande.php?format=xlsx'
         };
 
         function selectModalita(modalita) {
@@ -2749,6 +2779,9 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
             if (source === 'socrative') {
                 const selectedFormat = document.querySelector('input[name="socrative_source_format"]:checked');
                 toggleSocrativeSourceFormat(selectedFormat ? selectedFormat.value : 'excel');
+            }
+            if (source === 'google_forms' && typeof window.loadGoogleFormsCatalog === 'function') {
+                window.loadGoogleFormsCatalog();
             }
         }
 

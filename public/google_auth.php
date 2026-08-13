@@ -75,6 +75,7 @@ if (isset($_GET['code'])) {
 
         // Scopes richiesti
         $client->addScope(\Google\Service\Drive::DRIVE_FILE);
+        $client->addScope(\Google\Service\Drive::DRIVE_METADATA_READONLY);
         $client->addScope(\Google\Service\Classroom::CLASSROOM_COURSES_READONLY);
         $client->addScope(\Google\Service\Classroom::CLASSROOM_COURSEWORK_ME);
         $client->addScope(\Google\Service\Classroom::CLASSROOM_COURSEWORK_STUDENTS);
@@ -114,6 +115,18 @@ if (isset($_GET['code'])) {
         $googleCfg['token'] = $token;
         $uim->saveConfig('google', $googleCfg, true);
         $success_message = "Token ottenuto e salvato con successo per l'utente corrente!";
+
+        $returnTo = trim((string)($_SESSION['google_return_to'] ?? ''));
+        unset($_SESSION['google_return_to']);
+        if ($returnTo !== '') {
+            $_SESSION['user_integrations_flash'] = [
+                'success' => $success_message,
+                'return_to' => $returnTo,
+                'anchor' => 'google-section',
+            ];
+            header('Location: user_integrations.php#google-section');
+            exit;
+        }
 
         // Redirect per pulire URL
         header('Location: google_auth.php?success=1');
@@ -184,6 +197,7 @@ if (!$error_message) {
 
         // Scopes completi
         $client->addScope(\Google\Service\Drive::DRIVE_FILE);
+        $client->addScope(\Google\Service\Drive::DRIVE_METADATA_READONLY);
         $client->addScope(\Google\Service\Classroom::CLASSROOM_COURSES_READONLY);
         $client->addScope(\Google\Service\Classroom::CLASSROOM_COURSEWORK_ME);
         $client->addScope(\Google\Service\Classroom::CLASSROOM_COURSEWORK_STUDENTS);

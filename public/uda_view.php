@@ -4,6 +4,7 @@ require_once __DIR__ . '/../bootstrap.php';
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
 use App\Integration\GoogleDriveAPI;
+use App\Utils\UdaMetadataHelper;
 
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -148,6 +149,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'delete_classe':
                 $assegnazioneId = $_POST['assegnazione_id'] ?? '';
                 $dbAdapter->deleteRow('CLASSI_ASSEGNATE', $assegnazioneId, 'id_assegnazione');
+                $udaManager->updateUDA($udaId, [
+                    'classi_target' => UdaMetadataHelper::classTargetFromAssignments($dbAdapter->findClassiAssegnate($udaId))
+                ]);
 
                 // Redirect to avoid form resubmission
                 header("Location: uda_view.php?id=" . urlencode($udaId) . "&msg=delete_classe_success");
@@ -201,6 +205,7 @@ try {
     $obiettivi = $udaComplete['obiettivi'];
     $test = $udaComplete['test'];
     $classiAssegnate = $udaComplete['classi_assegnate'];
+    $classiTargetDisplay = UdaMetadataHelper::classTargetFromAssignments($classiAssegnate);
     $voti = $udaComplete['voti'];
     $files = $udaComplete['files'];
 
@@ -512,12 +517,10 @@ try {
                                 ?>
                             </p>
                             <p><strong>Anno scolastico:</strong> <?= htmlspecialchars($uda->anno_scolastico ?? 'N/D') ?></p>
-                            <p><strong>Classi target:</strong> <?= htmlspecialchars($uda->classi_target ?? 'N/D') ?></p>
+                            <p><strong>Classi target:</strong> <?= htmlspecialchars($classiTargetDisplay !== '' ? $classiTargetDisplay : 'N/D') ?></p>
                         </div>
                         <div class="col-md-6">
-                            <p><strong>Progetto:</strong> <?= htmlspecialchars($uda->progetto ?? 'N/D') ?></p>
                             <p><strong>Metodologia:</strong> <?= htmlspecialchars($uda->metodologia ?? 'N/D') ?></p>
-                            <p><strong>Durata:</strong> <?= htmlspecialchars($uda->durata_ore ?? 'N/D') ?> ore</p>
                             <p><strong>Data Inizio:</strong> <?= $uda->data_inizio ? date('d/m/Y', strtotime($uda->data_inizio)) : 'N/D' ?></p>
                             <p><strong>Data Fine:</strong> <?= $uda->data_fine ? date('d/m/Y', strtotime($uda->data_fine)) : 'N/D' ?></p>
                             <p><strong>Data creazione:</strong> <?= $uda->data_creazione ? date('d/m/Y H:i', strtotime($uda->data_creazione)) : 'N/D' ?></p>

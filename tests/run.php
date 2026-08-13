@@ -359,5 +359,58 @@ if ($gitExit === 0) {
     echo "SKIP: Git ignore verification (git is not installed in this runtime)\n";
 }
 
+$editorTests = [
+    'academic periods' => __DIR__ . '/uda_editor/test_uda_periods.php',
+    'Classroom metadata' => __DIR__ . '/uda_editor/test_classroom_metadata.php',
+    'editor utils' => __DIR__ . '/uda_editor/test_editor_utils.php',
+    'editor markup' => __DIR__ . '/uda_editor/test_editor_markup.php',
+    'objective payload' => __DIR__ . '/uda_editor/test_objective_payload.php',
+    'wizard question payload' => __DIR__ . '/uda_editor/test_wizard_question_payload.php',
+    'questions handler' => __DIR__ . '/uda_editor/test_questions_handler.php',
+    'question card markup' => __DIR__ . '/uda_editor/test_question_card_markup.php',
+    'question card pages' => __DIR__ . '/uda_editor/test_question_card_pages.php',
+    'question card rendering' => __DIR__ . '/uda_editor/test_question_card_rendering.php',
+    'Google Forms catalog' => __DIR__ . '/import_questions/test_google_forms_catalog.php',
+    'JSON textarea parser' => __DIR__ . '/import_questions/test_json_textarea.php',
+    'import questions markup' => __DIR__ . '/import_questions/test_import_questions_markup.php',
+    'import preview full markup' => __DIR__ . '/import_questions/test_import_preview_full.php',
+    'template download endpoint' => __DIR__ . '/import_questions/test_template_download.php',
+    'import selection controls' => __DIR__ . '/import_questions/test_import_selection.php',
+];
+foreach ($editorTests as $label => $testFile) {
+    exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($testFile) . ' 2>&1', $editorOutput, $editorExitCode);
+    if ($editorExitCode === 0) {
+        $passes++;
+        echo "PASS: UDA editor {$label}\n";
+    } else {
+        $failures[] = "UDA editor {$label}: " . implode(' | ', $editorOutput);
+        echo "FAIL: UDA editor {$label}\n";
+    }
+    $editorOutput = [];
+}
+
+$nodeVersion = [];
+exec('node --version 2>/dev/null', $nodeVersion, $nodeExitCode);
+if ($nodeExitCode === 0) {
+    exec('node ' . escapeshellarg(__DIR__ . '/uda_editor/test_editor_utils.js') . ' 2>&1', $nodeOutput, $nodeTestExitCode);
+    if ($nodeTestExitCode === 0) {
+        $passes++;
+        echo "PASS: UDA editor JavaScript utils\n";
+    } else {
+        $failures[] = 'UDA editor JavaScript utils: ' . implode(' | ', $nodeOutput);
+        echo "FAIL: UDA editor JavaScript utils\n";
+    }
+    exec('node ' . escapeshellarg(__DIR__ . '/uda_editor/test_question_card.js') . ' 2>&1', $nodeCardOutput, $nodeCardTestExitCode);
+    if ($nodeCardTestExitCode === 0) {
+        $passes++;
+        echo "PASS: UDA question card JavaScript\n";
+    } else {
+        $failures[] = 'UDA question card JavaScript: ' . implode(' | ', $nodeCardOutput);
+        echo "FAIL: UDA question card JavaScript\n";
+    }
+} else {
+    echo "SKIP: UDA editor JavaScript utils (Node.js non disponibile)\n";
+}
+
 echo "\nSummary: {$passes} passed, " . count($failures) . " failed\n";
 exit($failures === [] ? 0 : 1);

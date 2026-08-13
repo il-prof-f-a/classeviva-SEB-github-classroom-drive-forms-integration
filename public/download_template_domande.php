@@ -6,13 +6,15 @@
 
 error_reporting(E_ALL);
 
-$config = require_once __DIR__ . '/../bootstrap.php';
+// Questo endpoint serve esclusivamente file statici di esempio e non deve
+// passare dal bootstrap applicativo: il bootstrap protegge gli script in
+// /public/ con un redirect al login, trasformando il download in index.php.
 
 // Mappa formati consentiti -> file fisico
 $allowed = [
-    'json' => ROOT_PATH . '/database/templates/template_domande.json',
-    'csv'  => ROOT_PATH . '/database/templates/template_domande.csv',
-    'xlsx' => ROOT_PATH . '/database/templates/template_domande.xlsx',
+    'json' => dirname(__DIR__) . '/database/templates/template_domande.json',
+    'csv'  => dirname(__DIR__) . '/database/templates/template_domande.csv',
+    'xlsx' => dirname(__DIR__) . '/database/templates/template_domande.xlsx',
 ];
 
 $format = strtolower($_GET['format'] ?? '');

@@ -10,6 +10,7 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
+use App\Utils\QuestionEditorHelper;
 
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -44,19 +45,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         switch ($action) {
             case 'add_question':
+                $questionPayload = QuestionEditorHelper::normalizePayload($_POST);
+                unset($questionPayload['opzioni']);
                 $domandaData = [
                     'id_domanda' => 'DOM_' . uniqid(),
                     'id_uda' => $udaId,
-                    'argomento' => $_POST['argomento'] ?? '',
-                    'domanda' => $_POST['domanda'] ?? '',
-                    'risposta_attesa' => $_POST['risposta_attesa'] ?? '',
-                    'parole_chiave' => $_POST['parole_chiave'] ?? '',
-                    'difficolta' => $_POST['difficolta'] ?? 3,
-                    'tempo_risposta_min' => $_POST['tempo_risposta_min'] ?? 3,
-                    'collegata_a' => $_POST['collegata_a'] ?? '',
-                    'ordine_consigliato' => $_POST['ordine_consigliato'] ?? 0,
-                    'note' => $_POST['note'] ?? ''
-                ];
+                ] + $questionPayload;
 
                 $dbAdapter->insertRow('DOMANDE_INTERROGAZIONE', $domandaData);
                 $successMessage = "Domanda aggiunta con successo!";
@@ -80,16 +74,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                     }
                     if ($existing) {
-                        $existing['argomento'] = $_POST['argomento'] ?? $existing['argomento'];
-                        $existing['domanda'] = $_POST['domanda'] ?? $existing['domanda'];
-                        $existing['risposta_attesa'] = $_POST['risposta_attesa'] ?? $existing['risposta_attesa'];
-                        $existing['parole_chiave'] = $_POST['parole_chiave'] ?? $existing['parole_chiave'];
-                        $existing['difficolta'] = $_POST['difficolta'] ?? $existing['difficolta'];
-                        $existing['tempo_risposta_min'] = $_POST['tempo_risposta_min'] ?? $existing['tempo_risposta_min'];
-                        $existing['collegata_a'] = $_POST['collegata_a'] ?? $existing['collegata_a'];
-                        $existing['ordine_consigliato'] = $_POST['ordine_consigliato'] ?? $existing['ordine_consigliato'];
-                        $existing['note'] = $_POST['note'] ?? $existing['note'];
-                        $dbAdapter->updateRow('DOMANDE_INTERROGAZIONE', 'id_domanda', $domandaId, $existing);
+                        $questionPayload = QuestionEditorHelper::normalizePayload(array_merge($existing, $_POST));
+                        unset($questionPayload['opzioni']);
+                        $dbAdapter->updateRow('DOMANDE_INTERROGAZIONE', 'id_domanda', $domandaId, array_merge($existing, $questionPayload));
                         $successMessage = "Domanda aggiornata con successo!";
                     }
 
@@ -239,37 +226,8 @@ function buildMultipleChoicePreview(array $domanda): array
     <title>Gestione Domande - <?= htmlspecialchars($uda->titolo) ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="assets/css/question-card.css">
     <style>
-        .question-card {
-            transition: all 0.3s;
-            border-left: 4px solid #0dcaf0;
-        }
-        .question-card:hover {
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        }
-        .difficulty-1 { border-left-color: #198754; }
-        .difficulty-2 { border-left-color: #20c997; }
-        .difficulty-3 { border-left-color: #0dcaf0; }
-        .difficulty-4 { border-left-color: #ffc107; }
-        .difficulty-5 { border-left-color: #dc3545; }
-
-        .keyword-tag {
-            font-size: 0.75rem;
-            margin: 0.1rem;
-        }
-        .answer-preview {
-            margin-top: 0.5rem;
-            font-size: 0.9rem;
-            color: #495057;
-        }
-        .answer-line {
-            display: flex;
-            align-items: flex-start;
-            gap: 0.5rem;
-        }
-        .answer-icon {
-            line-height: 1.2;
-        }
         .page-actions-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
@@ -405,102 +363,30 @@ function buildMultipleChoicePreview(array $domanda): array
                     <div class="card-body">
                         <?php foreach ($questList as $q):
                             $difficolta = $q['difficolta'] ?? 3;
-                            $diffClass = "difficulty-{$difficolta}";
-                            $paroleChiave = explode(',', $q['parole_chiave'] ?? '');
                             $tipoDomanda = strtolower($q['tipo_domanda'] ?? ($q['tipo'] ?? 'aperta'));
                             $previewItems = [];
                             if (in_array($tipoDomanda, ['multipla', 'multipla_multi'], true)) {
                                 $previewItems = buildMultipleChoicePreview($q);
                             }
+                            $editorPayload = [
+                                'argomento' => $q['argomento'] ?? '',
+                                'domanda' => $q['domanda'] ?? '',
+                                'difficolta' => $difficolta,
+                                'tipo_domanda' => in_array($tipoDomanda, ['multipla', 'multipla_multi'], true) ? 'multipla' : 'aperta',
+                                'risposta_attesa' => $q['risposta_attesa'] ?? '',
+                                'opzioni' => $previewItems,
+                                'parole_chiave' => $q['parole_chiave'] ?? '',
+                            ];
+                            $questionCardData = $q;
+                            $questionCardData['difficolta'] = $difficolta;
+                            $questionCardData['tipo_domanda'] = $editorPayload['tipo_domanda'];
+                            $questionCardData['opzioni'] = $previewItems;
+                            $questionCardActions = 'server';
+                            $questionCardEditPayload = $editorPayload;
+                            $questionCardDeleteId = (string)($q['id_domanda'] ?? '');
+                            $questionCardLabel = '';
                         ?>
-                            <div class="card question-card <?= $diffClass ?> mb-3">
-                                <div class="card-body">
-                                    <div class="d-flex justify-content-between align-items-start">
-                                        <div class="flex-grow-1">
-                                            <h5 class="card-title">
-                                                <?= htmlspecialchars($q['domanda']) ?>
-                                            </h5>
-
-                                            <?php if (!empty($previewItems)): ?>
-                                                <div class="answer-preview">
-                                                    <?php foreach ($previewItems as $ans): ?>
-                                                        <?php $isCorrect = !empty($ans['correct']); ?>
-                                                        <div class="answer-line">
-                                                            <i class="bi <?= $isCorrect ? 'bi-check-square-fill text-success' : 'bi-square text-muted' ?> answer-icon"></i>
-                                                            <span><?= htmlspecialchars($ans['text'] ?? '') ?></span>
-                                                        </div>
-                                                    <?php endforeach; ?>
-                                                </div>
-                                            <?php elseif (!empty($q['risposta_attesa'])): ?>
-                                                <div class="alert alert-light mt-2 mb-2">
-                                                    <strong>Risposta attesa:</strong><br>
-                                                    <?= nl2br(htmlspecialchars($q['risposta_attesa'])) ?>
-                                                </div>
-                                            <?php endif; ?>
-
-                                            <div class="mb-2">
-                                                <span class="badge bg-info">
-                                                    Difficoltà: <?= $difficolta ?>/5
-                                                </span>
-                                                <span class="badge bg-warning text-dark">
-                                                    <i class="bi bi-clock"></i> <?= $q['tempo_risposta_min'] ?? 3 ?> min
-                                                </span>
-                                                <?php if (!empty($q['ordine_consigliato'])): ?>
-                                                    <span class="badge bg-secondary">
-                                                        Ordine: #<?= $q['ordine_consigliato'] ?>
-                                                    </span>
-                                                <?php endif; ?>
-                                            </div>
-
-                                            <?php if (!empty($q['parole_chiave'])): ?>
-                                                <div class="mb-2">
-                                                    <small class="text-muted">Parole chiave:</small>
-                                                    <?php foreach ($paroleChiave as $keyword): ?>
-                                                        <span class="badge bg-light text-dark keyword-tag">
-                                                            <?= htmlspecialchars(trim($keyword)) ?>
-                                                        </span>
-                                                    <?php endforeach; ?>
-                                                </div>
-                                            <?php endif; ?>
-
-                                            <?php if (!empty($q['note'])): ?>
-                                                <small class="text-muted">
-                                                    <i class="bi bi-info-circle"></i> <?= htmlspecialchars($q['note']) ?>
-                                                </small>
-                                            <?php endif; ?>
-                                        </div>
-
-                                        <div class="ms-3">
-                                            <div class="btn-group btn-group-sm" role="group">
-                                                <button type="button"
-                                                        class="btn btn-outline-primary"
-                                                        data-bs-toggle="modal"
-                                                        data-bs-target="#addQuestionModal"
-                                                        data-edit="true"
-                                                        data-id="<?= htmlspecialchars($q['id_domanda']) ?>"
-                                                        data-argomento="<?= htmlspecialchars($q['argomento'] ?? '') ?>"
-                                                        data-domanda="<?= htmlspecialchars($q['domanda'] ?? '') ?>"
-                                                        data-risposta="<?= htmlspecialchars($q['risposta_attesa'] ?? '') ?>"
-                                                        data-parole="<?= htmlspecialchars($q['parole_chiave'] ?? '') ?>"
-                                                        data-difficolta="<?= htmlspecialchars($q['difficolta'] ?? '') ?>"
-                                                        data-tempo="<?= htmlspecialchars($q['tempo_risposta_min'] ?? '') ?>"
-                                                        data-collegata="<?= htmlspecialchars($q['collegata_a'] ?? '') ?>"
-                                                        data-ordine="<?= htmlspecialchars($q['ordine_consigliato'] ?? '') ?>"
-                                                        data-note="<?= htmlspecialchars($q['note'] ?? '') ?>">
-                                                    <i class="bi bi-pencil"></i>
-                                                </button>
-                                                <form method="POST" class="d-inline" onsubmit="return confirm('Sicuro di voler eliminare questa domanda?');">
-                                                    <input type="hidden" name="action" value="delete_question">
-                                                    <input type="hidden" name="domanda_id" value="<?= htmlspecialchars($q['id_domanda']) ?>">
-                                                    <button type="submit" class="btn btn-outline-danger">
-                                                        <i class="bi bi-trash"></i>
-                                                    </button>
-                                                </form>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                            <?php include __DIR__ . '/partials/question_card.php'; ?>
                         <?php endforeach; ?>
                     </div>
                 </div>
@@ -539,7 +425,8 @@ function buildMultipleChoicePreview(array $domanda): array
                     </div>
 
                     <div class="modal-body">
-                        <div class="row g-3">
+                        <?php $questionEditorId = 'standalone-question-editor'; include __DIR__ . '/partials/question_editor.php'; ?>
+                        <div class="row g-3 legacy-question-fields d-none" aria-hidden="true">
                             <!-- Argomento -->
                             <div class="col-md-6">
                                 <label class="form-label">Argomento *</label>
@@ -635,49 +522,30 @@ function buildMultipleChoicePreview(array $domanda): array
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="assets/js/uda-editor-utils.js"></script>
+    <script src="assets/js/question-editor.js"></script>
     <script>
         const addQuestionModal = document.getElementById('addQuestionModal');
+        const questionForm = addQuestionModal.querySelector('form');
+        const questionEditorRoot = document.getElementById('standalone-question-editor');
+        const questionEditor = QuestionEditor.mount(questionEditorRoot);
+        questionForm.querySelectorAll('.legacy-question-fields input, .legacy-question-fields textarea, .legacy-question-fields select').forEach(field => { field.disabled = true; });
+        questionForm.addEventListener('submit', event => {
+            if (!questionEditor.serializeEditor(questionForm)) event.preventDefault();
+        });
         addQuestionModal.addEventListener('show.bs.modal', function (event) {
             const button = event.relatedTarget;
             const isEdit = button?.getAttribute('data-edit') === 'true';
-            const form = addQuestionModal.querySelector('form');
-            const actionInput = document.getElementById('question-action');
-            const idInput = document.getElementById('domanda-id');
-
-            // campi
-            const argomento = form.querySelector('[name=\"argomento\"]');
-            const difficolta = form.querySelector('[name=\"difficolta\"]');
-            const tempo = form.querySelector('[name=\"tempo_risposta_min\"]');
-            const domanda = form.querySelector('[name=\"domanda\"]');
-            const risposta = form.querySelector('[name=\"risposta_attesa\"]');
-            const parole = form.querySelector('[name=\"parole_chiave\"]');
-            const ordine = form.querySelector('[name=\"ordine_consigliato\"]');
-            const collegata = form.querySelector('[name=\"collegata_a\"]');
-            const note = form.querySelector('[name=\"note\"]');
-            const title = document.getElementById('questionModalTitle');
-
+            document.getElementById('question-action').value = isEdit ? 'update_question' : 'add_question';
+            document.getElementById('domanda-id').value = isEdit ? (button.getAttribute('data-id') || '') : '';
+            let payload = {};
             if (isEdit) {
-                actionInput.value = 'update_question';
-                idInput.value = button.getAttribute('data-id') || '';
-                argomento.value = button.getAttribute('data-argomento') || '';
-                difficolta.value = button.getAttribute('data-difficolta') || '3';
-                tempo.value = button.getAttribute('data-tempo') || '3';
-                domanda.value = button.getAttribute('data-domanda') || '';
-                risposta.value = button.getAttribute('data-risposta') || '';
-                parole.value = button.getAttribute('data-parole') || '';
-                ordine.value = button.getAttribute('data-ordine') || '0';
-                collegata.value = button.getAttribute('data-collegata') || '';
-                note.value = button.getAttribute('data-note') || '';
-                title.innerHTML = '<i class=\"bi bi-pencil\"></i> Modifica Domanda';
-            } else {
-                actionInput.value = 'add_question';
-                idInput.value = '';
-                form.reset();
-                difficolta.value = '3';
-                tempo.value = '3';
-                ordine.value = '0';
-                title.innerHTML = '<i class=\"bi bi-plus-circle\"></i> Aggiungi Nuova Domanda';
+                try { payload = JSON.parse(button.getAttribute('data-editor-payload') || '{}'); } catch (_) { payload = {}; }
             }
+            questionEditorRoot.setEditorState(payload);
+            document.getElementById('questionModalTitle').innerHTML = isEdit
+                ? '<i class="bi bi-pencil"></i> Modifica Domanda'
+                : '<i class="bi bi-plus-circle"></i> Aggiungi Nuova Domanda';
         });
     </script>
 </body>
