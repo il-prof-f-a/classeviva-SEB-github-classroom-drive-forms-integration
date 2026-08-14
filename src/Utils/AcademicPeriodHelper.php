@@ -33,8 +33,8 @@ final class AcademicPeriodHelper
 
         if ($periodCount === 2) {
             return [
-                self::item('primo_periodo', 'Primo periodo', $firstStart, $firstEnd),
-                self::item('secondo_periodo', 'Secondo periodo', $secondStart, $yearEnd),
+                self::item('primo_periodo', 'Primo quadrimestre', $firstStart, $firstEnd),
+                self::item('secondo_periodo', 'Secondo quadrimestre', $secondStart, $yearEnd),
                 self::item('anno_intero', 'Intero anno scolastico', $yearStart, $yearEnd),
             ];
         }

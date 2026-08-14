@@ -360,12 +360,15 @@ if ($gitExit === 0) {
 }
 
 $editorTests = [
+    'wizard test fields' => __DIR__ . '/uda_editor/test_wizard_test_fields.php',
     'academic periods' => __DIR__ . '/uda_editor/test_uda_periods.php',
     'Classroom metadata' => __DIR__ . '/uda_editor/test_classroom_metadata.php',
     'editor utils' => __DIR__ . '/uda_editor/test_editor_utils.php',
     'editor markup' => __DIR__ . '/uda_editor/test_editor_markup.php',
     'objective payload' => __DIR__ . '/uda_editor/test_objective_payload.php',
     'wizard question payload' => __DIR__ . '/uda_editor/test_wizard_question_payload.php',
+    'catalog normalizers' => __DIR__ . '/uda_editor/test_catalog_normalizers.php',
+    'wizard catalog markup' => __DIR__ . '/uda_editor/test_wizard_catalog_markup.php',
     'questions handler' => __DIR__ . '/uda_editor/test_questions_handler.php',
     'question card markup' => __DIR__ . '/uda_editor/test_question_card_markup.php',
     'question card pages' => __DIR__ . '/uda_editor/test_question_card_pages.php',
@@ -407,6 +410,14 @@ if ($nodeExitCode === 0) {
     } else {
         $failures[] = 'UDA question card JavaScript: ' . implode(' | ', $nodeCardOutput);
         echo "FAIL: UDA question card JavaScript\n";
+    }
+    exec('node ' . escapeshellarg(__DIR__ . '/uda_editor/test_catalog_picker.js') . ' 2>&1', $catalogPickerOutput, $catalogPickerExitCode);
+    if ($catalogPickerExitCode === 0) {
+        $passes++;
+        echo "PASS: catalog picker JavaScript\n";
+    } else {
+        $failures[] = 'Catalog picker JavaScript: ' . implode(' | ', $catalogPickerOutput);
+        echo "FAIL: catalog picker JavaScript\n";
     }
 } else {
     echo "SKIP: UDA editor JavaScript utils (Node.js non disponibile)\n";

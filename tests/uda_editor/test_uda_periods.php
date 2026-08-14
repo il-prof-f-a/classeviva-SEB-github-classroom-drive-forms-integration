@@ -17,6 +17,8 @@ function assertPeriodValue(mixed $expected, mixed $actual, string $message): voi
 $two = AcademicPeriodHelper::options('2025/2026', ['period_count' => 2, 'period_date_1' => '01-31']);
 assertPeriodValue(['2025-09-01', '2026-01-31'], [$two[0]['start'], $two[0]['end']], 'primo periodo a due periodi');
 assertPeriodValue(['2026-02-01', '2026-06-30'], [$two[1]['start'], $two[1]['end']], 'secondo periodo a due periodi');
+assertPeriodValue('Primo quadrimestre', $two[0]['label'], 'etichetta primo quadrimestre');
+assertPeriodValue('Secondo quadrimestre', $two[1]['label'], 'etichetta secondo quadrimestre');
 assertPeriodValue(['2025-09-01', '2026-06-30'], [$two[2]['start'], $two[2]['end']], 'anno completo');
 
 $shortYear = AcademicPeriodHelper::options('2026-27', ['period_count' => 2, 'period_date_1' => '01-31']);

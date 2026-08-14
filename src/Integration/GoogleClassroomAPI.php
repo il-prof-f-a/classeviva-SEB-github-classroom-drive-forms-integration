@@ -386,6 +386,38 @@ class GoogleClassroomAPI
     }
 
     /**
+     * Recupera i compiti importabili di un corso, normalizzati per i cataloghi UI.
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function getCourseAssignments(string $courseId): array
+    {
+        $assignments = [];
+        $pageToken = null;
+
+        do {
+            $params = [
+                'orderBy' => 'updateTime desc',
+                'courseWorkStates' => ['PUBLISHED', 'DRAFT'],
+            ];
+            if ($pageToken !== null && $pageToken !== '') {
+                $params['pageToken'] = $pageToken;
+            }
+
+            $response = $this->service->courses_courseWork->listCoursesCourseWork($courseId, $params);
+            foreach ($response->getCourseWork() ?? [] as $courseWork) {
+                $normalized = ClassroomAssignmentCatalog::normalize($courseWork);
+                if (ClassroomAssignmentCatalog::isImportable($normalized)) {
+                    $assignments[] = $normalized;
+                }
+            }
+            $pageToken = $response->getNextPageToken();
+        } while ($pageToken);
+
+        return $assignments;
+    }
+
+    /**
      * Recupera metadati di un corso specifico
      */
     public function getCourse(string $courseId): array

@@ -21,66 +21,11 @@ if (!$courseId) {
 } else {
     try {
         $classroomAPI = new GoogleClassroomAPI($config);
-
-        // Usa l'API per recuperare tutti i courseWork del corso
-        $service = new Google\Service\Classroom($classroomAPI->getClient());
-
-        $assignments = [];
-        $pageToken = null;
-
-        do {
-            $response = $service->courses_courseWork->listCoursesCourseWork($courseId, [
-                'pageToken' => $pageToken,
-                'orderBy' => 'updateTime desc', // Più recenti prima
-                'courseWorkStates' => ['PUBLISHED', 'DRAFT']
-            ]);
-
-            $courseWorkList = $response->getCourseWork() ?? [];
-            foreach ($courseWorkList as $courseWork) {
-                $workType = $courseWork->getWorkType();
-                if (in_array($workType, ['ASSIGNMENT', 'QUIZ_ASSIGNMENT'], true)) {
-                    $dueDateTime = null;
-                    if ($courseWork->getDueDate()) {
-                        $dueDateTime = sprintf(
-                            '%04d-%02d-%02d',
-                            $courseWork->getDueDate()->getYear(),
-                            $courseWork->getDueDate()->getMonth(),
-                            $courseWork->getDueDate()->getDay()
-                        );
-
-                        if ($courseWork->getDueTime()) {
-                            $dueDateTime .= sprintf(
-                                ' %02d:%02d',
-                                $courseWork->getDueTime()->getHours() ?? 23,
-                                $courseWork->getDueTime()->getMinutes() ?? 59
-                            );
-                        }
-                    }
-
-                    $assignments[] = [
-                        'id' => $courseWork->getId(),
-                        'title' => $courseWork->getTitle(),
-                        'description' => $courseWork->getDescription() ?? '',
-                        'state' => $courseWork->getState(),
-                        'max_points' => $courseWork->getMaxPoints() ?? 100,
-                        'due_date' => $dueDateTime,
-                        'topic_id' => $courseWork->getTopicId() ?? null,
-                        'link' => $courseWork->getAlternateLink(),
-                        'creation_time' => $courseWork->getCreationTime(),
-                        'update_time' => $courseWork->getUpdateTime()
-                    ];
-                }
-            }
-
-            $pageToken = $response->getNextPageToken();
-        } while ($pageToken);
-
         $responsePayload = [
             'success' => true,
-            'assignments' => $assignments
+            'assignments' => $classroomAPI->getCourseAssignments((string)$courseId)
         ];
-
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         $responsePayload = [
             'success' => false,
             'error' => $e->getMessage()
@@ -98,4 +43,4 @@ if ($bufferedOutput !== '') {
 }
 
 header('Content-Type: application/json');
-echo json_encode($responsePayload);
+echo json_encode($responsePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

@@ -226,7 +226,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         'pubblicato' => 'NO',
                         'classroom_course_id' => $_POST['test_classroom_course_id'][$index] ?? '',
                         'classroom_assignment_id' => $_POST['test_classroom_assignment_id'][$index] ?? '',
-                        'classroom_topic_id' => $_POST['test_classroom_topic_id'][$index] ?? ''
+                        'classroom_topic_id' => $_POST['test_classroom_topic_id'][$index] ?? '',
+                        'github_classroom_id' => $_POST['test_github_classroom_id'][$index] ?? '',
+                        'github_assignment_id' => $_POST['test_github_assignment_id'][$index] ?? '',
+                        'url_assignment_student' => $_POST['test_url_assignment_student'][$index] ?? '',
+                        'url_assignment_teacher' => $_POST['test_url_assignment_teacher'][$index] ?? ''
                     ]);
                 }
             }
@@ -703,7 +707,14 @@ try {
                     <!-- Step 6: Test (OPZIONALE) -->
                     <div class="step" data-step="6">
                         <h3 class="mb-4"><i class="bi bi-clipboard-check" style="color: #6f42c1;"></i> Test e Valutazioni</h3>
-                        <p class="text-muted">Configura i test per questa UDA (opzionale).</p>
+                        <p class="text-muted">Collega eventuali test o attività già esistenti (opzionale).</p>
+                        <div class="alert alert-info small">
+                            <i class="bi bi-info-circle"></i>
+                            Qui puoi collegare un test o un'attività già esistente tramite link.
+                            Dopo la creazione dell'UDA, dalla sezione <strong>Test e attività</strong>
+                            potrai creare Google Forms, importare/esportare contenuti, pubblicare su Classroom
+                            e gestire gli assignment GitHub.
+                        </div>
 
                         <div id="test-container">
                             <!-- Template test verrà inserito qui -->
@@ -858,6 +869,7 @@ try {
     <script src="assets/js/uda-editor-utils.js"></script>
     <script src="assets/js/question-editor.js"></script>
     <script src="assets/js/question-card.js"></script>
+    <script src="assets/js/catalog-picker.js"></script>
     <script>
         const academicPeriodOptions = <?= json_encode($periodOptionsByYear, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
         let currentStep = 1;
@@ -1300,21 +1312,40 @@ try {
                             <option value="google-forms">Google Forms</option>
                             <option value="kahoot">Kahoot</option>
                             <option value="socrative">Socrative</option>
-                            <option value="google-classroom">Google Classroom</option>
+                            <option value="google-classroom">Google Classroom (Compito)</option>
+                            <option value="github">GitHub Classroom</option>
                             <option value="altro">Altro</option>
                         </select>
                     </div>
-                    <div class="col-md-4 mb-2">
-                        <label class="form-label">N. Domande</label>
-                        <input type="number" class="form-control" name="test_domande[]" min="0">
-                    </div>
-                    <div class="col-md-4 mb-2">
-                        <label class="form-label">Durata (min)</label>
-                        <input type="number" class="form-control" name="test_durata[]" min="0">
-                    </div>
-                    <div class="col-md-4 mb-2">
-                        <label class="form-label">Punti Max</label>
-                        <input type="number" class="form-control" name="test_punti[]" value="100" min="0" step="0.1">
+                    <div class="col-12 mb-3 test-catalog-panel d-none">
+                        <div class="border rounded p-3 bg-light">
+                            <div class="small text-muted test-catalog-help mb-2"></div>
+                            <div class="alert d-none test-catalog-status mb-2"></div>
+                            <div class="test-forms-catalog d-none">
+                                <label class="form-label">Cerca Google Form</label>
+                                <input type="search" class="form-control test-forms-search mb-2" placeholder="Cerca per titolo, autore, data o descrizione..." autocomplete="off">
+                                <div class="list-group test-forms-list" role="listbox"></div>
+                                <a class="small d-none test-google-auth-link" href="user_integrations.php#google-section">Autorizza Google Drive e Forms nelle integrazioni</a>
+                            </div>
+                            <div class="test-classroom-catalog d-none">
+                                <label class="form-label">Corso Google Classroom associato</label>
+                                <select class="form-select test-classroom-course mb-2">
+                                    <option value="">Caricamento corsi...</option>
+                                </select>
+                                <label class="form-label">Cerca compito</label>
+                                <input type="search" class="form-control test-classroom-search mb-2" placeholder="Cerca per titolo, stato o scadenza..." autocomplete="off">
+                                <div class="list-group test-classroom-list" role="listbox"></div>
+                            </div>
+                            <div class="test-github-catalog d-none">
+                                <label class="form-label">GitHub Classroom associata</label>
+                                <select class="form-select test-github-classroom mb-2">
+                                    <option value="">Caricamento classroom...</option>
+                                </select>
+                                <label class="form-label">Cerca assignment</label>
+                                <input type="search" class="form-control test-github-search mb-2" placeholder="Cerca per titolo o slug..." autocomplete="off">
+                                <div class="list-group test-github-list" role="listbox"></div>
+                            </div>
+                        </div>
                     </div>
                     <div class="col-md-6 mb-2">
                         <label class="form-label">URL Studenti</label>
@@ -1325,20 +1356,278 @@ try {
                         <input type="url" class="form-control" name="test_url_docente[]" placeholder="Link gestione o risultati">
                     </div>
                     <div class="col-12 mb-2">
-                        <label class="form-label">URL Test</label>
-                        <input type="url" class="form-control" name="test_url[]" placeholder="https://...">
-                    </div>
-                    <div class="col-12 mb-2">
                         <label class="form-label">Descrizione</label>
                         <textarea class="form-control" name="test_descrizione[]" rows="2"></textarea>
                     </div>
                     <input type="hidden" name="test_classroom_course_id[]" value="">
                     <input type="hidden" name="test_classroom_assignment_id[]" value="">
                     <input type="hidden" name="test_classroom_topic_id[]" value="">
+                    <input type="hidden" name="test_github_classroom_id[]" value="">
+                    <input type="hidden" name="test_github_assignment_id[]" value="">
+                    <input type="hidden" name="test_url_assignment_student[]" value="">
+                    <input type="hidden" name="test_url_assignment_teacher[]" value="">
                 </div>
             `;
             container.appendChild(item);
+            initWizardTestCatalog(item);
             return item;
+        }
+
+        function wizardTestField(wrapper, selector) {
+            return wrapper.querySelector(selector);
+        }
+
+        function wizardClassSubjectQuery() {
+            const classIds = [];
+            const subjectIds = [];
+            document.querySelectorAll('#classi-container .dynamic-item').forEach(row => {
+                const classInput = row.querySelector('input[name="classe_id[]"]');
+                const subjectInput = row.querySelector('input[name="classe_materia[]"]');
+                const classId = String(classInput?.value || '').trim();
+                const subjectId = String(subjectInput?.value || '').trim();
+                if (classId) classIds.push(classId);
+                if (subjectId) subjectIds.push(subjectId);
+            });
+            return {
+                classIds: [...new Set(classIds)],
+                subjectIds: [...new Set(subjectIds)]
+            };
+        }
+
+        function wizardCatalogUrl(path, params) {
+            const query = new URLSearchParams();
+            Object.entries(params || {}).forEach(([key, value]) => {
+                if (Array.isArray(value)) {
+                    value.forEach(item => query.append(`${key}[]`, item));
+                } else if (value !== undefined && value !== null && String(value) !== '') {
+                    query.set(key, value);
+                }
+            });
+            return `${path}?${query.toString()}`;
+        }
+
+        async function fetchWizardCatalog(path, params) {
+            const response = await fetch(wizardCatalogUrl(path, params), {
+                credentials: 'same-origin',
+                headers: { Accept: 'application/json' }
+            });
+            const data = await response.json().catch(() => null);
+            if (!response.ok || !data || !data.success) {
+                const error = new Error(data?.error || `Errore HTTP ${response.status}`);
+                error.code = data?.error_code || '';
+                throw error;
+            }
+            return data;
+        }
+
+        function setWizardCatalogStatus(wrapper, message, type = 'info') {
+            const status = wrapper.querySelector('.test-catalog-status');
+            if (!status) return;
+            status.className = `alert alert-${type} test-catalog-status mb-2`;
+            status.textContent = message || '';
+            status.classList.toggle('d-none', !message);
+        }
+
+        function setWizardCatalogOptions(select, options, placeholder) {
+            if (!select) return;
+            select.replaceChildren();
+            const empty = document.createElement('option');
+            empty.value = '';
+            empty.textContent = placeholder;
+            select.appendChild(empty);
+            (Array.isArray(options) ? options : []).forEach(optionData => {
+                const option = document.createElement('option');
+                option.value = String(optionData.id || '');
+                option.textContent = String(optionData.name || optionData.title || optionData.id || '');
+                option.dataset.catalogItem = JSON.stringify(optionData);
+                select.appendChild(option);
+            });
+        }
+
+        function clearWizardTestExternalFields(wrapper) {
+            [
+                'test_classroom_course_id[]',
+                'test_classroom_assignment_id[]',
+                'test_classroom_topic_id[]',
+                'test_github_classroom_id[]',
+                'test_github_assignment_id[]',
+                'test_url_assignment_student[]',
+                'test_url_assignment_teacher[]'
+            ].forEach(name => {
+                const input = wrapper.querySelector(`input[name="${name}"]`);
+                if (input) input.value = '';
+            });
+        }
+
+        function fillWizardTestFromCatalog(wrapper, item, platform) {
+            if (!item) return;
+            const nameInput = wizardTestField(wrapper, 'input[name="test_nome[]"]');
+            const descriptionInput = wizardTestField(wrapper, 'textarea[name="test_descrizione[]"]');
+            const studentInput = wizardTestField(wrapper, 'input[name="test_url_studenti[]"]');
+            const teacherInput = wizardTestField(wrapper, 'input[name="test_url_docente[]"]');
+            if (nameInput) nameInput.value = String(item.title || item.name || '');
+            if (descriptionInput) descriptionInput.value = String(item.description || '');
+            if (studentInput) studentInput.value = String(item.student_url || item.link || '');
+            if (teacherInput) teacherInput.value = String(item.teacher_url || item.link || '');
+            clearWizardTestExternalFields(wrapper);
+
+            if (platform === 'google-classroom') {
+                const course = wrapper.querySelector('.test-classroom-course');
+                const courseId = course?.value || '';
+                const courseInput = wizardTestField(wrapper, 'input[name="test_classroom_course_id[]"]');
+                const assignmentInput = wizardTestField(wrapper, 'input[name="test_classroom_assignment_id[]"]');
+                const topicInput = wizardTestField(wrapper, 'input[name="test_classroom_topic_id[]"]');
+                if (courseInput) courseInput.value = courseId;
+                if (assignmentInput) assignmentInput.value = String(item.id || '');
+                if (topicInput) topicInput.value = String(item.topic_id || '');
+            }
+            if (platform === 'github') {
+                const classroomInput = wizardTestField(wrapper, 'input[name="test_github_classroom_id[]"]');
+                const assignmentInput = wizardTestField(wrapper, 'input[name="test_github_assignment_id[]"]');
+                const studentAssignmentInput = wizardTestField(wrapper, 'input[name="test_url_assignment_student[]"]');
+                const teacherAssignmentInput = wizardTestField(wrapper, 'input[name="test_url_assignment_teacher[]"]');
+                if (classroomInput) classroomInput.value = String(item.github_classroom_id || wrapper.querySelector('.test-github-classroom')?.value || '');
+                if (assignmentInput) assignmentInput.value = String(item.github_assignment_id || item.id || '');
+                if (studentAssignmentInput) studentAssignmentInput.value = String(item.student_url || '');
+                if (teacherAssignmentInput) teacherAssignmentInput.value = String(item.teacher_url || '');
+            }
+        }
+
+        function initWizardTestCatalog(wrapper) {
+            const platformSelect = wrapper.querySelector('select[name="test_piattaforma[]"]');
+            const panel = wrapper.querySelector('.test-catalog-panel');
+            const formsBox = wrapper.querySelector('.test-forms-catalog');
+            const classroomBox = wrapper.querySelector('.test-classroom-catalog');
+            const githubBox = wrapper.querySelector('.test-github-catalog');
+            const formsPicker = window.CatalogPicker && formsBox
+                ? new window.CatalogPicker({
+                    searchInput: wrapper.querySelector('.test-forms-search'),
+                    listContainer: wrapper.querySelector('.test-forms-list'),
+                    renderItem: form => ({
+                        title: form.title || 'Google Form senza titolo',
+                        metadata: `${form.response_count ?? 'n/d'} risposte · ${form.author || 'Autore n/d'} · ${form.created_at || 'Data n/d'}`
+                    }),
+                    onSelect: form => fillWizardTestFromCatalog(wrapper, form, 'google-forms')
+                })
+                : null;
+            const classroomPicker = window.CatalogPicker && classroomBox
+                ? new window.CatalogPicker({
+                    searchInput: wrapper.querySelector('.test-classroom-search'),
+                    listContainer: wrapper.querySelector('.test-classroom-list'),
+                    renderItem: assignment => ({
+                        title: assignment.title || 'Compito senza titolo',
+                        metadata: `${assignment.state || 'stato n/d'} · ${assignment.due_date || 'senza scadenza'}`
+                    }),
+                    onSelect: assignment => fillWizardTestFromCatalog(wrapper, assignment, 'google-classroom')
+                })
+                : null;
+            const githubPicker = window.CatalogPicker && githubBox
+                ? new window.CatalogPicker({
+                    searchInput: wrapper.querySelector('.test-github-search'),
+                    listContainer: wrapper.querySelector('.test-github-list'),
+                    renderItem: assignment => ({
+                        title: assignment.title || assignment.slug || 'Assignment senza titolo',
+                        metadata: assignment.slug || assignment.github_assignment_id || ''
+                    }),
+                    onSelect: assignment => fillWizardTestFromCatalog(wrapper, assignment, 'github')
+                })
+                : null;
+
+            const showOnly = (box, help) => {
+                panel.classList.remove('d-none');
+                formsBox.classList.toggle('d-none', box !== formsBox);
+                classroomBox.classList.toggle('d-none', box !== classroomBox);
+                githubBox.classList.toggle('d-none', box !== githubBox);
+                const helpBox = wrapper.querySelector('.test-catalog-help');
+                if (helpBox) helpBox.textContent = help;
+            };
+
+            const loadForms = async () => {
+                showOnly(formsBox, 'Seleziona un modulo già presente nel Drive autorizzato.');
+                try {
+                    const data = await fetchWizardCatalog('ajax_list_google_forms.php', {});
+                    formsPicker?.setItems(data.forms || []);
+                    setWizardCatalogStatus(wrapper, `${(data.forms || []).length} Google Forms disponibili.`, 'success');
+                } catch (error) {
+                    setWizardCatalogStatus(wrapper, error.message, 'warning');
+                    wrapper.querySelector('.test-google-auth-link')?.classList.remove('d-none');
+                }
+            };
+
+            const loadClassroomCourses = async () => {
+                showOnly(classroomBox, 'Sono mostrati solo i corsi associati alle classi selezionate.');
+                const query = wizardClassSubjectQuery();
+                try {
+                    const data = await fetchWizardCatalog('ajax_get_wizard_classroom_catalog.php', query);
+                    const select = wrapper.querySelector('.test-classroom-course');
+                    setWizardCatalogOptions(select, data.courses || [], 'Seleziona corso...');
+                    setWizardCatalogStatus(wrapper, 'Scegli un corso per caricare i compiti disponibili.', 'info');
+                } catch (error) {
+                    setWizardCatalogStatus(wrapper, error.message, 'warning');
+                }
+            };
+
+            const loadClassroomAssignments = async courseId => {
+                if (!courseId) {
+                    classroomPicker?.setItems([]);
+                    return;
+                }
+                const query = wizardClassSubjectQuery();
+                query.course_id = courseId;
+                try {
+                    const data = await fetchWizardCatalog('ajax_get_wizard_classroom_catalog.php', query);
+                    classroomPicker?.setItems(data.assignments || []);
+                    setWizardCatalogStatus(wrapper, `${(data.assignments || []).length} compiti disponibili.`, 'success');
+                } catch (error) {
+                    setWizardCatalogStatus(wrapper, error.message, 'warning');
+                }
+            };
+
+            const loadGithub = async () => {
+                showOnly(githubBox, 'Sono mostrati solo gli assignment della GitHub Classroom associata.');
+                const query = wizardClassSubjectQuery();
+                try {
+                    const data = await fetchWizardCatalog('ajax_get_wizard_github_catalog.php', query);
+                    const select = wrapper.querySelector('.test-github-classroom');
+                    setWizardCatalogOptions(select, data.classrooms || [], 'Seleziona classroom...');
+                    setWizardCatalogStatus(wrapper, 'Scegli una classroom per caricare gli assignment.', 'info');
+                } catch (error) {
+                    setWizardCatalogStatus(wrapper, error.message, 'warning');
+                }
+            };
+
+            wrapper.querySelector('.test-classroom-course')?.addEventListener('change', event => {
+                const courseInput = wizardTestField(wrapper, 'input[name="test_classroom_course_id[]"]');
+                if (courseInput) courseInput.value = event.target.value || '';
+                loadClassroomAssignments(event.target.value || '');
+            });
+            wrapper.querySelector('.test-github-classroom')?.addEventListener('change', async event => {
+                const classroomId = event.target.value || '';
+                if (!classroomId) return;
+                const query = wizardClassSubjectQuery();
+                query.classroom_id = classroomId;
+                try {
+                    const data = await fetchWizardCatalog('ajax_get_wizard_github_catalog.php', query);
+                    githubPicker?.setItems(data.assignments || []);
+                    setWizardCatalogStatus(wrapper, `${(data.assignments || []).length} assignment disponibili.`, 'success');
+                } catch (error) {
+                    setWizardCatalogStatus(wrapper, error.message, 'warning');
+                }
+            });
+
+            platformSelect.addEventListener('change', () => {
+                const platform = platformSelect.value;
+                panel.classList.add('d-none');
+                formsBox.classList.add('d-none');
+                classroomBox.classList.add('d-none');
+                githubBox.classList.add('d-none');
+                clearWizardTestExternalFields(wrapper);
+                if (platform === 'google-forms') loadForms();
+                else if (platform === 'google-classroom') loadClassroomCourses();
+                else if (platform === 'github') loadGithub();
+            });
+
+            platformSelect.dispatchEvent(new Event('change'));
         }
 
         /* Legacy inline editor retained only as a non-executable migration reference.
@@ -1981,12 +2270,8 @@ try {
             const nameInput = wrapper.querySelector('input[name="test_nome[]"]');
             const typeSelect = wrapper.querySelector('select[name="test_tipo[]"]');
             const platformSelect = wrapper.querySelector('select[name="test_piattaforma[]"]');
-            const questionsInput = wrapper.querySelector('input[name="test_domande[]"]');
-            const durataInput = wrapper.querySelector('input[name="test_durata[]"]');
-            const puntiInput = wrapper.querySelector('input[name="test_punti[]"]');
             const urlStudentiInput = wrapper.querySelector('input[name="test_url_studenti[]"]');
             const urlDocenteInput = wrapper.querySelector('input[name="test_url_docente[]"]');
-            const urlInput = wrapper.querySelector('input[name="test_url[]"]');
             const descInput = wrapper.querySelector('textarea[name="test_descrizione[]"]');
             const classroomCourseInput = wrapper.querySelector('input[name="test_classroom_course_id[]"]');
             const classroomAssignmentInput = wrapper.querySelector('input[name="test_classroom_assignment_id[]"]');
@@ -1996,12 +2281,8 @@ try {
             if (nameInput) nameInput.value = resource.title || 'Test Classroom';
             if (typeSelect) typeSelect.value = resource.is_assignment ? 'intermedio' : 'altro';
             if (platformSelect) platformSelect.value = platform;
-            if (questionsInput) questionsInput.value = '';
-            if (durataInput) durataInput.value = '';
-            if (puntiInput && !puntiInput.value) puntiInput.value = '100';
             if (urlStudentiInput) urlStudentiInput.value = resource.url || '';
             if (urlDocenteInput) urlDocenteInput.value = resource.url || '';
-            if (urlInput) urlInput.value = resource.url || '';
             const classroomCourseSelect = document.getElementById('wizardClassroomCourseSelect');
             const selectedCourseId = classroomCourseSelect ? (classroomCourseSelect.value || '') : '';
             if (classroomCourseInput) classroomCourseInput.value = (platform === 'google-classroom' ? selectedCourseId : '');

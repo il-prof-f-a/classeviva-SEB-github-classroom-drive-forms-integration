@@ -50,8 +50,8 @@ final class GoogleFormsCatalog
         return $missing;
     }
 
-    /** @return array<string,mixed> */
-    public static function normalizeFile(mixed $file, ?int $responseCount = null): array
+    /** @param array<string,mixed> $metadata @return array<string,mixed> */
+    public static function normalizeFile(mixed $file, ?int $responseCount = null, array $metadata = []): array
     {
         $owners = is_array($file) ? ($file['owners'] ?? []) : self::objectValue($file, 'getOwners', []);
         $owner = is_array($owners) && isset($owners[0]) ? $owners[0] : [];
@@ -62,14 +62,25 @@ final class GoogleFormsCatalog
         $title = trim((string)(is_array($file) ? ($file['name'] ?? 'Google Form') : self::objectValue($file, 'getName', 'Google Form')));
         $created = (string)(is_array($file) ? ($file['createdTime'] ?? '') : self::objectValue($file, 'getCreatedTime', ''));
         $webViewLink = trim((string)(is_array($file) ? ($file['webViewLink'] ?? '') : self::objectValue($file, 'getWebViewLink', '')));
+        $description = trim((string)($metadata['description']
+            ?? (is_array($file) ? ($file['description'] ?? '') : self::objectValue($file, 'getDescription', ''))));
+        $responderUri = trim((string)($metadata['responder_uri']
+            ?? (is_array($file) ? ($file['responderUri'] ?? '') : '')));
         if ($webViewLink === '' && $id !== '') {
             $webViewLink = 'https://docs.google.com/forms/d/' . rawurlencode($id) . '/edit';
+        }
+        if ($responderUri === '' && $id !== '') {
+            // Fallback compatibile con gli ID restituiti da Drive quando Forms API
+            // non espone responderUri (ad esempio nei fixture o in una risposta parziale).
+            $responderUri = 'https://docs.google.com/forms/d/' . rawurlencode($id) . '/viewform';
         }
 
         return [
             'id' => $id,
             'title' => $title !== '' ? $title : 'Google Form senza titolo',
             'teacher_url' => $webViewLink,
+            'student_url' => $responderUri,
+            'description' => $description,
             'author' => $author !== '' ? $author : 'Autore non disponibile',
             'created_at' => $created,
             'response_count' => $responseCount,
@@ -88,6 +99,7 @@ final class GoogleFormsCatalog
                 (string)($form['title'] ?? ''),
                 (string)($form['author'] ?? ''),
                 (string)($form['created_at'] ?? ''),
+                (string)($form['description'] ?? ''),
             ]));
             return str_contains($haystack, $needle);
         }));
@@ -149,12 +161,28 @@ final class GoogleFormsCatalog
             $response = $drive->files->listFiles($params);
             foreach ($response->getFiles() as $file) {
                 $responseCount = null;
+                $metadata = [];
+                try {
+                    $formId = (string)$file->getId();
+                    $form = $forms->forms->get($formId);
+                    $metadata = [
+                        'responder_uri' => method_exists($form, 'getResponderUri')
+                            ? (string)($form->getResponderUri() ?? '')
+                            : '',
+                        'description' => method_exists($form, 'getInfo') && $form->getInfo()
+                            ? (string)($form->getInfo()->getDescription() ?? '')
+                            : '',
+                    ];
+                } catch (\Throwable) {
+                    // Un form può essere visibile in Drive ma non leggibile da Forms API.
+                    // Il catalogo resta utilizzabile con i metadati di Drive e i fallback URL.
+                }
                 try {
                     $responseCount = self::countResponses($forms, (string)$file->getId());
                 } catch (\Throwable) {
                     $responseCount = null;
                 }
-                $files[] = self::normalizeFile($file, $responseCount);
+                $files[] = self::normalizeFile($file, $responseCount, $metadata);
             }
             $pageToken = $response->getNextPageToken();
         } while ($pageToken);

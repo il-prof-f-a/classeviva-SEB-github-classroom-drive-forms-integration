@@ -10,15 +10,34 @@
     let forms = [];
     let catalogLoaded = false;
 
+    const catalogPicker = (typeof window !== 'undefined' && typeof window.CatalogPicker === 'function' && catalogList)
+        ? new window.CatalogPicker({
+            searchInput: catalogSearch,
+            listContainer: catalogList,
+            statusContainer: catalogStatus,
+            emptyMessage: 'Nessun Google Form corrisponde alla ricerca.',
+            renderItem: form => {
+                const count = form.response_count === null || form.response_count === undefined
+                    ? 'risposte n/d'
+                    : `${form.response_count} risposte`;
+                return {
+                    title: form.title || 'Google Form senza titolo',
+                    metadata: `${count} · ${form.author || 'Autore n/d'} · ${formatDate(form.created_at)}`
+                };
+            },
+            onSelect: form => {
+                if (formsUrlInput) {
+                    formsUrlInput.value = form.teacher_url || `https://docs.google.com/forms/d/${form.id}/edit`;
+                }
+            }
+        })
+        : null;
+
     function setStatus(message, type) {
         if (!catalogStatus) return;
         catalogStatus.className = `alert alert-${type || 'info'} mt-3 mb-2`;
         catalogStatus.textContent = message || '';
         catalogStatus.classList.toggle('d-none', !message);
-    }
-
-    function escapeText(value) {
-        return String(value ?? '');
     }
 
     function formatDate(value) {
@@ -28,10 +47,14 @@
     }
 
     function renderCatalog() {
+        if (catalogPicker) {
+            catalogPicker.setItems(forms);
+            return;
+        }
         if (!catalogList) return;
         const query = String(catalogSearch?.value || '').trim().toLocaleLowerCase('it');
-        const filtered = forms.filter(form => [form.title, form.author, form.created_at]
-            .map(escapeText).join(' ').toLocaleLowerCase('it').includes(query));
+        const filtered = forms.filter(form => [form.title, form.author, form.created_at, form.description]
+            .map(value => String(value ?? '')).join(' ').toLocaleLowerCase('it').includes(query));
         catalogList.replaceChildren();
         if (!filtered.length) {
             const empty = document.createElement('div');
@@ -196,7 +219,9 @@
     window.loadGoogleFormsCatalog = loadFormsCatalog;
     window.setAllImportSelections = setAllImportSelections;
     window.selectExistingSource = window.selectExistingSource || function () {};
-    catalogSearch?.addEventListener('input', renderCatalog);
+    if (!catalogPicker) {
+        catalogSearch?.addEventListener('input', renderCatalog);
+    }
     initJsonLoader();
     initImportSelection();
     initPreviewEditor();

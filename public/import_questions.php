@@ -2734,6 +2734,7 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
     <script src="assets/js/uda-editor-utils.js"></script>
     <script src="assets/js/question-card.js"></script>
     <script src="assets/js/question-editor.js"></script>
+    <script src="assets/js/catalog-picker.js"></script>
     <script src="assets/js/import-questions.js"></script>
     <script>
         const templateLinks = {
