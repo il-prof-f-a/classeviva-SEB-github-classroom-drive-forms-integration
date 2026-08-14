@@ -137,6 +137,20 @@ Dopo **Mostra anteprima** la pagina nasconde i pannelli di selezione e mostra su
 
 Per staging e produzione sostituire `APP_URL` e i due redirect con URL HTTPS dell'ambiente corrispondente e registrarli nel relativo client OAuth.
 
+## Wizard di creazione UDA
+
+Il wizard segue un flusso in sette passaggi:
+
+1. **Informazioni generali**: titolo, argomento, disciplina, metodologia, anno, periodo, descrizione, note e stato. Questi dati sono compilati manualmente; non viene eseguito alcun import automatico dall’argomento Classroom.
+2. **Classi e integrazioni**: selezionare almeno una coppia classe–materia ClasseViva. Le mappature Google Classroom e GitHub Classroom sono facoltative. Se una mappatura globale esiste già, viene preselezionata. Per crearla o modificarla usare i pulsanti di configurazione: dopo il salvataggio è possibile tornare al wizard senza perdere le selezioni.
+3. **Materiali**: aggiungere materiali manualmente, da Drive oppure caricare le risorse dei corsi Google Classroom mappati.
+4. **Obiettivi**: cercare e selezionare gli obiettivi dal catalogo.
+5. **Domande**: usare l’editor condiviso o `import_questions.php` per importare JSON, CSV, Excel e, quando disponibile, Google Forms collegati.
+6. **Test**: collegare Forms, compiti Classroom e assignment GitHub dai cataloghi filtrati sulle classi selezionate; Kahoot, Socrative e altri strumenti restano collegamenti manuali.
+7. **Riepilogo**: controllare dati, classi, integrazioni, contenuti e origine degli elementi prima del salvataggio.
+
+Le mappature vengono salvate nelle integrazioni globali e sono quindi riutilizzabili dalle UDA successive. La presenza di almeno una mappatura Classroom o GitHub porta automaticamente una nuova UDA dallo stato `bozza` allo stato `attiva`; classe e materia restano l’unico requisito obbligatorio dello step delle assegnazioni.
+
 ## GitHub Classroom
 
 Creare una OAuth App seguendo la [documentazione ufficiale GitHub](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app). Per il locale usare:

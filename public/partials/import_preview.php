@@ -3,6 +3,7 @@
     <form method="POST" id="importForm">
         <input type="hidden" name="action" value="import_selected">
         <input type="hidden" name="modalita" value="<?= htmlspecialchars($modalita) ?>">
+        <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo ?? '') ?>">
 
         <div class="card mb-4">
             <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
@@ -53,7 +54,7 @@
         </div>
 
         <div class="d-grid gap-2 d-md-flex justify-content-md-end mb-5">
-            <a href="import_questions.php?id=<?= urlencode($udaId) ?>" class="btn btn-outline-secondary">
+            <a href="import_questions.php?id=<?= urlencode($udaId) ?>&return_to=<?= urlencode($returnTo ?? '') ?>" class="btn btn-outline-secondary">
                 <i class="bi bi-x-circle"></i> Annulla
             </a>
             <button type="submit" class="btn btn-success btn-lg">

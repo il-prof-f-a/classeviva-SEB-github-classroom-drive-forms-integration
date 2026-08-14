@@ -9,6 +9,7 @@ require_once '../bootstrap.php';
 use App\Integration\GitHubIntegration;
 use App\Integration\ClasseVivaAPI;
 use App\Core\Database\DatabaseFactory;
+use App\Utils\LocalReturnUrl;
 
 $pageTitle = "Mappatura GitHub Classroom";
 
@@ -28,6 +29,11 @@ $errorMessage = null;
 $warningMessage = null;
 $mapStudentsMode = (isset($_GET['action']) && $_GET['action'] === 'map_students');
 $idUdaFromQuery = $_GET['id_uda'] ?? ($_POST['id_uda'] ?? null);
+$returnTo = LocalReturnUrl::sanitize(
+    $_GET['return_to'] ?? $_POST['return_to'] ?? null,
+    basename($_SERVER['PHP_SELF'] ?? 'github_classroom_mapping.php')
+);
+$isWizardReturn = $returnTo === 'uda_create.php';
 $testIdFromQuery = $_GET['test_id'] ?? ($_POST['test_id'] ?? null);
 $testReviewUrl = null;
 if (is_string($testIdFromQuery) && trim($testIdFromQuery) !== '') {
@@ -41,7 +47,9 @@ if (isset($_GET['saved']) && $_GET['saved'] === '1') {
 // Gestione logout GitHub
 if (isset($_GET['action']) && $_GET['action'] === 'logout_github') {
     $github->logout();
-    header('Location: github_classroom_mapping.php');
+    $target = $returnTo;
+    $separator = str_contains($target, '?') ? '&' : '?';
+    header('Location: ' . $target . $separator . 'integration_updated=1' . ($target === 'uda_create.php' ? '#2' : ''));
     exit;
 }
 
@@ -123,6 +131,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
 
         $query = $_GET;
         unset($query['action'], $query['id']);
+        $query['return_to'] = $returnTo;
         $redirect = 'github_classroom_mapping.php';
         if (!empty($query)) {
             $redirect .= '?' . http_build_query($query);
@@ -496,6 +505,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         if (!empty($testIdFromQuery)) {
             $redirectParams['test_id'] = (string)$testIdFromQuery;
         }
+        if ($isWizardReturn) {
+            $redirectParams['return_to'] = $returnTo;
+        }
 
         header('Location: github_classroom_mapping.php?' . http_build_query($redirectParams) . '#student-map');
         exit;
@@ -558,6 +570,11 @@ if ($isAuthenticated) {
     $pageTitle = $pageTitle ?? 'Mappatura GitHub Classroom';
     ob_start();
     ?>
+    <?php if ($isWizardReturn): ?>
+        <a href="uda_create.php?integration_updated=1#2" class="btn btn-outline-light btn-sm">
+            <i class="bi bi-x-lg"></i> Chiudi e torna al wizard
+        </a>
+    <?php endif; ?>
     <?php if (!empty($testReviewUrl)): ?>
         <a href="<?= htmlspecialchars($testReviewUrl) ?>" class="btn btn-outline-light btn-sm">
             <i class="bi bi-arrow-return-left"></i> Torna all'assegnazione del test
@@ -650,7 +667,7 @@ if ($isAuthenticated) {
                             <i class="bi bi-info-circle"></i>
                             Per usare questa funzionalità devi prima autenticarti con il tuo account GitHub.
                         </p>
-                        <a href="<?= $github->getAuthorizationUrl(null, $_SERVER['REQUEST_URI'] ?? null) ?>" class="btn btn-dark">
+                        <a href="<?= htmlspecialchars($github->getAuthorizationUrl(null, 'github_classroom_mapping.php?return_to=' . urlencode($returnTo))) ?>" class="btn btn-dark">
                             <i class="bi bi-github"></i> Autentica con GitHub
                         </a>
                         <p class="text-muted small mt-2">
@@ -772,6 +789,7 @@ if ($isAuthenticated) {
                     <div class="card-body">
                         <form method="POST" action="">
                             <input type="hidden" name="action" value="add_mapping">
+                            <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo) ?>">
 
                             <div class="row">
                                 <div class="col-md-6 mb-3">
@@ -856,6 +874,7 @@ if ($isAuthenticated) {
                             </div>
                         <?php else: ?>
                         <form method="GET" class="row g-3 mb-3">
+                            <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo) ?>">
                             <input type="hidden" name="action" value="map_students">
                             <?php if (!empty($idUdaFromQuery)): ?>
                                 <input type="hidden" name="id_uda" value="<?= htmlspecialchars((string)$idUdaFromQuery) ?>">
@@ -958,6 +977,7 @@ if ($isAuthenticated) {
                             ?>
                             <form method="POST">
                                 <input type="hidden" name="action" value="save_student_map">
+                                <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo) ?>">
                                 <input type="hidden" name="mapping_id" value="<?= htmlspecialchars($selectedMappingId) ?>">
                                 <input type="hidden" name="github_assignment_id" value="<?= htmlspecialchars($selectedAssignmentId) ?>">
                                 <?php if (!empty($idUdaFromQuery)): ?>

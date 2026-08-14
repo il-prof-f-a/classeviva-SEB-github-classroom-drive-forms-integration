@@ -20,7 +20,7 @@ $classes = UdaMetadataHelper::classTargetFromAssignments([
     ['nome_classe' => '3A'],
     ['nome_classe' => ''],
 ]);
-assertMetadataValue('3A, 3B', $classes, 'classi target deduplicate');
+assertMetadataValue('3', $classes, 'classi target comuni');
 
 $notes = UdaMetadataHelper::mergeClassroomNotes('Prerequisiti: subnetting', '4A', 'Laboratorio 2');
 assertMetadataValue("Prerequisiti: subnetting\n\nImport Classroom\nSezione: 4A\nAula: Laboratorio 2", $notes, 'note Classroom aggiunte');

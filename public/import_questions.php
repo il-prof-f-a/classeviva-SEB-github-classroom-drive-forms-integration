@@ -16,6 +16,7 @@ use Google\Client;
 use Google\Service\Forms;
 use Smalot\PdfParser\Parser as PdfParser;
 use App\Utils\QuestionImportParser;
+use App\Utils\LocalReturnUrl;
 
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -59,6 +60,10 @@ $previewQuestions = [];
 $jsonTemplatePath = ROOT_PATH . '/database/templates/template_domande.json';
 $jsonTemplateContent = is_file($jsonTemplatePath) ? (string)file_get_contents($jsonTemplatePath) : "{\n  \"domande\": []\n}";
 $jsonTextareaContent = (string)($_POST['json_content'] ?? $jsonTemplateContent);
+$returnTo = LocalReturnUrl::sanitize(
+    $_GET['return_to'] ?? $_POST['return_to'] ?? null,
+    'uda_questions.php?id=' . rawurlencode((string)$udaId)
+);
 $importReturnUrl = app_url('public/import_questions.php?id=' . rawurlencode((string)$udaId));
 $googleIntegrationUrl = 'user_integrations.php?return_to=' . rawurlencode($importReturnUrl) . '#google-section';
 
@@ -2289,8 +2294,8 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
 <body>
     <?php
     $pageTitle = '<i class="bi bi-download"></i> Importa Domande';
-    $headerActions = '<a class="nav-link" href="uda_questions.php?id=' . urlencode($udaId) . '">'
-        . '<i class="bi bi-arrow-left"></i> Torna alle Domande</a>';
+    $headerActions = '<a class="nav-link" href="' . htmlspecialchars($returnTo) . '">'
+        . '<i class="bi bi-arrow-left"></i> Torna al contesto</a>';
     include __DIR__ . '/partials/app_header.php';
     ?>
 
@@ -2334,7 +2339,7 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
                     </ul>
 
                     <div class="mt-3">
-                        <a href="uda_questions.php?id=<?= urlencode($udaId) ?>" class="btn btn-primary">
+                        <a href="<?= htmlspecialchars($returnTo) ?>" class="btn btn-primary">
                             <i class="bi bi-list-ul"></i> Vai alle Domande
                         </a>
                     </div>
@@ -2354,6 +2359,7 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
         <?php $selectionHiddenClass = ($importCompleted || !empty($previewQuestions)) ? ' d-none' : ''; ?>
         <form method="POST" enctype="multipart/form-data" id="existingTestForm" class="mb-4<?= $selectionHiddenClass ?>">
             <input type="hidden" name="action" value="preview_existing_test">
+            <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo) ?>">
             <input type="hidden" name="existing_source" id="existingSourceInput" value="<?= htmlspecialchars($existingSource) ?>">
 
             <div class="card">
@@ -2472,6 +2478,7 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
         </form>
         <form method="POST" enctype="multipart/form-data" id="previewForm" class="<?= trim($selectionHiddenClass) ?>">
             <input type="hidden" name="action" value="preview">
+            <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo) ?>">
             <input type="hidden" name="modalita" id="modalitaInput" value="<?= htmlspecialchars($modalita) ?>">
 
             <div class="card mb-4">

@@ -15,10 +15,26 @@ use App\Core\Database\DatabaseFactory;
 use App\Integration\ClasseVivaAPI;
 use App\Integration\GoogleClassroomAPI;
 use App\Core\ClasseVivaTokenGuard;
+use App\Utils\LocalReturnUrl;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 $error_message = null;
 $success_message = null;
+$returnTo = LocalReturnUrl::sanitize(
+    $_GET['return_to'] ?? $_POST['return_to'] ?? null,
+    basename($_SERVER['PHP_SELF'] ?? 'map_classes.php')
+);
+$isWizardReturn = $returnTo === 'uda_create.php';
+
+$redirectAfterMapping = static function (string $message) use ($returnTo): never {
+    $target = $returnTo;
+    $separator = str_contains($target, '?') ? '&' : '?';
+    header('Location: ' . $target . $separator . http_build_query([
+        'integration_updated' => '1',
+        'success' => $message,
+    ]) . ($target === 'uda_create.php' ? '#2' : ''));
+    exit;
+};
 
 // Gestione azioni POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
@@ -69,8 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $success_message = "Mappatura creata! Ora puoi associare gli studenti.";
             }
 
-            header("Location: map_classes.php?success=" . urlencode($success_message));
-            exit;
+            $redirectAfterMapping($success_message);
 
         } elseif ($_POST['action'] === 'save_all_mappings') {
             // Salvataggio bulk di tutte le mappature selezionate lato client
@@ -131,8 +146,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             }
 
             $success_message = "Salvate {$savedCount} mappature con successo! Ora puoi associare gli studenti.";
-            header("Location: map_classes.php?success=" . urlencode($success_message));
-            exit;
+            $redirectAfterMapping($success_message);
 
         } elseif ($_POST['action'] === 'delete_mapping') {
             $mappingId = $_POST['mapping_id'] ?? '';
@@ -141,8 +155,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $success_message = "Mappatura eliminata con successo!";
             }
 
-            header("Location: map_classes.php?success=" . urlencode($success_message));
-            exit;
+            $redirectAfterMapping($success_message);
         }
 
     } catch (Exception $e) {
@@ -339,7 +352,18 @@ foreach ($classeVivaSubjects as $subject) {
     <?php
     $pageTitle = '<i class="bi bi-link-45deg"></i> Gestione Associazioni';
     $pageSubtitle = 'Step 1: Associa (classe + materia) -> Google Classroom | Step 2: Associa studenti per ogni materia';
-    $headerActions = '<a class="nav-link" href="index.php"><i class="bi bi-house"></i> Dashboard</a>';
+    ob_start();
+    if ($isWizardReturn):
+        ?>
+        <a class="btn btn-outline-light btn-sm me-2" href="uda_create.php?integration_updated=1#2">
+            <i class="bi bi-x-lg"></i> Chiudi e torna al wizard
+        </a>
+        <?php
+    endif;
+    ?>
+    <a class="nav-link" href="index.php"><i class="bi bi-house"></i> Dashboard</a>
+    <?php
+    $headerActions = ob_get_clean();
     $headerContainerClass = 'container-fluid';
     include __DIR__ . '/partials/app_header.php';
     ?>
@@ -506,6 +530,7 @@ foreach ($classeVivaSubjects as $subject) {
                                                 <form method="POST" class="d-inline" onsubmit="return confirm('Vuoi eliminare questa associazione?')">
                                                     <input type="hidden" name="action" value="delete_mapping">
                                                     <input type="hidden" name="mapping_id" value="<?= htmlspecialchars($subject['mapping_id']) ?>">
+                                                    <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo) ?>">
                                                     <button type="submit" class="btn btn-sm btn-outline-danger">
                                                         <i class="bi bi-trash"></i>
                                                     </button>
@@ -515,6 +540,7 @@ foreach ($classeVivaSubjects as $subject) {
                                     <?php else: ?>
                                         <form method="POST" class="mapping-form">
                                             <input type="hidden" name="action" value="save_mapping">
+                                            <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo) ?>">
                                             <input type="hidden" name="class_id" value="<?= htmlspecialchars($subject['class_id']) ?>">
                                             <input type="hidden" name="class_name" value="<?= htmlspecialchars($subject['class_name']) ?>">
                                             <input type="hidden" name="subject_id" value="<?= htmlspecialchars($subject['subject_id']) ?>">
@@ -544,7 +570,7 @@ foreach ($classeVivaSubjects as $subject) {
                                 <!-- Azioni -->
                                 <div class="col-md-3 text-end">
                                     <?php if ($subject['mapped']): ?>
-                                        <a href="map_students.php?mapping_id=<?= urlencode($subject['mapping_id']) ?>"
+                                        <a href="map_students.php?mapping_id=<?= urlencode($subject['mapping_id']) ?>&return_to=<?= urlencode($returnTo) ?>"
                                            class="btn btn-success btn-lg">
                                             <i class="bi bi-people-fill"></i> Associa Studenti
                                         </a>
@@ -684,6 +710,11 @@ foreach ($classeVivaSubjects as $subject) {
             mappingsInput.name = 'mappings';
             mappingsInput.value = JSON.stringify(mappings);
             form.appendChild(mappingsInput);
+
+            const returnInput = document.createElement('input');
+            returnInput.name = 'return_to';
+            returnInput.value = <?= json_encode($returnTo, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+            form.appendChild(returnInput);
 
             document.body.appendChild(form);
             form.submit();

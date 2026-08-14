@@ -12,6 +12,7 @@ use App\Integration\ClasseVivaAPI;
 use App\Utils\AcademicPeriodHelper;
 use App\Utils\QuestionEditorHelper;
 use App\Utils\UdaMetadataHelper;
+use App\Utils\UdaIntegrationResolver;
 
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -20,6 +21,10 @@ $pickerClientId = $config['google']['oauth_client_id'] ?? '';
 $driveRootId = trim($config['google']['drive']['root_folder_id'] ?? '');
 $driveRootConfigured = $driveRootId !== '';
 $allObiettivi = $dbAdapter->findAll('OBIETTIVI');
+$classroomMappings = $dbAdapter->findAll('CLASSROOM_MAPPINGS');
+$githubMappings = $dbAdapter->findAll('GITHUB_CLASSROOMS');
+$classroomMappingIndex = UdaIntegrationResolver::indexClassroomMappings($classroomMappings);
+$githubMappingIndex = UdaIntegrationResolver::indexGithubMappings($githubMappings);
 
 function extractGoogleFormIdFromValue(string $value): ?string
 {
@@ -74,6 +79,7 @@ try {
 
 $error_message = null;
 $success_message = null;
+$integration_message = isset($_GET['integration_updated']) ? 'Mappature aggiornate. Le associazioni disponibili sono state preselezionate.' : null;
 
 // Le date restano memorizzate per compatibilità, ma vengono calcolate dal periodo ClasseViva.
 $currentYear = (int)date('Y');
@@ -115,26 +121,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 break;
             }
         }
-        $classroomImported = filter_var($_POST['classroom_imported'] ?? false, FILTER_VALIDATE_BOOLEAN);
-        $classroomNotes = UdaMetadataHelper::mergeClassroomNotes(
-            (string)($_POST['note'] ?? ''),
-            $_POST['classroom_section'] ?? null,
-            $_POST['classroom_room'] ?? null
+        $selectedIntegration = false;
+        $manualClassTarget = trim((string)($_POST['classi_target'] ?? ''));
+        $useAssignedClassTarget = filter_var(
+            $_POST['classi_target_usa_assegnazioni'] ?? false,
+            FILTER_VALIDATE_BOOLEAN
         );
+        $postedClassIds = is_array($_POST['classe_id'] ?? null) ? $_POST['classe_id'] : [];
+        $postedSubjectIds = is_array($_POST['classe_materia'] ?? null) ? $_POST['classe_materia'] : [];
+        foreach ($postedClassIds as $index => $classId) {
+            $subjectId = (string)($postedSubjectIds[$index] ?? '');
+            if (trim((string)$classId) === '' || trim($subjectId) === '') {
+                continue;
+            }
+            $pairKey = trim((string)$classId) . '|' . trim($subjectId);
+            if (isset($classroomMappingIndex[$pairKey]) || isset($githubMappingIndex[$pairKey])) {
+                $selectedIntegration = true;
+            }
+        }
+        $disciplineValue = trim((string)($_POST['disciplina'] ?? ''));
+        if ($disciplineValue === '') {
+            $subjectNames = is_array($_POST['classe_materia_nome'] ?? null) ? $_POST['classe_materia_nome'] : [];
+            $disciplineValue = UdaMetadataHelper::disciplineFromSubjectNames($subjectNames) ?? '';
+        }
 
         $udaData = [
             'id_uda' => $udaId,
             'titolo' => $_POST['titolo'] ?? '',
             'argomento' => $_POST['argomento'] ?? '',
-            'disciplina' => $_POST['disciplina'] ?? '',
+            'disciplina' => $disciplineValue,
             'metodologia' => $_POST['metodologia'] ?? '',
             'anno_scolastico' => $_POST['anno_scolastico'] ?? '',
             'data_inizio' => $selectedPeriod['start'] ?? ($_POST['data_inizio'] ?? null),
             'data_fine' => $selectedPeriod['end'] ?? ($_POST['data_fine'] ?? null),
             'descrizione' => $_POST['descrizione'] ?? '',
-            'note' => $classroomNotes,
-            'classi_target' => '',
-            'stato' => UdaMetadataHelper::statusAfterClassroomImport($classroomImported, (string)($_POST['stato'] ?? 'bozza'))
+            'note' => $_POST['note'] ?? '',
+            'classi_target' => $manualClassTarget,
+            'stato' => UdaMetadataHelper::statusAfterIntegrationSelection($selectedIntegration, (string)($_POST['stato'] ?? 'bozza'))
         ];
 
         // Validazione campi obbligatori
@@ -283,9 +306,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     $assignedKeys[$assignmentKey] = true;
                 }
             }
-            $dbAdapter->updateRow('UDA_ANAGRAFICA', 'id_uda', $udaId, [
-                'classi_target' => UdaMetadataHelper::classTargetFromAssignments($dbAdapter->findClassiAssegnate($udaId))
-            ]);
+            if ($useAssignedClassTarget) {
+                $assignedClassTarget = UdaMetadataHelper::classTargetFromAssignments(
+                    $dbAdapter->findClassiAssegnate($udaId)
+                );
+                if ($assignedClassTarget !== '') {
+                    $dbAdapter->updateRow('UDA_ANAGRAFICA', 'id_uda', $udaId, [
+                        'classi_target' => $assignedClassTarget
+                    ]);
+                }
+            }
         }
 
         // Redirect alla pagina di visualizzazione della nuova UDA
@@ -410,6 +440,13 @@ try {
             </div>
         <?php endif; ?>
 
+        <?php if ($integration_message): ?>
+            <div class="alert alert-success alert-dismissible fade show">
+                <i class="bi bi-check-circle"></i> <?= htmlspecialchars($integration_message) ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        <?php endif; ?>
+
         <div class="card shadow">
             <div class="card-body">
                 <!-- Step Indicator -->
@@ -420,7 +457,7 @@ try {
                     </div>
                     <div class="step-item" data-step="2" onclick="goToStep(2)">
                         <div class="step-number">2</div>
-                        <small>Classi</small>
+                        <small>Classi e integrazioni</small>
                     </div>
                     <div class="step-item" data-step="3" onclick="goToStep(3)">
                         <div class="step-number">3</div>
@@ -448,9 +485,6 @@ try {
                     <input type="hidden" name="action" value="create_uda">
                     <input type="hidden" name="data_inizio" id="data_inizio">
                     <input type="hidden" name="data_fine" id="data_fine">
-                    <input type="hidden" name="classroom_imported" id="classroom_imported" value="0">
-                    <input type="hidden" name="classroom_section" id="classroom_section">
-                    <input type="hidden" name="classroom_room" id="classroom_room">
 
                     <!-- Step 1: Informazioni Generali (OBBLIGATORIO) -->
                     <div class="step active" data-step="1">
@@ -465,12 +499,6 @@ try {
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Argomento *</label>
                                 <input type="text" class="form-control" name="argomento" required>
-                                <div class="mt-2">
-                                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="openWizardClassroomImportModal()">
-                                        <i class="bi bi-google"></i> Importa da Argomento Classroom
-                                    </button>
-                                    <small class="text-muted ms-2">Compila automaticamente Materiali e Test negli step successivi.</small>
-                                </div>
                             </div>
                         </div>
 
@@ -554,8 +582,16 @@ try {
 
                         <div class="mb-3">
                             <label class="form-label">Classi Target / Destinatari</label>
-                            <div class="form-control bg-light text-muted" aria-readonly="true">Verranno compilate automaticamente dopo l'assegnazione delle classi.</div>
-                            <small class="form-text text-muted">Le classi vengono gestite nello step Classi e non sono modificabili come testo libero.</small>
+                            <textarea class="form-control" name="classi_target" rows="2" placeholder="Es. 4 informatica, 5 informatica"></textarea>
+                            <div class="form-text">Puoi indicare liberamente i destinatari. Se assegni classi nello step 2, potrai scegliere se usare il valore calcolato.</div>
+                            <div class="alert alert-info py-2 mt-2 d-none" data-class-target-suggestion-panel>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="classi_target_usa_assegnazioni" value="1" id="classiTargetUseAssignments">
+                                    <label class="form-check-label" for="classiTargetUseAssignments">
+                                        Sostituire con <strong data-class-target-suggestion></strong>
+                                    </label>
+                                </div>
+                            </div>
                         </div>
 
                         <div class="mb-3">
@@ -566,7 +602,7 @@ try {
                                 <option value="completata">Completata</option>
                                 <option value="archiviata">Archiviata</option>
                             </select>
-                            <small class="form-text text-muted">Un'importazione Classroom completata porta automaticamente l'UDA in "Attiva".</small>
+                            <small class="form-text text-muted">La presenza di una mappatura Google Classroom o GitHub porta automaticamente l'UDA in "Attiva".</small>
                         </div>
 
                         <div class="d-flex justify-content-end">
@@ -578,8 +614,10 @@ try {
 
                     <!-- Step 2: Classi Assegnate (OPZIONALE) -->
                     <div class="step" data-step="2">
-                        <h3 class="mb-4"><i class="bi bi-people" style="color: #fd7e14;"></i> Classi Assegnate</h3>
-                        <p class="text-muted">Assegna questa UDA a una o più classi (opzionale).</p>
+                        <h3 class="mb-4"><i class="bi bi-diagram-3" style="color: #fd7e14;"></i> Classi e integrazioni</h3>
+                        <p class="text-muted">Assegna questa UDA a una o più classi ClasseViva e verifica le integrazioni disponibili.</p>
+
+                        <div class="alert alert-info small"><i class="bi bi-info-circle"></i> L’assegnazione a classe e materia è facoltativa. Le mappature Google Classroom e GitHub sono facoltative e quelle già presenti vengono preselezionate.</div>
 
                         <div id="classi-container">
                             <!-- Template classe verrà inserito qui -->
@@ -594,9 +632,6 @@ try {
                                 <i class="bi bi-arrow-left"></i> Indietro
                             </button>
                             <div>
-                                <button type="button" class="btn btn-skip btn-lg me-2" onclick="skipStep(2)">
-                                    Salta <i class="bi bi-skip-forward"></i>
-                                </button>
                                 <button type="button" class="btn btn-primary btn-lg" onclick="nextStep(2)">
                                     Avanti <i class="bi bi-arrow-right"></i>
                                 </button>
@@ -607,7 +642,45 @@ try {
                     <!-- Step 3: Materiali (OPZIONALE) -->
                     <div class="step" data-step="3">
                         <h3 class="mb-4"><i class="bi bi-folder-fill text-info"></i> Materiali Didattici</h3>
+                        <div class="mb-3" data-wizard-integration-summary></div>
                         <p class="text-muted">Aggiungi materiali didattici (documenti, link, video, ecc.) - opzionale.</p>
+
+                        <div class="border rounded p-3 mb-3 bg-white">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0"><i class="bi bi-google"></i> Risorse Google Classroom mappate</h6>
+                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="loadWizardClassroomCourses()">
+                                    <i class="bi bi-arrow-clockwise"></i> Carica risorse
+                                </button>
+                            </div>
+                            <div id="wizardClassroomImportMsg" class="alert d-none" role="alert"></div>
+                            <div class="row g-2 mb-2">
+                                <div class="col-md-6">
+                                    <label for="wizardClassroomCourseSelect" class="form-label small">Corso</label>
+                                    <select id="wizardClassroomCourseSelect" class="form-select" onchange="loadWizardClassroomResources()">
+                                        <option value="">Seleziona un corso mappato...</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="wizardClassroomTopicSelect" class="form-label small">Argomento</label>
+                                    <select id="wizardClassroomTopicSelect" class="form-select" onchange="renderWizardClassroomResources()" disabled>
+                                        <option value="">Seleziona argomento...</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div id="wizardClassroomLoading" class="text-center text-muted py-2 d-none">
+                                <div class="spinner-border spinner-border-sm me-2" role="status"></div> Caricamento risorse Classroom...
+                            </div>
+                            <div class="table-responsive border rounded" style="max-height: 300px;">
+                                <table class="table table-sm align-middle mb-0">
+                                    <thead class="table-light"><tr><th>Importa</th><th>Risorsa</th><th>Destinazione</th><th>Tipo</th></tr></thead>
+                                    <tbody id="wizardClassroomResourcesBody"></tbody>
+                                </table>
+                            </div>
+                            <div id="wizardClassroomResourcesEmpty" class="alert alert-light border mt-2 mb-0">Carica un corso mappato per visualizzare le risorse.</div>
+                            <button type="button" class="btn btn-sm btn-primary mt-2" onclick="applyWizardClassroomImport()">
+                                <i class="bi bi-download"></i> Importa selezionati
+                            </button>
+                        </div>
 
                         <div id="materiali-container">
                             <!-- Template materiali verrà inserito qui -->
@@ -646,6 +719,7 @@ try {
                     <!-- Step 4: Obiettivi (OPZIONALE) -->
                     <div class="step" data-step="4">
                         <h3 class="mb-4"><i class="bi bi-bullseye text-success"></i> Obiettivi Didattici e Disciplinari</h3>
+                        <div class="mb-3" data-wizard-integration-summary></div>
                         <p class="text-muted">Definisci gli obiettivi dell'UDA (opzionale).</p>
 
                         <div id="obiettivi-container">
@@ -674,6 +748,7 @@ try {
                     <!-- Step 5: Domande (OPZIONALE) -->
                     <div class="step" data-step="5">
                         <h3 class="mb-4"><i class="bi bi-question-circle" style="color: #d63384;"></i> Domande per Interrogazioni</h3>
+                        <div class="mb-3" data-wizard-integration-summary></div>
                         <p class="text-muted">Inserisci domande tipiche per le interrogazioni orali (opzionale).</p>
 
                         <div id="domande-container">
@@ -684,7 +759,7 @@ try {
                             <button type="button" class="btn btn-sm" style="background-color: #d63384; color: white; border-color: #d63384;" onclick="addDomanda()">
                                 <i class="bi bi-plus-circle"></i> Aggiungi Domanda
                             </button>
-                            <a class="btn btn-sm btn-outline-primary" href="import_questions.php?id=<?= urlencode($tempUdaId) ?>" target="_blank">
+                            <a class="btn btn-sm btn-outline-primary" href="import_questions.php?id=<?= urlencode($tempUdaId) ?>&wizard=1&return_to=uda_create.php" target="_blank">
                                 <i class="bi bi-cloud-upload"></i> Importa Domande (CSV/Excel/JSON)
                             </a>
                         </div>
@@ -707,6 +782,7 @@ try {
                     <!-- Step 6: Test (OPZIONALE) -->
                     <div class="step" data-step="6">
                         <h3 class="mb-4"><i class="bi bi-clipboard-check" style="color: #6f42c1;"></i> Test e Valutazioni</h3>
+                        <div class="mb-3" data-wizard-integration-summary></div>
                         <p class="text-muted">Collega eventuali test o attività già esistenti (opzionale).</p>
                         <div class="alert alert-info small">
                             <i class="bi bi-info-circle"></i>
@@ -774,7 +850,7 @@ try {
                     <?php $questionEditorId = 'wizard-question-editor'; include __DIR__ . '/partials/question_editor.php'; ?>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-wizard-question-cancel>Annulla</button>
                     <button type="button" class="btn btn-primary" id="wizardQuestionSave"><i class="bi bi-check-circle"></i> Conferma domanda</button>
                 </div>
             </div>
@@ -790,78 +866,6 @@ try {
         include __DIR__ . '/partials/question_card.php';
         ?>
     </template>
-
-    <!-- Modal Import da Argomento Classroom -->
-    <div class="modal fade" id="classroomTopicImportModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-xl modal-dialog-scrollable">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">
-                        <i class="bi bi-google"></i> Importa da Argomento Classroom
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div id="wizardClassroomImportMsg" class="alert d-none" role="alert"></div>
-
-                    <div id="wizardClassroomImportControls">
-                        <div class="row g-3 mb-3">
-                            <div class="col-md-6">
-                                <label for="wizardClassroomCourseSelect" class="form-label">Classroom</label>
-                                <select id="wizardClassroomCourseSelect" class="form-select" onchange="loadWizardClassroomResources()">
-                                    <option value="">Seleziona classroom...</option>
-                                </select>
-                            </div>
-                            <div class="col-md-6">
-                                <label for="wizardClassroomTopicSelect" class="form-label">Argomento</label>
-                                <select id="wizardClassroomTopicSelect" class="form-select" onchange="renderWizardClassroomResources()" disabled>
-                                    <option value="">Seleziona argomento...</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div id="wizardClassroomLoading" class="text-center text-muted py-3 d-none">
-                            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
-                            Caricamento risorse Classroom...
-                        </div>
-
-                        <div class="border rounded">
-                            <div class="d-flex justify-content-between align-items-center p-2 border-bottom bg-light">
-                                <div class="form-check mb-0">
-                                    <input class="form-check-input" type="checkbox" id="wizardClassroomSelectAll" checked onchange="toggleWizardClassroomSelectAll(this)">
-                                    <label class="form-check-label" for="wizardClassroomSelectAll">Seleziona tutti</label>
-                                </div>
-                                <small class="text-muted">Per ogni link scegli se importarlo come materiale o test</small>
-                            </div>
-                            <div class="table-responsive" style="max-height: 360px;">
-                                <table class="table table-sm align-middle mb-0">
-                                    <thead class="table-light position-sticky top-0">
-                                        <tr>
-                                            <th style="width: 55px;">Importa</th>
-                                            <th>Risorsa</th>
-                                            <th style="width: 185px;">Importa come</th>
-                                            <th style="width: 190px;">Tipo materiale</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="wizardClassroomResourcesBody"></tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        <div id="wizardClassroomResourcesEmpty" class="alert alert-light border mt-3 mb-0 d-none">
-                            Nessuna risorsa trovata per l'argomento selezionato.
-                        </div>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
-                    <button type="button" class="btn btn-primary" onclick="applyWizardClassroomImport()">
-                        <i class="bi bi-download"></i> Importa Selezionati
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://apis.google.com/js/api.js"></script>
@@ -884,6 +888,8 @@ try {
         let classeCounter = 0;
 
         const cvClassSubjects = <?= json_encode($cvClassSubjects, JSON_UNESCAPED_UNICODE) ?>;
+        const classroomMappingIndex = <?= json_encode($classroomMappingIndex, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+        const githubMappingIndex = <?= json_encode($githubMappingIndex, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
         const obiettiviCatalog = <?= json_encode(array_values($allObiettivi), JSON_UNESCAPED_UNICODE) ?>;
         const pickerApiKey = "<?= htmlspecialchars($pickerApiKey) ?>";
         const pickerClientId = "<?= htmlspecialchars($pickerClientId) ?>";
@@ -896,6 +902,38 @@ try {
         const classroomImportIntegrationUrl = 'user_integrations.php#google-section';
         let wizardClassroomResources = [];
         let wizardClassroomCourses = [];
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const discipline = document.querySelector('input[name="disciplina"]');
+            if (discipline) discipline.addEventListener('input', () => { discipline.dataset.userEdited = '1'; });
+            const classTarget = document.querySelector('[name="classi_target"]');
+            if (classTarget) {
+                classTarget.addEventListener('input', () => {
+                    const checkbox = document.querySelector('[name="classi_target_usa_assegnazioni"]');
+                    if (checkbox && classTarget.value.trim() !== '') checkbox.checked = false;
+                });
+            }
+            document.querySelector('[name="classi_target_usa_assegnazioni"]')?.addEventListener('change', event => {
+                event.target.dataset.userChoice = '1';
+            });
+            document.addEventListener('input', event => {
+                if (event.target.matches('input[name="classe_nome[]"]')) refreshClassTargetSuggestion();
+            });
+            restoreWizardDraft();
+            const hashStep = Number.parseInt(window.location.hash.replace('#', ''), 10);
+            if (Number.isInteger(hashStep) && hashStep >= 1 && hashStep <= totalSteps) {
+                currentStep = hashStep;
+                showStep(currentStep);
+            } else {
+                showStep(currentStep);
+            }
+            document.addEventListener('click', event => {
+                if (event.target.closest('.integration-config-link')) saveWizardDraft();
+            });
+            document.getElementById('udaForm')?.addEventListener('submit', () => {
+                try { sessionStorage.removeItem('uda_create_draft'); } catch (e) { /* storage non disponibile */ }
+            });
+        });
 
         function loadCachedDriveToken() {
             try {
@@ -931,7 +969,7 @@ try {
         }
 
         function nextStep(step) {
-            // Validazione solo per step 1 (obbligatorio)
+            saveWizardDraft();
             if (step === 1) {
                 const titolo = document.querySelector('input[name="titolo"]').value.trim();
                 const argomento = document.querySelector('input[name="argomento"]').value.trim();
@@ -941,7 +979,6 @@ try {
                     return;
                 }
             }
-
             // Mark step as completed
             markStepCompleted(step);
 
@@ -994,9 +1031,25 @@ try {
             });
             document.querySelector(`.step-item[data-step="${stepNumber}"]`).classList.add('active');
 
+            updateWizardHash(stepNumber);
+            renderWizardIntegrationSummary();
+
             // Scroll to top
             window.scrollTo(0, 0);
         }
+
+        function updateWizardHash(step) {
+            const safeStep = Math.min(totalSteps, Math.max(1, Number(step) || 1));
+            const url = `${window.location.pathname}${window.location.search}#${safeStep}`;
+            window.history.replaceState(null, '', url);
+        }
+
+        window.addEventListener('hashchange', () => {
+            const hashStep = Number.parseInt(window.location.hash.replace('#', ''), 10);
+            if (!Number.isInteger(hashStep) || hashStep < 1 || hashStep > totalSteps || hashStep === currentStep) return;
+            currentStep = hashStep;
+            showStep(currentStep);
+        });
 
         function markStepCompleted(step) {
             const stepItem = document.querySelector(`.step-item[data-step="${step}"]`);
@@ -1191,7 +1244,7 @@ try {
             item.innerHTML = `
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <h6>Obiettivo ${obiettivoCounter}</h6>
-                    <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.parentElement.remove()">
+                    <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.parentElement.remove(); refreshClassTargetSuggestion(); renderWizardIntegrationSummary();">
                         <i class="bi bi-trash"></i>
                     </button>
                 </div>
@@ -1689,19 +1742,24 @@ try {
                 </div>
             `;
             container.appendChild(item);
+            refreshClassTargetSuggestion();
+            renderWizardIntegrationSummary();
         }
         */
 
         let wizardQuestionEditor = null;
         let wizardQuestionTarget = null;
+        let wizardQuestionIsNew = false;
 
         function initWizardQuestionEditor() {
             const root = document.getElementById('wizard-question-editor');
             wizardQuestionEditor = QuestionEditor.mount(root);
+            document.getElementById('wizardQuestionModal').addEventListener('hidden.bs.modal', removeWizardQuestionIfEmpty);
             document.getElementById('wizardQuestionSave').addEventListener('click', () => {
                 const validation = root.validateEditor();
                 if (!validation.valid || !wizardQuestionTarget) return;
                 syncWizardQuestion(wizardQuestionTarget, root.getEditorState());
+                wizardQuestionIsNew = false;
                 bootstrap.Modal.getOrCreateInstance(document.getElementById('wizardQuestionModal')).hide();
             });
         }
@@ -1733,11 +1791,12 @@ try {
                 item.appendChild(input);
             });
             container.appendChild(item);
-            editWizardQuestion(item);
+            editWizardQuestion(item, true);
         }
 
-        function editWizardQuestion(card) {
+        function editWizardQuestion(card, isNew = false) {
             wizardQuestionTarget = card;
+            wizardQuestionIsNew = isNew;
             const state = {
                 argomento: card.querySelector('[name="domanda_argomento[]"]').value,
                 difficolta: card.querySelector('[name="domanda_livello[]"]').value || '3',
@@ -1749,6 +1808,18 @@ try {
             };
             document.getElementById('wizard-question-editor').setEditorState(state);
             bootstrap.Modal.getOrCreateInstance(document.getElementById('wizardQuestionModal')).show();
+        }
+
+        function removeWizardQuestionIfEmpty() {
+            if (!wizardQuestionIsNew || !wizardQuestionTarget) return;
+            const card = wizardQuestionTarget;
+            const text = card.querySelector('[name="domanda_testo[]"]')?.value.trim() || '';
+            const expected = card.querySelector('[name="domanda_suggerimenti[]"]')?.value.trim() || '';
+            const options = card.querySelector('[name="domanda_risposte[]"]')?.value.trim() || '';
+            const keywords = card.querySelector('[name="domanda_parole[]"]')?.value.trim() || '';
+            if (!text && !expected && !options && !keywords) card.remove();
+            wizardQuestionTarget = null;
+            wizardQuestionIsNew = false;
         }
 
         function syncWizardQuestion(card, state) {
@@ -1775,7 +1846,7 @@ try {
             item.innerHTML = `
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <h6>Classe ${classeCounter}</h6>
-                    <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.parentElement.remove()">
+                    <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.parentElement.remove(); refreshClassTargetSuggestion(); renderWizardIntegrationSummary();">
                         <i class="bi bi-trash"></i>
                     </button>
                 </div>
@@ -1803,9 +1874,27 @@ try {
                         <label class="form-label">ID Materia (ClasseViva)</label>
                         <input type="text" class="form-control" name="classe_materia[]" placeholder="es. 213064">
                     </div>
+                    <div class="col-md-6 mb-2">
+                        <div class="border rounded p-2 bg-white h-100">
+                            <div class="small fw-semibold"><i class="bi bi-google"></i> Google Classroom</div>
+                            <div class="small text-muted integration-status classroom-mapping-status">Non configurata</div>
+                            <a class="small integration-config-link classroom-config-link" href="map_classes.php?return_to=uda_create.php">Configura mappatura</a>
+                            <input type="hidden" name="classe_google_course_id[]" value="">
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-2">
+                        <div class="border rounded p-2 bg-white h-100">
+                            <div class="small fw-semibold"><i class="bi bi-github"></i> GitHub Classroom</div>
+                            <div class="small text-muted integration-status github-mapping-status">Non configurata</div>
+                            <a class="small integration-config-link github-config-link" href="github_classroom_mapping.php?return_to=uda_create.php">Configura mappatura</a>
+                            <input type="hidden" name="classe_github_classroom_id[]" value="">
+                        </div>
+                    </div>
                 </div>
             `;
             container.appendChild(item);
+            refreshClassTargetSuggestion();
+            renderWizardIntegrationSummary();
         }
 
         function fillClasseFromSelect(select) {
@@ -1823,6 +1912,154 @@ try {
             if (nomeInput) nomeInput.value = parts[1] || '';
             if (materiaIdInput) materiaIdInput.value = parts[2] || '';
             if (materiaNomeInput) materiaNomeInput.value = parts[3] || '';
+            updateClasseIntegrationStatus(wrapper);
+            syncWizardDiscipline();
+        }
+
+        function saveWizardDraft() {
+            const value = {
+                fields: {},
+                classes: []
+            };
+            ['titolo', 'argomento', 'disciplina', 'metodologia', 'anno_scolastico', 'periodo_scolastico', 'descrizione', 'note', 'classi_target', 'stato'].forEach(name => {
+                const field = document.querySelector(`[name="${name}"]`);
+                if (field) value.fields[name] = field.value;
+            });
+            value.fields.classi_target_usa_assegnazioni = !!document.querySelector('[name="classi_target_usa_assegnazioni"]')?.checked;
+            document.querySelectorAll('#classi-container .dynamic-item').forEach(row => {
+                const classId = row.querySelector('input[name="classe_id[]"]')?.value || '';
+                const subjectId = row.querySelector('input[name="classe_materia[]"]')?.value || '';
+                if (classId && subjectId) value.classes.push({ classId, subjectId });
+            });
+            try { sessionStorage.setItem('uda_create_draft', JSON.stringify(value)); } catch (e) { /* storage non disponibile */ }
+        }
+
+        function restoreWizardDraft() {
+            let draft = null;
+            try { draft = JSON.parse(sessionStorage.getItem('uda_create_draft') || 'null'); } catch (e) { draft = null; }
+            if (!draft || typeof draft !== 'object') return;
+            Object.entries(draft.fields || {}).forEach(([name, value]) => {
+                const field = document.querySelector(`[name="${name}"]`);
+                if (field && value !== undefined) field.value = value;
+            });
+            const targetCheckbox = document.querySelector('[name="classi_target_usa_assegnazioni"]');
+            if (targetCheckbox) targetCheckbox.checked = draft.fields?.classi_target_usa_assegnazioni === true;
+            if (draft.fields?.periodo_scolastico) {
+                applyAcademicPeriod(document.getElementById('periodo_scolastico'));
+            }
+            (Array.isArray(draft.classes) ? draft.classes : []).forEach(pair => {
+                addClasse();
+                const row = document.querySelector('#classi-container .dynamic-item:last-child');
+                const select = row?.querySelector('select');
+                if (!select) return;
+                const option = Array.from(select.options).find(item => {
+                    const parts = String(item.value || '').split('||');
+                    return parts[0] === String(pair.classId) && parts[2] === String(pair.subjectId);
+                });
+                if (option) {
+                    select.value = option.value;
+                    fillClasseFromSelect(select);
+                }
+            });
+            refreshClassTargetSuggestion();
+        }
+
+        function updateClasseIntegrationStatus(wrapper) {
+            if (!wrapper) return;
+            const classId = String(wrapper.querySelector('input[name="classe_id[]"]')?.value || '').trim();
+            const subjectId = String(wrapper.querySelector('input[name="classe_materia[]"]')?.value || '').trim();
+            const key = `${classId}|${subjectId}`;
+            const classroom = classroomMappingIndex[key] || null;
+            const github = githubMappingIndex[key] || null;
+            const classroomStatus = wrapper.querySelector('.classroom-mapping-status');
+            const githubStatus = wrapper.querySelector('.github-mapping-status');
+            const classroomLink = wrapper.querySelector('.classroom-config-link');
+            const githubLink = wrapper.querySelector('.github-config-link');
+            const classroomInput = wrapper.querySelector('input[name="classe_google_course_id[]"]');
+            const githubInput = wrapper.querySelector('input[name="classe_github_classroom_id[]"]');
+
+            if (classroomStatus) {
+                classroomStatus.textContent = classroom ? `Associata: ${classroom.course_name || classroom.course_id}` : 'Non configurata';
+                classroomStatus.className = `small integration-status classroom-mapping-status ${classroom ? 'text-success' : 'text-muted'}`;
+            }
+            if (githubStatus) {
+                githubStatus.textContent = github ? `Associata: ${github.classroom_name || github.classroom_id}` : 'Non configurata';
+                githubStatus.className = `small integration-status github-mapping-status ${github ? 'text-success' : 'text-muted'}`;
+            }
+            if (classroomInput) classroomInput.value = classroom?.course_id || '';
+            if (githubInput) githubInput.value = github?.classroom_id || '';
+            const statusSelect = document.querySelector('select[name="stato"]');
+            if (statusSelect && (classroom || github) && statusSelect.value === 'bozza') statusSelect.value = 'attiva';
+            const query = `filter_classe=${encodeURIComponent(classId)}&highlight=true&return_to=uda_create.php`;
+            if (classroomLink) classroomLink.href = `map_classes.php?${query}`;
+            if (githubLink) githubLink.href = `github_classroom_mapping.php?${query}`;
+            refreshClassTargetSuggestion();
+        }
+
+        function normalizeAssignedClassTarget(names) {
+            const unique = [...new Set((names || []).map(name => String(name || '').trim()).filter(Boolean))];
+            if (!unique.length) return '';
+            if (unique.length === 1) return unique[0];
+            const parts = unique.map(name => {
+                const match = name.match(/^(\d+)\s*([A-Za-zÀ-ÖØ-öø-ÿ])(?:\s+(.*))?$/u);
+                return match ? { year: match[1], suffix: (match[3] || '').trim() } : null;
+            });
+            if (parts.some(part => !part)) return unique.join(', ');
+            const years = [...new Set(parts.map(part => part.year))];
+            const suffixes = [...new Set(parts.map(part => part.suffix))];
+            if (years.length !== 1 || suffixes.length !== 1) return unique.join(', ');
+            return suffixes[0] ? `${years[0]} ${suffixes[0]}` : years[0];
+        }
+
+        function refreshClassTargetSuggestion() {
+            const panel = document.querySelector('[data-class-target-suggestion-panel]');
+            const label = document.querySelector('[data-class-target-suggestion]');
+            const checkbox = document.querySelector('[name="classi_target_usa_assegnazioni"]');
+            const field = document.querySelector('[name="classi_target"]');
+            if (!panel || !label || !checkbox || !field) return;
+            const names = [...document.querySelectorAll('#classi-container .dynamic-item')]
+                .filter(row => row.querySelector('input[name="classe_id[]"]')?.value.trim()
+                    && row.querySelector('input[name="classe_materia[]"]')?.value.trim())
+                .map(row => row.querySelector('input[name="classe_nome[]"]')?.value || '')
+                .filter(Boolean);
+            const suggestion = normalizeAssignedClassTarget(names);
+            if (!suggestion) {
+                panel.classList.add('d-none');
+                return;
+            }
+            label.textContent = suggestion;
+            panel.classList.remove('d-none');
+            if (!field.value.trim() && !checkbox.dataset.userChoice) checkbox.checked = true;
+        }
+
+        function renderWizardIntegrationSummary() {
+            document.querySelectorAll('[data-wizard-integration-summary]').forEach(container => {
+                const rows = [...document.querySelectorAll('#classi-container .dynamic-item')];
+                const validRows = rows.filter(row => row.querySelector('input[name="classe_id[]"]')?.value.trim()
+                    && row.querySelector('input[name="classe_materia[]"]')?.value.trim());
+                if (!validRows.length) {
+                    container.innerHTML = '<div class="alert alert-light border mb-0"><i class="bi bi-info-circle"></i> Nessuna classe o mappatura configurata: puoi continuare con i controlli manuali.</div>';
+                    return;
+                }
+                const items = validRows.map(row => {
+                    const className = row.querySelector('input[name="classe_nome[]"]')?.value.trim() || 'Classe';
+                    const subjectName = row.querySelector('input[name="classe_materia_nome[]"]')?.value.trim() || 'Materia';
+                    const classroom = row.querySelector('.classroom-mapping-status')?.textContent.trim() || 'Non configurata';
+                    const github = row.querySelector('.github-mapping-status')?.textContent.trim() || 'Non configurata';
+                    return `<li><strong>${escapeWizardHtml(className)}</strong> · ${escapeWizardHtml(subjectName)}<br><small>Google: ${escapeWizardHtml(classroom)} · GitHub: ${escapeWizardHtml(github)}</small></li>`;
+                }).join('');
+                container.innerHTML = `<div class="alert alert-info border mb-0"><div class="d-flex justify-content-between align-items-start gap-2"><div><strong>Assegnazioni e mappature</strong><ul class="mb-0 mt-1">${items}</ul></div><a class="btn btn-sm btn-outline-primary flex-shrink-0" href="uda_create.php#2">Modifica mappature</a></div></div>`;
+            });
+        }
+
+        function syncWizardDiscipline() {
+            const input = document.querySelector('input[name="disciplina"]');
+            if (!input || input.dataset.userEdited === '1') return;
+            const subjects = Array.from(document.querySelectorAll('input[name="classe_materia_nome[]"]'))
+                .map(element => String(element.value || '').trim())
+                .filter(Boolean);
+            const unique = [...new Set(subjects)];
+            if (unique.length === 1) input.value = unique[0];
         }
 
         // --- Google Drive Picker (GIS) ---
@@ -2095,7 +2332,7 @@ try {
             masterSelect.checked = true;
 
             filtered.forEach(resource => {
-                const destination = resource.default_destination === 'test' ? 'test' : 'materiale';
+                const destination = 'materiale';
                 const suggestedMaterialType = detectWizardMaterialType(resource.url || '', resource.suggested_material_type || '');
                 const row = document.createElement('tr');
                 row.dataset.resourceId = String(resource.resource_id || '');
@@ -2117,8 +2354,7 @@ try {
                     </td>
                     <td>
                         <select class="form-select form-select-sm wizard-classroom-destination" onchange="updateWizardDestination(this)">
-                            <option value="materiale"${destination === 'materiale' ? ' selected' : ''}>Materiale</option>
-                            <option value="test"${destination === 'test' ? ' selected' : ''}>Test</option>
+                            <option value="materiale" selected>Materiale</option>
                         </select>
                     </td>
                     <td>
@@ -2138,7 +2374,11 @@ try {
             setWizardClassroomLoading(true);
             setWizardClassroomMessage('info', 'Caricamento classroom...');
             try {
-                const response = await fetch('ajax_get_classroom_courses_import.php', { credentials: 'same-origin' });
+                const subjectQuery = wizardClassSubjectQuery();
+                const params = new URLSearchParams();
+                subjectQuery.classIds.forEach(id => params.append('class_ids[]', id));
+                subjectQuery.subjectIds.forEach(id => params.append('subject_ids[]', id));
+                const response = await fetch(`ajax_get_wizard_classroom_catalog.php?${params.toString()}`, { credentials: 'same-origin' });
                 const raw = await response.text();
                 let result = null;
                 try {
@@ -2159,7 +2399,7 @@ try {
                     option.value = '';
                     option.textContent = 'Nessuna classroom disponibile';
                     courseSelect.appendChild(option);
-                    setWizardClassroomMessage('warning', 'Classroom non collegato o senza corsi disponibili.', true);
+                    setWizardClassroomMessage('warning', 'Nessun corso Classroom è associato alle classi selezionate.', true);
                     return false;
                 }
 
@@ -2379,21 +2619,7 @@ try {
                 return;
             }
 
-            applyWizardTopicToArgomento();
-            applyWizardCourseTitleIfMissing();
-            applyWizardClassroomCourseMetadata();
-            const importedInput = document.getElementById('classroom_imported');
-            if (importedInput) importedInput.value = '1';
-            const statusSelect = document.querySelector('select[name="stato"]');
-            if (statusSelect && statusSelect.value === 'bozza') statusSelect.value = 'attiva';
-
-            const modalElement = document.getElementById('classroomTopicImportModal');
-            if (modalElement && typeof bootstrap !== 'undefined') {
-                const modal = bootstrap.Modal.getInstance(modalElement) || new bootstrap.Modal(modalElement);
-                modal.hide();
-            }
-
-            alert(`Import completato: ${importedMaterials} materiali e ${importedTests} test aggiunti al wizard.`);
+            setWizardClassroomMessage('success', `Import completato: ${importedMaterials} materiali e ${importedTests} test aggiunti al wizard.`);
         }
 
         function applyAcademicPeriod(select) {
@@ -2441,7 +2667,7 @@ try {
             const periodo = document.querySelector('#periodo_scolastico option:checked')?.textContent.trim() || '';
             const descrizione = document.querySelector('textarea[name="descrizione"]').value;
             const note = document.querySelector('textarea[name="note"]').value;
-            const classiTarget = 'Compilate dopo l\'assegnazione';
+            const classiTarget = document.querySelector('[name="classi_target"]')?.value.trim() || '';
             const stato = document.querySelector('select[name="stato"]').value;
 
             html += `
@@ -2462,7 +2688,7 @@ try {
                             <div class="col-md-6">
                                 <p><strong>Periodo:</strong> ${periodo || 'N/D'}</p>
                                 ${dataInizio || dataFine ? `<p><strong>Intervallo:</strong> ${dataInizio || 'N/D'} - ${dataFine || 'N/D'}</p>` : ''}
-                                <p><strong>Classi Target:</strong> ${classiTarget || 'N/D'}</p>
+                                <p><strong>Classi Target:</strong> ${escapeWizardHtml(classiTarget || 'N/D')}</p>
                             </div>
                         </div>
                         ${descrizione ? `<hr><p><strong>Descrizione:</strong><br>${descrizione}</p>` : ''}
@@ -2472,14 +2698,23 @@ try {
             `;
 
             // Classi
-            const classiCount = document.querySelectorAll('input[name="classe_id[]"]').length;
+            const classRows = Array.from(document.querySelectorAll('#classi-container .dynamic-item'));
+            const classiCount = classRows.filter(row => row.querySelector('input[name="classe_id[]"]')?.value).length;
+            const classiSummary = classRows.map(row => {
+                const className = row.querySelector('input[name="classe_nome[]"]')?.value || '';
+                const subjectName = row.querySelector('input[name="classe_materia_nome[]"]')?.value || '';
+                const classroom = row.querySelector('.classroom-mapping-status')?.textContent || 'Non configurata';
+                const github = row.querySelector('.github-mapping-status')?.textContent || 'Non configurata';
+                return `<li><strong>${escapeWizardHtml(className || 'Classe')}</strong> · ${escapeWizardHtml(subjectName || 'Materia')}<br><small>Google: ${escapeWizardHtml(classroom.trim())} · GitHub: ${escapeWizardHtml(github.trim())}</small></li>`;
+            }).join('');
             html += `
                 <div class="card mb-3">
                     <div class="card-header" style="background-color: #fd7e14; color: white;">
-                        <h6 class="mb-0"><i class="bi bi-people"></i> Classi Assegnate</h6>
+                        <h6 class="mb-0"><i class="bi bi-people"></i> Classi e integrazioni</h6>
                     </div>
                     <div class="card-body">
                         <p>${classiCount > 0 ? classiCount + ' classe/i' : 'Nessuna classe assegnata'}</p>
+                        ${classiSummary ? `<ul class="mb-0">${classiSummary}</ul>` : ''}
                     </div>
                 </div>
             `;
