@@ -1,4 +1,6 @@
 <?php
+
+define('REQUIRES_CLASSEVIVA', true);
 /**
  * Verifica e Sincronizzazione Voti
  *

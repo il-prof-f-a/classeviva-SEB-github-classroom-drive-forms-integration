@@ -1,4 +1,6 @@
 <?php
+
+define('REQUIRES_CLASSEVIVA', true);
 /**
  * Analisi Voti Classe - Cerca studenti con voti esistenti
  */

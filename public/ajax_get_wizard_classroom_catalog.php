@@ -6,6 +6,7 @@ session_start();
 require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
+use App\Core\ProviderNeutralMappingService;
 use App\Integration\GoogleClassroomAPI;
 
 header('Content-Type: application/json; charset=utf-8');
@@ -30,7 +31,10 @@ try {
     }
 
     $db = DatabaseFactory::createWithInitialization($config, true);
-    $mappings = $db->findAll('CLASSROOM_MAPPINGS');
+    $mappings = (new ProviderNeutralMappingService(
+        $db,
+        (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'))
+    ))->listGoogleClassroomMappings();
     $allowed = [];
     foreach ($mappings as $mapping) {
         $classId = (string)($mapping['id_classe_cv'] ?? $mapping['classeviva_class_id'] ?? '');

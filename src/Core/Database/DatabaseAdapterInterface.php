@@ -167,7 +167,7 @@ interface DatabaseAdapterInterface
      * @return mixed Spreadsheet object (PHPSpreadsheet) o equivalente
      * @throws \Exception Se il file non può essere caricato o il path non è sicuro
      */
-    public function loadExternalFile(string $filePath);
+    // File Excel/CSV gestiti da App\Core\SpreadsheetFileService.
 
     /**
      * Carica un template Excel dalla directory template
@@ -176,7 +176,6 @@ interface DatabaseAdapterInterface
      * @return mixed Spreadsheet object
      * @throws \Exception Se il template non esiste o non può essere caricato
      */
-    public function loadTemplate(string $templateName);
 
     /**
      * Ottiene la lista di tutti i fogli/tabelle presenti nel database

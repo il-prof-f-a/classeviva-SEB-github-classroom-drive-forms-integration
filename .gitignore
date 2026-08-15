@@ -8,6 +8,7 @@ config/google_credentials.json
 config/google_token.json
 config/*token*.json
 config/*credential*.json
+config/.stage_migration_token
 !config/google_credentials.example.json
 *.pem
 *.key

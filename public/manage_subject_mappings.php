@@ -1,4 +1,6 @@
 <?php
+
+define('REQUIRES_CLASSEVIVA', true);
 /**
  * Gestione Associazioni Classe-Materia → Google Classroom
  * Interfaccia migliorata per associare le combinazioni (classe, materia) di ClasseViva
@@ -11,10 +13,15 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\ClasseVivaTokenGuard;
 use App\Core\Database\DatabaseFactory;
+use App\Core\ProviderNeutralMappingService;
 use App\Integration\ClasseVivaAPI;
 use App\Integration\GoogleClassroomAPI;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
+$mappingService = new ProviderNeutralMappingService(
+    $dbAdapter,
+    (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'))
+);
 $error_message = null;
 $success_message = null;
 
@@ -34,40 +41,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 throw new Exception("Dati incompleti");
             }
 
-            // Verifica se la mappatura esiste già
-            $existingMappings = $dbAdapter->findAll('CLASSROOM_MAPPINGS');
-            $mappingId = null;
-
-            foreach ($existingMappings as $existing) {
-                if (($existing['id_classe_cv'] ?? '') == $classId &&
-                    ($existing['id_materia_cv'] ?? '') == $subjectId) {
-                    $mappingId = $existing['id_mapping'];
-                    break;
-                }
-            }
-
-            $mappingData = [
-                'id_mapping' => $mappingId ?: 'MAP_' . uniqid(),
-                'id_classe_cv' => $classId,
-                'nome_classe_cv' => $className,
-                'id_materia_cv' => $subjectId,
-                'nome_materia_cv' => $subjectName,
-                'id_corso_gc' => $courseId,
-                'nome_corso_gc' => $courseName,
-                'data_mapping' => date('Y-m-d H:i:s'),
-                'stato' => 'attivo',
-                'note' => $existing['note'] ?? ''
-            ];
-
-            if ($mappingId) {
-                // Aggiorna esistente
-                $dbAdapter->updateClassroomMapping($mappingId, $mappingData);
-                $success_message = "Mappatura aggiornata con successo!";
-            } else {
-                // Inserisci nuova
-                $dbAdapter->insertClassroomMapping($mappingData);
-                $success_message = "Mappatura creata con successo!";
-            }
+            $mappingService->upsertGoogleClassroomMapping([
+                'classeviva_class_id' => $classId,
+                'classeviva_class_name' => $className,
+                'classeviva_subject_id' => $subjectId,
+                'classeviva_subject_name' => $subjectName,
+                'google_course_id' => $courseId,
+                'google_course_name' => $courseName,
+            ]);
+            $success_message = "Mappatura aggiornata con successo!";
 
             // Redirect per evitare re-submit
             header("Location: manage_subject_mappings.php?success=" . urlencode($success_message));
@@ -80,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 throw new Exception("ID mappatura mancante");
             }
 
-            $dbAdapter->deleteClassroomMapping($mappingId);
+            $mappingService->deactivateMapping((string)$mappingId);
             $success_message = "Mappatura eliminata con successo!";
 
             header("Location: manage_subject_mappings.php?success=" . urlencode($success_message));
@@ -96,24 +78,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
             $savedCount = 0;
             foreach ($mappings as $mapping) {
-                $mappingData = [
-                    'id_mapping' => $mapping['id'] ?? 'MAP_' . uniqid(),
-                    'id_classe_cv' => $mapping['class_id'],
-                    'nome_classe_cv' => $mapping['class_name'],
-                    'id_materia_cv' => $mapping['subject_id'],
-                    'nome_materia_cv' => $mapping['subject_name'],
-                    'id_corso_gc' => $mapping['course_id'],
-                    'nome_corso_gc' => $mapping['course_name'],
-                    'data_mapping' => $mapping['data_creazione'] ?? date('Y-m-d H:i:s'),
-                    'stato' => 'attivo',
-                    'note' => $mapping['note'] ?? ''
-                ];
-
-                if (!empty($mapping['id'])) {
-                    $dbAdapter->updateClassroomMapping($mapping['id'], $mappingData);
-                } else {
-                    $dbAdapter->insertClassroomMapping($mappingData);
-                }
+                $mappingService->upsertGoogleClassroomMapping([
+                    'classeviva_class_id' => $mapping['class_id'] ?? '',
+                    'classeviva_class_name' => $mapping['class_name'] ?? '',
+                    'classeviva_subject_id' => $mapping['subject_id'] ?? '',
+                    'classeviva_subject_name' => $mapping['subject_name'] ?? '',
+                    'google_course_id' => $mapping['course_id'] ?? '',
+                    'google_course_name' => $mapping['course_name'] ?? '',
+                ]);
                 $savedCount++;
             }
 
@@ -133,7 +105,7 @@ if (isset($_GET['success'])) {
 }
 
 // Carica mappature esistenti dal database
-$existingMappings = $dbAdapter->findAll('CLASSROOM_MAPPINGS');
+$existingMappings = $mappingService->listGoogleClassroomMappings();
 
 // Crea mappa per lookup veloce
 $mappingsMap = [];
@@ -705,4 +677,3 @@ foreach ($classeVivaSubjects as $subject) {
     </script>
 </body>
 </html>
-

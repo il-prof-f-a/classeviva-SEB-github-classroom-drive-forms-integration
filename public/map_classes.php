@@ -1,4 +1,6 @@
 <?php
+
+define('REQUIRES_CLASSEVIVA', true);
 /**
  * Gestione Completa Associazioni ClasseViva ↔ Google Classroom
  *
@@ -15,9 +17,14 @@ use App\Core\Database\DatabaseFactory;
 use App\Integration\ClasseVivaAPI;
 use App\Integration\GoogleClassroomAPI;
 use App\Core\ClasseVivaTokenGuard;
+use App\Core\ProviderNeutralMappingService;
 use App\Utils\LocalReturnUrl;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
+$mappingService = new ProviderNeutralMappingService(
+    $dbAdapter,
+    (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'))
+);
 $error_message = null;
 $success_message = null;
 $returnTo = LocalReturnUrl::sanitize(
@@ -52,38 +59,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 throw new Exception("Dati incompleti");
             }
 
-            // Verifica se esiste già
-            $existingMappings = $dbAdapter->findAll('CLASSROOM_MAPPINGS');
-            $mappingId = null;
-
-            foreach ($existingMappings as $existing) {
-                if (($existing['id_classe_cv'] ?? '') == $classId &&
-                    ($existing['id_materia_cv'] ?? '') == $subjectId) {
-                    $mappingId = $existing['id_mapping'];
-                    break;
-                }
-            }
-
-            $mappingData = [
-                'id_mapping' => $mappingId ?: 'MAP_' . uniqid(),
-                'id_classe_cv' => $classId,
-                'nome_classe_cv' => $className,
-                'id_materia_cv' => $subjectId,
-                'nome_materia_cv' => $subjectName,
-                'id_corso_gc' => $courseId,
-                'nome_corso_gc' => $courseName,
-                'data_mapping' => date('Y-m-d H:i:s'),
-                'stato' => 'attivo',
-                'note' => $existing['note'] ?? ''
-            ];
-
-            if ($mappingId) {
-                $dbAdapter->updateClassroomMapping($mappingId, $mappingData);
-                $success_message = "Mappatura aggiornata! Ora puoi associare gli studenti.";
-            } else {
-                $dbAdapter->insertClassroomMapping($mappingData);
-                $success_message = "Mappatura creata! Ora puoi associare gli studenti.";
-            }
+            $mappingService->upsertGoogleClassroomMapping([
+                'classeviva_class_id' => $classId,
+                'classeviva_class_name' => $className,
+                'classeviva_subject_id' => $subjectId,
+                'classeviva_subject_name' => $subjectName,
+                'google_course_id' => $courseId,
+                'google_course_name' => $courseName,
+            ]);
+            $success_message = "Mappatura aggiornata! Ora puoi associare gli studenti.";
 
             $redirectAfterMapping($success_message);
 
@@ -93,16 +77,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
             if (!is_array($mappings) || empty($mappings)) {
                 throw new Exception("Nessuna mappatura da salvare");
-            }
-
-            // Indicizza mappature esistenti per (classe, materia)
-            $existingMappings = $dbAdapter->findAll('CLASSROOM_MAPPINGS');
-            $existingIndex = [];
-            foreach ($existingMappings as $existing) {
-                $key = ($existing['id_classe_cv'] ?? '') . '_' . ($existing['id_materia_cv'] ?? '');
-                if (!empty($existing['id_mapping'])) {
-                    $existingIndex[$key] = $existing;
-                }
             }
 
             $savedCount = 0;
@@ -119,28 +93,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     continue;
                 }
 
-                $key = $classId . '_' . $subjectId;
-                $existing = $existingIndex[$key] ?? null;
-                $mappingId = $existing['id_mapping'] ?? ('MAP_' . uniqid());
-
-                $mappingData = [
-                    'id_mapping'      => $mappingId,
-                    'id_classe_cv'    => $classId,
-                    'nome_classe_cv'  => $className,
-                    'id_materia_cv'   => $subjectId,
-                    'nome_materia_cv' => $subjectName,
-                    'id_corso_gc'     => $courseId,
-                    'nome_corso_gc'   => $courseName,
-                    'data_mapping'    => date('Y-m-d H:i:s'),
-                    'stato'           => 'attivo',
-                    'note'            => $existing['note'] ?? ''
-                ];
-
-                if ($existing) {
-                    $dbAdapter->updateClassroomMapping($mappingId, $mappingData);
-                } else {
-                    $dbAdapter->insertClassroomMapping($mappingData);
-                }
+                $mappingService->upsertGoogleClassroomMapping([
+                    'classeviva_class_id' => $classId,
+                    'classeviva_class_name' => $className,
+                    'classeviva_subject_id' => $subjectId,
+                    'classeviva_subject_name' => $subjectName,
+                    'google_course_id' => $courseId,
+                    'google_course_name' => $courseName,
+                ]);
 
                 $savedCount++;
             }
@@ -151,7 +111,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         } elseif ($_POST['action'] === 'delete_mapping') {
             $mappingId = $_POST['mapping_id'] ?? '';
             if (!empty($mappingId)) {
-                $dbAdapter->deleteClassroomMapping($mappingId);
+                $mappingService->deactivateMapping((string)$mappingId);
                 $success_message = "Mappatura eliminata con successo!";
             }
 
@@ -173,7 +133,7 @@ $filterClasse = $_GET['filter_classe'] ?? null;
 $highlightFilter = isset($_GET['highlight']) && $_GET['highlight'] === 'true';
 
 // Carica mappature esistenti
-$existingMappings = $dbAdapter->findAll('CLASSROOM_MAPPINGS');
+$existingMappings = $mappingService->listGoogleClassroomMappings();
 $mappingsMap = [];
 foreach ($existingMappings as $mapping) {
     $stato = strtolower(trim((string)($mapping['stato'] ?? 'attivo')));

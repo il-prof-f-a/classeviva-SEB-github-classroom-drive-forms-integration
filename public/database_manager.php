@@ -15,6 +15,7 @@ require_once __DIR__ . '/../bootstrap.php';
 use App\Core\Database\DatabaseFactory;
 use App\Core\Database\DatabaseInitializer;
 use App\Core\Database\DatabaseMigration;
+use App\Core\Database\SchemaMigrationRunner;
 use App\Core\SchemaDefinitions;
 
 error_reporting(E_ALL);
@@ -217,6 +218,9 @@ function convertJsonBackupPayloadToSqlite(array $config, array $payload): string
 
 $dbAdapter = DatabaseFactory::create($config);
 $dbInit = new DatabaseInitializer($dbAdapter, $config);
+$schemaMigrationRunner = new SchemaMigrationRunner($dbAdapter);
+$pendingMigrations = $schemaMigrationRunner->pending();
+$schemaVersion = SchemaMigrationRunner::PROVIDER_NEUTRAL_VERSION;
 
 $currentEmail = strtolower(trim($_SESSION['user_email'] ?? ''));
 $isAdminUser = is_admin_user($currentEmail);
@@ -466,20 +470,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 }
 
 // Informazioni database corrente
-$dbType = $config['database']['type'] ?? 'excel';
+$dbType = strtolower((string)($config['database']['type'] ?? 'sqlite'));
 
 // Determina il percorso/identificativo basandosi sul tipo
 switch ($dbType) {
-    case 'excel':
-        $dbPath = $config['database']['excel_file'] ?? 'database/uda_master.xlsx';
-        $dbDisplayName = 'Excel (.xlsx)';
-        break;
-    case 'google_sheets':
-    case 'sheets':
-        $sheetId = $config['database']['google_sheets']['spreadsheet_id'] ?? 'N/A';
-        $dbPath = $sheetId !== 'N/A' ? "Google Sheet ID: {$sheetId}" : 'Google Sheets (non configurato)';
-        $dbDisplayName = 'Google Sheets';
-        break;
     case 'sqlite':
     case 'sqlite3':
         $dbPath = $config['database']['sqlite']['file'] ?? 'database/uda_database.db';
@@ -493,8 +487,7 @@ switch ($dbType) {
         $dbDisplayName = 'MySQL';
         break;
     default:
-        $dbPath = 'Sconosciuto';
-        $dbDisplayName = ucfirst($dbType);
+        throw new Exception("Backend non supportato: {$dbType}. Usare SQLite o MySQL.");
 }
 
 // Informazioni schema
@@ -577,9 +570,8 @@ $totalSheets = count($allSheets);
                         <strong>Tipo Database:</strong><br>
                         <?php
                         $badgeColor = match($dbType) {
-                            'excel' => 'success',
-                            'google_sheets', 'sheets' => 'info',
                             'sqlite', 'sqlite3' => 'primary',
+                            'mysql' => 'success',
                             default => 'secondary'
                         };
                         ?>
@@ -594,6 +586,20 @@ $totalSheets = count($allSheets);
                     <div class="col-md-7">
                         <strong>Percorso/Identificativo:</strong><br>
                         <span class="text-muted">nascosto per sicurezza</span>
+                    </div>
+                </div>
+                <div class="row mt-3">
+                    <div class="col-md-4">
+                        <strong>Schema:</strong><br>
+                        <code><?= htmlspecialchars($schemaVersion) ?></code>
+                    </div>
+                    <div class="col-md-4">
+                        <strong>Migrazioni pendenti:</strong><br>
+                        <span class="badge bg-<?= empty($pendingMigrations) ? 'success' : 'warning' ?> fs-6"><?= count($pendingMigrations) ?></span>
+                    </div>
+                    <div class="col-md-4">
+                        <strong>Persistenza:</strong><br>
+                        <span class="text-muted">solo SQLite/MySQL; file tabellari solo import/export</span>
                     </div>
                 </div>
                 <div class="row mt-3">

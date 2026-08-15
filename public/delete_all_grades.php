@@ -1,4 +1,6 @@
 <?php
+
+define('REQUIRES_CLASSEVIVA', true);
 /**
  * Script per cancellare tutti i voti di uno studente
  *

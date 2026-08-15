@@ -8,11 +8,15 @@
 require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
+use App\Core\ProviderNeutralMappingService;
 use App\Integration\ClasseVivaAPI;
 use App\Integration\GoogleClassroomAPI;
 
-// Inizializza manager
-$dbManager = new DatabaseManager($config);
+$dbAdapter = DatabaseFactory::createWithInitialization($config, true);
+$mappingService = new ProviderNeutralMappingService(
+    $dbAdapter,
+    (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'))
+);
 $classeVivaAPI = new ClasseVivaAPI($config);
 $googleClassroomAPI = new GoogleClassroomAPI($config);
 
@@ -61,7 +65,7 @@ try {
 // Carica mappature esistenti
 $mappatureEsistenti = [];
 try {
-    $mappature = $dbAdapter->findAll('MAPPATURE_CORSI');
+    $mappature = $mappingService->listGoogleClassroomMappings();
     foreach ($mappature as $map) {
         if (!empty($map['id_classe_cv']) && !empty($map['id_materia_cv'])) {
             $key = $map['id_classe_cv'] . '_' . $map['id_materia_cv'];
@@ -92,11 +96,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
         if ($esistente) {
             // Aggiorna mappatura esistente
-            $dbAdapter->updateRow('MAPPATURE_CORSI', 'id_mappatura', $esistente['id_mappatura'], [
-                'id_google_classroom' => $idGoogleClassroom,
-                'nome_google_classroom' => $nomeGoogleClassroom,
-                'data_ultima_modifica' => date('d/m/Y H:i'),
-                'stato' => 'attivo'
+            $mappingService->upsertGoogleClassroomMapping([
+                'classeviva_class_id' => $idClasseCV,
+                'classeviva_class_name' => $nomeClasseCV,
+                'classeviva_subject_id' => $idMateriaCV,
+                'classeviva_subject_name' => $nomeMateriaCV,
+                'google_course_id' => $idGoogleClassroom,
+                'google_course_name' => $nomeGoogleClassroom,
             ]);
         } else {
             // Crea nuova mappatura
@@ -113,7 +119,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 'stato' => 'attivo'
             ];
 
-            $dbAdapter->insertRow('MAPPATURE_CORSI', $nuovaMappatura);
+            $mappingService->upsertGoogleClassroomMapping([
+                'classeviva_class_id' => $nuovaMappatura['id_classe_cv'],
+                'classeviva_class_name' => $nuovaMappatura['nome_classe_cv'],
+                'classeviva_subject_id' => $nuovaMappatura['id_materia_cv'],
+                'classeviva_subject_name' => $nuovaMappatura['nome_materia_cv'],
+                'google_course_id' => $nuovaMappatura['id_google_classroom'],
+                'google_course_name' => $nuovaMappatura['nome_google_classroom'],
+            ]);
         }
 
         header("Location: map_courses.php?success=mapped");
@@ -133,10 +146,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             throw new Exception("ID mappatura non specificato");
         }
 
-        $dbAdapter->updateRow('MAPPATURE_CORSI', 'id_mappatura', $idMappatura, [
-            'stato' => 'archiviato',
-            'data_ultima_modifica' => date('d/m/Y H:i')
-        ]);
+        if (!$mappingService->deactivateMapping($idMappatura)) {
+            throw new Exception("Mappatura non trovata");
+        }
 
         header("Location: map_courses.php?success=removed");
         exit;

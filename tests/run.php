@@ -87,6 +87,15 @@ if (filter_var(getenv('TEST_MYSQL') ?: false, FILTER_VALIDATE_BOOLEAN)) {
         $failures[] = 'MySQL: ' . implode(' | ', $databaseOutput);
         echo "FAIL: inizializzazione e validazione MySQL\n";
     }
+    $mysqlE2eCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/e2e/new_uda_provider_neutral_mysql.php');
+    exec($mysqlE2eCommand . ' 2>&1', $mysqlE2eOutput, $mysqlE2eExitCode);
+    if ($mysqlE2eExitCode === 0) {
+        $passes++;
+        echo "PASS: E2E provider-neutral MySQL\n";
+    } else {
+        $failures[] = 'E2E provider-neutral MySQL: ' . implode(' | ', $mysqlE2eOutput);
+        echo "FAIL: E2E provider-neutral MySQL\n";
+    }
 }
 
 function check(bool $condition, string $message): void
@@ -315,10 +324,14 @@ $autoload = is_file($root . '/composer.json') ? json_decode(file_get_contents($r
 check(is_array($autoload) && (($autoload['autoload']['psr-4']['App\\'] ?? null) === 'src/'), 'Composer defines App\\ PSR-4 autoloading');
 check((($autoload['config']['platform']['php'] ?? null) === '8.2.0'), 'Composer resolves dependencies for the Docker PHP 8.2 runtime');
 check((($autoload['require']['php'] ?? null) === '>=8.2 <8.5'), 'Composer declares the PHP range supported by locked dependencies');
-check((($autoload['license'] ?? null) === 'CC-BY-NC-SA-4.0'), 'Composer declares the selected CC BY-NC-SA 4.0 license');
+check((($autoload['license'] ?? null) === 'PolyForm-Noncommercial-1.0.0'), 'Composer declares PolyForm Noncommercial 1.0.0');
 
 $license = is_file($root . '/LICENSE') ? (file_get_contents($root . '/LICENSE') ?: '') : '';
-check(str_contains($license, 'Attribution-NonCommercial-ShareAlike 4.0 International'), 'LICENSE contains the official CC BY-NC-SA 4.0 legal text');
+check(
+    str_contains($license, 'PolyForm Noncommercial License 1.0.0')
+        && str_contains($license, 'https://polyformproject.org/licenses/noncommercial/1.0.0'),
+    'LICENSE references official PolyForm Noncommercial 1.0.0 terms'
+);
 
 $readme = is_file($root . '/README.md') ? (file_get_contents($root . '/README.md') ?: '') : '';
 check(
@@ -359,6 +372,43 @@ if ($gitExit === 0) {
     echo "SKIP: Git ignore verification (git is not installed in this runtime)\n";
 }
 
+$architectureTests = [
+    'ClasseViva optional capability' => __DIR__ . '/classeviva_optional_capability.php',
+    'database manager SQL-only' => __DIR__ . '/database_manager_sql_only.php',
+    'Docker MySQL local binding' => __DIR__ . '/docker_mysql_local_binding.php',
+    'provider-neutral schema' => __DIR__ . '/architecture/provider_neutral_schema.php',
+    'no legacy domain identifiers' => __DIR__ . '/architecture/no_legacy_domain_identifiers.php',
+    'SQL-only persistence' => __DIR__ . '/architecture/sql_only_persistence.php',
+    'student privacy schema' => __DIR__ . '/architecture/no_student_pii.php',
+    'SQLite schema migrations' => __DIR__ . '/database/schema_v2_sqlite.php',
+    'factory automatic migrations' => __DIR__ . '/database/factory_auto_migration.php',
+    'teaching domain reset' => __DIR__ . '/database/teaching_domain_reset.php',
+    'legacy table migration' => __DIR__ . '/database/legacy_table_migration.php',
+    'legacy JSON restore mapping' => __DIR__ . '/database/legacy_json_restore_mapping.php',
+    'PolyForm Noncommercial license' => __DIR__ . '/license_polyform_noncommercial.php',
+    'teaching groups' => __DIR__ . '/domain/teaching_groups.php',
+    'UDA group assignments' => __DIR__ . '/domain/uda_group_assignments.php',
+    'student identities' => __DIR__ . '/domain/student_identities.php',
+    'student provider mappings' => __DIR__ . '/domain/student_provider_mappings.php',
+    'student reference gateway' => __DIR__ . '/domain/student_reference_gateway.php',
+    'group integration resolver' => __DIR__ . '/domain/group_integration_resolver.php',
+    'provider-neutral mappings' => __DIR__ . '/domain/provider_neutral_mappings.php',
+    'ClasseViva student sync' => __DIR__ . '/integration/classeviva_student_sync.php',
+    'provider-neutral E2E' => __DIR__ . '/e2e/new_uda_provider_neutral.php',
+    'GitHub student resources' => __DIR__ . '/integration/github_student_resources.php',
+];
+foreach ($architectureTests as $label => $testFile) {
+    $architectureOutput = [];
+    exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($testFile) . ' 2>&1', $architectureOutput, $architectureExitCode);
+    if ($architectureExitCode === 0) {
+        $passes++;
+        echo "PASS: architettura {$label}\n";
+    } else {
+        $failures[] = "Architettura {$label}: " . implode(' | ', $architectureOutput);
+        echo "FAIL: architettura {$label}\n";
+    }
+}
+
 $editorTests = [
     'wizard test fields' => __DIR__ . '/uda_editor/test_wizard_test_fields.php',
     'academic periods' => __DIR__ . '/uda_editor/test_uda_periods.php',
@@ -375,6 +425,7 @@ $editorTests = [
     'wizard optional assignments' => __DIR__ . '/uda_editor/test_wizard_optional_assignments.php',
     'wizard integration summary' => __DIR__ . '/uda_editor/test_wizard_integration_summary.php',
     'wizard question cancel' => __DIR__ . '/uda_editor/test_wizard_question_cancel.php',
+    'legacy group view' => __DIR__ . '/uda_editor/test_legacy_group_view.php',
     'questions handler' => __DIR__ . '/uda_editor/test_questions_handler.php',
     'question card markup' => __DIR__ . '/uda_editor/test_question_card_markup.php',
     'question card pages' => __DIR__ . '/uda_editor/test_question_card_pages.php',

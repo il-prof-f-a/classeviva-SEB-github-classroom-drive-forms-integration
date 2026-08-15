@@ -9,6 +9,7 @@ require_once '../bootstrap.php';
 use App\Integration\GitHubIntegration;
 use App\Integration\ClasseVivaAPI;
 use App\Core\Database\DatabaseFactory;
+use App\Core\ProviderNeutralMappingService;
 use App\Utils\LocalReturnUrl;
 
 $pageTitle = "Mappatura GitHub Classroom";
@@ -17,6 +18,10 @@ $pageTitle = "Mappatura GitHub Classroom";
 $github = new GitHubIntegration($config);
 $cv = new ClasseVivaAPI($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
+$mappingService = new ProviderNeutralMappingService(
+    $dbAdapter,
+    (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'))
+);
 
 // Carica token da sessione
 $github->loadTokenFromSession();
@@ -67,55 +72,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             throw new Exception("Classe, Materia e GitHub Classroom sono obbligatori");
         }
 
-        // Verifica se mappatura esiste già
-        $existing = $dbAdapter->findAll('GITHUB_CLASSROOMS');
-        foreach ($existing as $map) {
-            if (false) {
-                throw new Exception("Mappatura già esistente per questa Classe-Materia");
-            }
-        }
-
-        // Verifica duplicati: non permettere doppia mappatura
-        // 1) stessa Classe-Materia
-        $existingSameClassMateria = $dbAdapter->findWhere('GITHUB_CLASSROOMS', [
-            'id_classe_cv' => $idClasseCv,
-            'id_materia_cv' => $idMateriaCv
-        ]);
-        foreach ($existingSameClassMateria as $map) {
-            $existingGh = (string)($map['github_classroom_id'] ?? '');
-            if ($existingGh === (string)$githubClassroomId) {
-                throw new Exception("Mappatura già esistente per questa Classe-Materia e questa GitHub Classroom.");
-            }
-            throw new Exception("Questa Classe-Materia risulta già mappata a un'altra GitHub Classroom. Elimina prima la mappatura esistente se vuoi sostituirla.");
-        }
-
-        // 2) stessa GitHub Classroom (non può essere associata a due classi diverse)
-        $existingSameGithubClassroom = $dbAdapter->findWhere('GITHUB_CLASSROOMS', [
-            'github_classroom_id' => $githubClassroomId
-        ]);
-        foreach ($existingSameGithubClassroom as $map) {
-            $existingClass = (string)($map['id_classe_cv'] ?? '');
-            $existingSubj = (string)($map['id_materia_cv'] ?? '');
-            if ($existingClass !== (string)$idClasseCv || $existingSubj !== (string)$idMateriaCv) {
-                throw new Exception("Questa GitHub Classroom risulta già mappata a un'altra Classe-Materia. Elimina prima la mappatura esistente se vuoi sostituirla.");
-            }
-        }
-
-        // Crea nuova mappatura
-        $mappingId = 'GHCL_' . uniqid();
-        $newMapping = [
-            'id_mapping' => $mappingId,
-            'id_classe_cv' => $idClasseCv,
-            'id_materia_cv' => $idMateriaCv,
+        $mappingService->upsertGithubClassroomMapping([
+            'classeviva_class_id' => $idClasseCv,
+            'classeviva_class_name' => $_POST['classeviva_class_name'] ?? '',
+            'classeviva_subject_id' => $idMateriaCv,
+            'classeviva_subject_name' => $_POST['classeviva_subject_name'] ?? '',
             'github_classroom_id' => $githubClassroomId,
             'github_org_name' => $githubOrgName,
             'classroom_name' => $classroomName,
-            'stato' => 'attivo',
-            'data_creazione' => date('d/m/Y H:i:s'),
-            'note' => $note
-        ];
-
-        $dbAdapter->insertRow('GITHUB_CLASSROOMS', $newMapping);
+            'note' => $note,
+        ]);
         $successMessage = "Mappatura creata con successo!";
 
     } catch (Exception $e) {
@@ -126,7 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 // Gestione eliminazione mappatura
 if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])) {
     try {
-        $dbAdapter->deleteRow('GITHUB_CLASSROOMS', $_GET['id'], 'id_mapping');
+        $mappingService->deactivateMapping((string)$_GET['id']);
         $successMessage = "Mappatura eliminata con successo!";
 
         $query = $_GET;
@@ -144,7 +110,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
 }
 
 // Carica mappature esistenti
-$mappings = $dbAdapter->findAll('GITHUB_CLASSROOMS');
+$mappings = $mappingService->listGithubClassroomMappings();
 $selectedMappingId = $_GET['mapping_id'] ?? null;
 $selectedAssignmentId = $_GET['assignment_id'] ?? null;
 $selectedAssignmentSlug = $_GET['assignment_slug'] ?? null;
@@ -471,7 +437,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         // Aggiorna il test (se presente) con gli ID dell'assignment/classroom selezionati
         try {
             if ($testIdFromQuery) {
-                $mapRow = $dbAdapter->findOne('GITHUB_CLASSROOMS', 'id_mapping', $mappingId);
+                $mapRow = null;
+                foreach ($mappings as $candidate) {
+                    if ((string)($candidate['id_mapping'] ?? '') === (string)$mappingId) {
+                        $mapRow = $candidate;
+                        break;
+                    }
+                }
                 $update = [
                     'github_assignment_id' => (string)$assignmentId
                 ];
@@ -492,7 +464,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             'saved' => '1'
         ];
         try {
-            $mapRow = $dbAdapter->findOne('GITHUB_CLASSROOMS', 'id_mapping', $mappingId);
+            $mapRow = null;
+            foreach ($mappings as $candidate) {
+                if ((string)($candidate['id_mapping'] ?? '') === (string)$mappingId) {
+                    $mapRow = $candidate;
+                    break;
+                }
+            }
             if (!empty($mapRow['github_classroom_id'])) {
                 $redirectParams['github_classroom_id'] = (string)$mapRow['github_classroom_id'];
             }
@@ -797,13 +775,17 @@ if ($isAuthenticated) {
                                     <select name="classe_materia" id="classeMateria" class="form-select" required>
                                         <option value="">-- Seleziona --</option>
                                         <?php foreach ($classiMaterie as $cm): ?>
-                                            <option value="<?= htmlspecialchars($cm['id_classe']) ?>,<?= htmlspecialchars($cm['id_materia']) ?>">
+                                            <option value="<?= htmlspecialchars($cm['id_classe']) ?>,<?= htmlspecialchars($cm['id_materia']) ?>"
+                                                    data-class-name="<?= htmlspecialchars($cm['nome_classe']) ?>"
+                                                    data-subject-name="<?= htmlspecialchars($cm['nome_materia']) ?>">
                                                 <?= htmlspecialchars($cm['nome_classe']) ?> - <?= htmlspecialchars($cm['nome_materia']) ?>
                                             </option>
                                         <?php endforeach; ?>
                                     </select>
                                     <input type="hidden" name="id_classe_cv" id="idClasseCv">
                                     <input type="hidden" name="id_materia_cv" id="idMateriaCv">
+                                    <input type="hidden" name="classeviva_class_name" id="classevivaClassName">
+                                    <input type="hidden" name="classeviva_subject_name" id="classevivaSubjectName">
                                 </div>
 
                                 <div class="col-md-6 mb-3">
@@ -1153,6 +1135,9 @@ document.getElementById('classeMateria')?.addEventListener('change', function() 
         const [classe, materia] = value.split(',');
         document.getElementById('idClasseCv').value = classe;
         document.getElementById('idMateriaCv').value = materia;
+        const option = this.options[this.selectedIndex];
+        document.getElementById('classevivaClassName').value = option?.dataset.className || '';
+        document.getElementById('classevivaSubjectName').value = option?.dataset.subjectName || '';
     }
 });
 

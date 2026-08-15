@@ -21,6 +21,7 @@ RUN apt-get update \
         libjpeg62-turbo-dev \
         libonig-dev \
         libpng-dev \
+        libsqlite3-dev \
         libxml2-dev \
         libzip-dev \
         unzip \
@@ -33,6 +34,7 @@ RUN apt-get update \
         mysqli \
         opcache \
         pdo_mysql \
+        pdo_sqlite \
         zip \
     && a2enmod headers rewrite \
     && rm -rf /var/lib/apt/lists/*

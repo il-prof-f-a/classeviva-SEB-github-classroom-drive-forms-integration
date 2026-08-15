@@ -1,4 +1,6 @@
 <?php
+
+define('REQUIRES_CLASSEVIVA', true);
 /**
  * Valutazione Attività Laboratorio - Sistema PiùOMeno
  *

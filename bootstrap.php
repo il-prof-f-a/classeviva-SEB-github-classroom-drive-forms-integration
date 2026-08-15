@@ -145,7 +145,6 @@ function buildConfigFromEnv(): array {
         ],
         'database' => [
             'type' => env('DB_TYPE', 'sqlite'),
-            'master_file' => env('DB_MASTER_FILE', 'database/uda_master.xlsx'),
             'sqlite' => [
                 'file' => env('DB_SQLITE_FILE', 'database/uda_master.db')
             ],
@@ -158,11 +157,6 @@ function buildConfigFromEnv(): array {
                 'charset' => env('DB_CHARSET', 'utf8mb4'),
                 'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci'),
                 'prefix' => env('DB_PREFIX', ''),
-            ],
-            'google_sheets' => [
-                'spreadsheet_id' => env('DB_GOOGLE_SHEETS_SPREADSHEET_ID', ''),
-                'credentials_file' => env('DB_GOOGLE_SHEETS_CREDENTIALS_FILE', 'config/google_credentials.json'),
-                'auto_create_if_missing' => filter_var(env('DB_GOOGLE_SHEETS_AUTO_CREATE', false), FILTER_VALIDATE_BOOLEAN)
             ],
             'auto_initialize' => filter_var(env('DB_AUTO_INITIALIZE', true), FILTER_VALIDATE_BOOLEAN),
             'auto_repair' => filter_var(env('DB_AUTO_REPAIR', true), FILTER_VALIDATE_BOOLEAN),
@@ -299,7 +293,8 @@ if (php_sapi_name() !== 'cli'
         // Un token assente e un token non valido hanno lo stesso effetto:
         // l'utente deve riautenticarsi. Il popup viene comunque renderizzato
         // esclusivamente dal bootstrap (mai dall'API ClasseViva).
-        if (!$skipClasseVivaTokenValidation && $hasAuthenticatedUser) {
+        $requiresClasseViva = \App\Core\ClasseVivaCapability::requested();
+        if (!$skipClasseVivaTokenValidation && $hasAuthenticatedUser && $requiresClasseViva) {
             if ($classeVivaEnabled && $classeVivaToken === '') {
                 $config['classeviva']['token_error'] = 'Token ClasseViva mancante';
                 $classeVivaSessionStore->markReauthenticationRequired();
@@ -320,7 +315,7 @@ if (php_sapi_name() !== 'cli'
         $suppressCvTokenPopup = (defined('SKIP_CV_TOKEN_POPUP') && SKIP_CV_TOKEN_POPUP === true)
             || (isset($_SERVER['SCRIPT_NAME']) && str_contains($_SERVER['SCRIPT_NAME'], 'user_integrations.php'))
             || (isset($_SERVER['REQUEST_URI']) && str_contains($_SERVER['REQUEST_URI'], 'user_integrations.php'));
-        if ($classeVivaSessionStore->requiresReauthentication() && !$suppressCvTokenPopup) {
+        if ($requiresClasseViva && $classeVivaSessionStore->requiresReauthentication() && !$suppressCvTokenPopup) {
             if (!defined('CV_TOKEN_POPUP_ACTIVE')) {
                 define('CV_TOKEN_POPUP_ACTIVE', true);
             }

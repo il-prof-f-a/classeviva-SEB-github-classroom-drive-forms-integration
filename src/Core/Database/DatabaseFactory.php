@@ -8,7 +8,7 @@ use Exception;
  * DatabaseFactory - Factory per creare l'adapter database corretto
  *
  * Analizza la configurazione e istanzia l'adapter appropriato
- * (Excel locale, Google Sheets, SQL database, ecc.)
+ * (SQLite o MySQL/MariaDB).
  */
 class DatabaseFactory
 {
@@ -22,16 +22,9 @@ class DatabaseFactory
     public static function create(array $config): DatabaseAdapterInterface
     {
         // Determina il tipo di database dalla configurazione
-        $dbType = $config['database']['type'] ?? 'excel';
+        $dbType = $config['database']['type'] ?? 'sqlite';
 
         switch (strtolower($dbType)) {
-            case 'excel':
-                return new ExcelDatabaseAdapter($config);
-
-            case 'google_sheets':
-            case 'sheets':
-                return new GoogleSheetsDatabaseAdapter($config);
-
             case 'sqlite':
             case 'sqlite3':
                 return new SQLiteDatabaseAdapter($config);
@@ -49,7 +42,7 @@ class DatabaseFactory
             default:
                 throw new Exception(
                     "Tipo di database '{$dbType}' non supportato. " .
-                    "Tipi supportati: excel, google_sheets, sqlite, mysql"
+                    "Tipi supportati: sqlite, mysql"
                 );
         }
     }
@@ -88,6 +81,17 @@ class DatabaseFactory
                     );
                 }
             }
+
+            // Le migrazioni SQL versionate sono parte dell'avvio del database:
+            // ogni adapter applica in modo idempotente lo schema canonico e i
+            // relativi indici prima che l'applicazione inizi a leggere dati.
+            $migrationReport = (new SchemaMigrationRunner($adapter))->migrate();
+            if (!empty($migrationReport['errors'])) {
+                throw new Exception(
+                    'Impossibile applicare le migrazioni del database: '
+                    . implode('; ', $migrationReport['errors'])
+                );
+            }
         }
 
         // In contesto web, se c'è un utente loggato wrappiamo l'adapter
@@ -108,52 +112,23 @@ class DatabaseFactory
     /**
      * Verifica se un tipo di database è supportato
      *
-     * @param string $dbType Tipo di database (excel, google_sheets, etc.)
+     * @param string $dbType Tipo di database (sqlite o mysql)
      * @return bool True se supportato
      */
     public static function isSupported(string $dbType): bool
     {
-        $supportedTypes = ['excel', 'google_sheets', 'sheets', 'sqlite', 'sqlite3', 'mysql'];
+        $supportedTypes = ['sqlite', 'sqlite3', 'mysql'];
         return in_array(strtolower($dbType), $supportedTypes);
     }
 
     /**
      * Ritorna la lista dei tipi di database supportati
      *
-     * @return array Array di tipi supportati
+     * @return array Elenco canonico dei tipi supportati
      */
     public static function getSupportedTypes(): array
     {
-        return [
-            'excel' => [
-                'name' => 'Excel Locale',
-                'description' => 'File Excel (.xlsx) memorizzato localmente sul server',
-                'requirements' => 'phpoffice/phpspreadsheet',
-                'pros' => 'Facile da usare, compatibile con Office',
-                'cons' => 'Performance limitata, non scalabile'
-            ],
-            'google_sheets' => [
-                'name' => 'Google Sheets',
-                'description' => 'Foglio di calcolo Google Sheets online',
-                'requirements' => 'google/apiclient, credenziali OAuth2/Service Account',
-                'pros' => 'Cloud-based, collaborazione real-time, backup automatico',
-                'cons' => 'Richiede connessione internet, API rate limits'
-            ],
-            'sqlite' => [
-                'name' => 'SQLite',
-                'description' => 'Database SQL leggero in un singolo file',
-                'requirements' => 'PDO SQLite (incluso in PHP)',
-                'pros' => 'Velocissimo, query SQL native, transazioni ACID, indici',
-                'cons' => 'File binario (non editabile manualmente)'
-            ],
-            'mysql' => [
-                'name' => 'MySQL/MariaDB',
-                'description' => 'Database SQL server-based (MySQL o MariaDB)',
-                'requirements' => 'PDO MySQL (pdo_mysql abilitato), server MySQL accessibile',
-                'pros' => 'Scalabile, multi-utente, performance, strumenti di amministrazione standard',
-                'cons' => 'Richiede un server e una configurazione aggiuntiva'
-            ]
-        ];
+        return ['sqlite', 'sqlite3', 'mysql'];
     }
 
     /**
@@ -178,8 +153,11 @@ class DatabaseFactory
 
         $adapter = new SQLiteDatabaseAdapter($config);
         $adapter->initialize();
+        $migrationReport = (new SchemaMigrationRunner($adapter))->migrate();
+        if (!empty($migrationReport['errors'])) {
+            throw new Exception('Impossibile applicare le migrazioni di test: ' . implode('; ', $migrationReport['errors']));
+        }
 
         return $adapter;
     }
 }
-

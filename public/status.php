@@ -54,7 +54,10 @@ $checks[] = [
 // Check 4: Database configurato
 try {
     $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
-    $expectedSheets = ['UDA_ANAGRAFICA', 'MATERIALI', 'OBIETTIVI', 'RUBRICA', 'TEST', 'CLASSI_ASSEGNATE', 'VOTI'];
+    $expectedSheets = [
+        'UDA_ANAGRAFICA', 'MATERIALI', 'OBIETTIVI', 'RUBRICA', 'TEST',
+        'GRUPPI_DIDATTICI', 'UDA_GRUPPI', 'VOTI',
+    ];
     $missingSheets = array_values(array_filter(
         $expectedSheets,
         static fn(string $sheet): bool => !$dbAdapter->sheetExists($sheet)

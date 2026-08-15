@@ -17,8 +17,8 @@ try {
 
     echo "DEBUG: Use statements OK<br>";
 
-    $db = new DatabaseManager($config);
-    echo "DEBUG: DatabaseManager OK<br>";
+    $db = DatabaseFactory::createWithInitialization($config, true);
+    echo "DEBUG: Database SQL OK<br>";
 
     $udaManager = new UDAManager($config);
     echo "DEBUG: UDAManager OK<br>";

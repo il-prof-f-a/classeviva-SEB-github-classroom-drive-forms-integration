@@ -1,4 +1,6 @@
 <?php
+
+define('REQUIRES_CLASSEVIVA', true);
 /**
  * Mappatura ClasseViva <-> Google Classroom
  * Permette di associare materie di ClasseViva a corsi di Google Classroom
@@ -629,4 +631,3 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     </script>
 </body>
 </html>
-

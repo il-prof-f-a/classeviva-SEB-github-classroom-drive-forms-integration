@@ -1,4 +1,6 @@
 <?php
+
+define('REQUIRES_CLASSEVIVA', true);
 /**
  * Pubblicazione Valutazioni su ClasseViva
  *
@@ -16,7 +18,8 @@ use App\Core\Database\DatabaseFactory;
 use App\Core\StudentiManager;
 use App\Integration\ClasseVivaAPI;
 
-$db = new DatabaseManager($config);
+$db = DatabaseFactory::createWithInitialization($config, true);
+$dbAdapter = $db;
 
 $cvConfig = $config['classeviva'] ?? [];
 $cvTokenPayload = is_array($cvConfig['token'] ?? null) ? $cvConfig['token'] : [];
@@ -82,7 +85,7 @@ try {
                 }
 
                 // Recupera dati studente
-                $idStudenteCV = $valutazione['id_studente'] ?? '';
+                $idStudenteCV = $valutazione['id_studente_cv'] ?? $valutazione['id_studente'] ?? '';
                 $studente = $studentiManager->getStudente($idStudenteCV);
 
                 if (!$studente) {
@@ -149,7 +152,7 @@ try {
                 }
 
                 // Recupera dati studente
-                $idStudenteCV = $valutazione['id_studente'] ?? '';
+                $idStudenteCV = $valutazione['id_studente_cv'] ?? $valutazione['id_studente'] ?? '';
                 $studente = $studentiManager->getStudente($idStudenteCV);
 
                 if (!$studente) {

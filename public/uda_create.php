@@ -8,6 +8,7 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
+use App\Core\ProviderNeutralMappingService;
 use App\Integration\ClasseVivaAPI;
 use App\Utils\AcademicPeriodHelper;
 use App\Utils\QuestionEditorHelper;
@@ -16,13 +17,17 @@ use App\Utils\UdaIntegrationResolver;
 
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
+$mappingService = new ProviderNeutralMappingService(
+    $dbAdapter,
+    (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'))
+);
 $pickerApiKey = $_ENV['GOOGLE_API_KEY'] ?? '';
 $pickerClientId = $config['google']['oauth_client_id'] ?? '';
 $driveRootId = trim($config['google']['drive']['root_folder_id'] ?? '');
 $driveRootConfigured = $driveRootId !== '';
 $allObiettivi = $dbAdapter->findAll('OBIETTIVI');
-$classroomMappings = $dbAdapter->findAll('CLASSROOM_MAPPINGS');
-$githubMappings = $dbAdapter->findAll('GITHUB_CLASSROOMS');
+$classroomMappings = $mappingService->listGoogleClassroomMappings();
+$githubMappings = $mappingService->listGithubClassroomMappings();
 $classroomMappingIndex = UdaIntegrationResolver::indexClassroomMappings($classroomMappings);
 $githubMappingIndex = UdaIntegrationResolver::indexGithubMappings($githubMappings);
 
@@ -293,7 +298,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         continue;
                     }
                     $assegnazioneId = 'ASSEGN_' . uniqid();
-                    $dbAdapter->insertRow('CLASSI_ASSEGNATE', [
+                    $dbAdapter->insertClasseAssegnata([
+                        'id_utente' => (string)($_SESSION['user_id'] ?? ''),
                         'id_assegnazione' => $assegnazioneId,
                         'id_uda' => $udaId,
                         'id_classe' => $classeId,

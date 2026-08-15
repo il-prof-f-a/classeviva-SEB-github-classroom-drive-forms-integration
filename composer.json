@@ -2,7 +2,7 @@
   "name": "uda-smart/uda-system",
   "description": "Piattaforma per la gestione integrata delle Unità di Apprendimento",
   "type": "project",
-  "license": "CC-BY-NC-SA-4.0",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "require": {
     "php": ">=8.2 <8.5",
     "ext-curl": "*",

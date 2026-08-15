@@ -82,7 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             throw new Exception("ID assegnazione mancante");
         }
 
-        $deleted = $dbAdapter->deleteRow('CLASSI_ASSEGNATE', $assegnId, 'id_assegnazione');
+        $deleted = $dbAdapter->deleteClasseAssegnata((string)$assegnId);
 
         if ($deleted) {
             $udaManager->updateUDA($udaId, [
@@ -161,7 +161,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 'stato' => 'assegnata'
             ];
 
-            $dbAdapter->insertRow('CLASSI_ASSEGNATE', $assegnData);
+            $assegnData['id_utente'] = (string)($_SESSION['user_id'] ?? '');
+            $dbAdapter->insertClasseAssegnata($assegnData);
             $assigned++;
             $assignedKeys[$assignmentKey] = true;
         }

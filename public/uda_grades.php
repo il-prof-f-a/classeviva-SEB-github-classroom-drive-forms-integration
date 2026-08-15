@@ -1,4 +1,6 @@
 <?php
+
+define('REQUIRES_CLASSEVIVA', true);
 require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\UDAManager;

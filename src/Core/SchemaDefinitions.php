@@ -6,7 +6,7 @@ namespace App\Core;
  * SchemaDefinitions - Definisce la struttura di tutti i fogli del database
  *
  * Questa classe contiene le definizioni dei fogli e delle loro colonne.
- * Usato da DatabaseManager per creare automaticamente fogli mancanti.
+ * Usato dagli adapter SQL per creare automaticamente tabelle mancanti.
  */
 class SchemaDefinitions
 {
@@ -41,22 +41,83 @@ class SchemaDefinitions
                 'description' => 'Anagrafica UDA - Dati principali delle Unità di Apprendimento'
             ],
 
-            'CLASSI_ASSEGNATE' => [
+            'SCHEMA_MIGRATIONS' => [
                 'columns' => [
-                    'id_assegnazione', 'id_uda', 'id_classe', 'nome_classe',
-                    'id_materia_cv', 'nome_materia', 'data_assegnazione',
-                    'data_inizio', 'data_fine', 'note', 'pubblicato_classroom',
-                    'classroom_url', 'stato', 'id_utente'
+                    'versione', 'descrizione', 'applicata_il', 'checksum'
                 ],
-                'description' => 'Assegnazioni UDA a Classi+Materie'
+                'description' => 'Registro delle migrazioni dello schema SQL'
+            ],
+
+            'GRUPPI_DIDATTICI' => [
+                'columns' => [
+                    'id_gruppo', 'nome_gruppo', 'nome_classe', 'nome_materia',
+                    'anno_scolastico', 'descrizione', 'stato', 'data_creazione',
+                    'ultima_modifica', 'id_utente'
+                ],
+                'description' => 'Gruppi didattici interni indipendenti dai provider'
+            ],
+
+            'GRUPPI_INTEGRAZIONI' => [
+                'columns' => [
+                    'id_collegamento', 'id_gruppo', 'provider', 'tipo_risorsa',
+                    'external_context_id', 'external_subject_id', 'external_name',
+                    'principale', 'stato', 'metadata_json', 'data_creazione',
+                    'ultima_modifica', 'id_utente'
+                ],
+                'description' => 'Collegamenti dei gruppi ai provider esterni'
+            ],
+
+            'UDA_GRUPPI' => [
+                'columns' => [
+                    'id_assegnazione', 'id_uda', 'id_gruppo', 'data_assegnazione',
+                    'data_inizio', 'data_fine', 'note', 'stato', 'id_utente'
+                ],
+                'description' => 'Assegnazioni UDA a gruppi didattici'
+            ],
+
+            'UDA_PUBBLICAZIONI' => [
+                'columns' => [
+                    'id_pubblicazione', 'id_uda', 'id_gruppo', 'provider',
+                    'external_resource_id', 'external_url', 'stato',
+                    'data_pubblicazione', 'metadata_json', 'id_utente'
+                ],
+                'description' => 'Pubblicazioni UDA verso provider esterni'
             ],
 
             'STUDENTI' => [
                 'columns' => [
-                    'id_studente_cv', 'id_classe_cv', 'nome_classe',
-                    'data_sincronizzazione', 'attivo', 'id_utente'
+                    'id_studente', 'stato', 'data_creazione', 'ultima_modifica',
+                    'id_utente'
                 ],
-                'description' => 'Studenti sincronizzati da ClasseViva (solo ID, GDPR-compliant)'
+                'description' => 'Studenti interni senza dati anagrafici persistiti'
+            ],
+
+            'STUDENTI_IDENTITA_ESTERNE' => [
+                'columns' => [
+                    'id_identita', 'id_studente', 'provider', 'external_user_id',
+                    'external_context_id', 'tipo_identificatore', 'stato',
+                    'data_prima_associazione', 'ultima_verifica', 'metadata_json',
+                    'id_utente'
+                ],
+                'description' => 'Identità studente sui provider esterni'
+            ],
+
+            'GRUPPI_STUDENTI' => [
+                'columns' => [
+                    'id_iscrizione', 'id_gruppo', 'id_studente', 'provider_origine',
+                    'external_context_id', 'stato', 'data_inizio', 'data_fine',
+                    'ultima_sincronizzazione', 'id_utente'
+                ],
+                'description' => 'Membership interne dei gruppi didattici'
+            ],
+
+            'STUDENTI_RISORSE_ESTERNE' => [
+                'columns' => [
+                    'id_risorsa', 'id_studente', 'provider', 'external_context_id',
+                    'external_resource_id', 'external_url', 'tipo_risorsa',
+                    'metadata_json', 'data_creazione', 'ultima_modifica', 'id_utente'
+                ],
+                'description' => 'Risorse esterne associate agli studenti'
             ],
 
             'MATERIALI' => [
@@ -102,8 +163,8 @@ class SchemaDefinitions
 
             'VALUTAZIONI_LABORATORIO' => [
                 'columns' => [
-                    'id_valutazione', 'id_uda', 'id_materia_cv', 'id_classe_cv',
-                    'id_studente_cv', 'id_indicatore', 'nome_indicatore', 'valore',
+                    'id_valutazione', 'id_uda', 'id_gruppo', 'id_studente',
+                    'id_indicatore', 'nome_indicatore', 'valore',
                     'data_inserimento', 'data_registrazione', 'id_annotazione_cv',
                     'commento', 'prof', 'id_utente'
                 ],
@@ -112,8 +173,8 @@ class SchemaDefinitions
 
             'PLUSMINUS_QUEUE' => [
                 'columns' => [
-                    'id_evidenza', 'id_uda', 'id_materia_cv', 'id_classe_cv',
-                    'id_studente_cv', 'id_indicatore', 'nome_indicatore', 'valore',
+                    'id_evidenza', 'id_uda', 'id_gruppo', 'id_studente',
+                    'id_indicatore', 'nome_indicatore', 'valore',
                     'data_inserimento', 'registrato', 'data_registrazione',
                     'id_annotazione_cv', 'commento', 'prof', 'id_utente'
                 ],
@@ -122,65 +183,14 @@ class SchemaDefinitions
 
             'VOTI' => [
                 'columns' => [
-                    'id_voto', 'id_uda', 'id_studente_cv', 'id_classe_cv',
-                    'id_materia_cv', 'tipo_voto', 'voto', 'giudizio',
+                    'id_voto', 'id_uda', 'id_gruppo', 'id_studente',
+                    'tipo_voto', 'voto', 'giudizio',
                     'descrizione', 'data_valutazione', 'data_creazione',
-                    'pubblicato', 'id_annotazione_cv', 'num_evidenze_positive',
+                    'pubblicato', 'provider_pubblicazione', 'external_publication_id', 'num_evidenze_positive',
                     'num_evidenze_negative', 'num_evidenze_totali', 'id_utente',
                     'link_origine'
                 ],
                 'description' => 'Voti aggregati (rubrica orale, laboratorio)'
-            ],
-
-            'CLASSROOM_MAPPINGS' => [
-                'columns' => [
-                    'id_mapping',
-                    'id_classe_cv',
-                    'nome_classe_cv',
-                    'id_materia_cv',
-                    'nome_materia_cv',
-                    'id_corso_gc',
-                    'nome_corso_gc',
-                    'data_mapping',
-                    'stato',
-                    'note',
-                    'id_utente',
-                    'classeviva_class_id',
-                    'classeviva_class_name',
-                    'classeviva_subject_id',
-                    'classeviva_subject_name',
-                    'google_course_id',
-                    'google_course_name',
-                    'data_creazione',
-                    'data_modifica',
-                    'attivo'
-                ],
-                'description' => 'Mappatura Classe+Materia verso Corso Google Classroom'
-            ],
-
-            'MAPPATURA_STUDENTI' => [
-                'columns' => [
-                    'id_mappatura',
-                    'id_mapping_materia',
-                    'id_studente_cv',
-                    'id_studente_gc',
-                    'data_associazione',
-                    'stato',
-                    'confermato_da',
-                    'note',
-                    'id_utente'
-                ],
-                'description' => 'Mappatura studenti ClasseViva -> Google Classroom'
-            ],
-
-
-
-            'CLASSI' => [
-                'columns' => [
-                    'id_classe', 'nome', 'anno_scolastico', 'sezione',
-                    'corso', 'attiva', 'id_utente'
-                ],
-                'description' => 'Classi (usato se non c\'è integrazione ClasseViva)'
             ],
 
             'RUBRICA' => [
@@ -194,10 +204,10 @@ class SchemaDefinitions
             ],
             'VALUTAZIONI_RUBRICA' => [
                 'columns' => [
-                    'id_valutazione', 'id_uda', 'id_rubrica', 'id_studente_cv', 'id_classe_cv',
-                    'id_materia_cv', 'data_valutazione', 'voto_finale',
+                    'id_valutazione', 'id_uda', 'id_rubrica', 'id_gruppo', 'id_studente',
+                    'data_valutazione', 'voto_finale',
                     'giudizio', 'note', 'pubblicato', 'id_annotazione_cv',
-                    'nome_studente', 'voto_numerico', 'pubblicato_cv', 'dati_json',
+                    'voto_numerico', 'pubblicato_cv', 'dati_json',
                     'id_utente'
                 ],
                 'description' => 'Valutazioni rubrica orale'
@@ -283,9 +293,8 @@ class SchemaDefinitions
                     'id_risposta',
                     'id_test',
                     'id_domanda',
-                    'id_studente_cv',
-                    'id_classe_cv',
-                    'id_materia_cv',
+                    'id_gruppo',
+                    'id_studente',
                     'google_response_id',
                     'domanda_label',
                     'confidenza_livello',
@@ -302,15 +311,6 @@ class SchemaDefinitions
                 'description' => 'Risposte e punteggi CBM per singolo studente/domanda'
             ],
 
-            'GITHUB_CLASSROOMS' => [
-                'columns' => [
-                    'id_mapping', 'id_classe_cv', 'id_materia_cv',
-                    'github_classroom_id', 'github_org_name', 'classroom_name',
-                    'stato', 'data_creazione', 'note', 'id_utente'
-                ],
-                'description' => 'Mappatura Classe-Materia → GitHub Classroom'
-            ],
-
             'GITHUB_ASSIGNMENTS' => [
                 'columns' => [
                     'id_assignment', 'id_uda', 'id_classroom_map',
@@ -325,27 +325,25 @@ class SchemaDefinitions
 
             'GITHUB_SUBMISSIONS' => [
                 'columns' => [
-                    'id_submission', 'id_assignment', 'id_studente_cv',
-                    'github_username', 'repository_url', 'accepted_at',
+                    'id_submission', 'id_assignment', 'id_studente',
+                    'repository_url', 'accepted_at',
                     'last_commit_at', 'status', 'grade', 'feedback', 'id_utente'
                 ],
                 'description' => 'Tracciamento submission studenti GitHub (futuro)'
             ],
 
-            'GITHUB_ASSIGNMENT_STUDENT_MAP' => [
+            'GITHUB_ASSIGNMENT_STUDENT_LINKS' => [
                 'columns' => [
                     'id_map',
                     'id_assignment',
-                    'github_username',
-                    'roster_identifier',
                     'student_repository_url',
-                    'id_studente_cv',
+                    'id_studente',
                     'match_confidence',
                     'note',
                     'data_creazione',
                     'id_utente'
                 ],
-                'description' => 'Associazione studenti ClasseViva ↔ GitHub per assignment'
+                'description' => 'Associazione interna studente ↔ repository GitHub per assignment'
             ],
 
             'GITHUB_REPO_LOC_SNAPSHOTS' => [
@@ -356,7 +354,7 @@ class SchemaDefinitions
                     'repo_html_url',
                     'ref',
                     'default_branch',
-                    'github_username',
+                    'id_studente',
                     'loc_total',
                     'loc_code',
                     'loc_comment',
@@ -441,11 +439,23 @@ class SchemaDefinitions
             ]
         ];
         $columnsMap = self::loadSchemaColumnsMap();
+        $canonicalTables = [
+            'SCHEMA_MIGRATIONS', 'GRUPPI_DIDATTICI', 'GRUPPI_INTEGRAZIONI',
+            'UDA_GRUPPI', 'UDA_PUBBLICAZIONI', 'STUDENTI',
+            'STUDENTI_IDENTITA_ESTERNE', 'GRUPPI_STUDENTI',
+            'STUDENTI_RISORSE_ESTERNE', 'GITHUB_ASSIGNMENT_STUDENT_LINKS',
+        ];
         if (!empty($columnsMap)) {
             foreach ($sheets as $sheetName => &$definition) {
                 $upper = strtoupper($sheetName);
-                if (isset($columnsMap[$upper]) && is_array($columnsMap[$upper]) && !empty($columnsMap[$upper])) {
-                    $definition['columns'] = $columnsMap[$upper];
+                if (!in_array($upper, $canonicalTables, true)
+                    && isset($columnsMap[$upper])
+                    && is_array($columnsMap[$upper])
+                    && !empty($columnsMap[$upper])) {
+                    $definition['columns'] = array_values(array_unique(array_merge(
+                        $definition['columns'],
+                        $columnsMap[$upper]
+                    )));
                 }
             }
             unset($definition);
@@ -505,6 +515,23 @@ class SchemaDefinitions
         foreach ($data as $table => $columns) {
             $normalized[strtoupper($table)] = array_values((array)$columns);
         }
+
+        // Durante la transizione al dominio provider-neutral non permettere
+        // che il file di override reintroduca chiavi provider-specifiche o PII
+        // nelle tabelle di dominio. Gli ID esterni restano ammessi solo nelle
+        // tabelle GRUPPI_INTEGRAZIONI e STUDENTI_IDENTITA_ESTERNE.
+        $providerTables = ['GRUPPI_INTEGRAZIONI', 'STUDENTI_IDENTITA_ESTERNE'];
+        $forbiddenDomainColumns = [
+            'id_studente_cv', 'id_studente_gc', 'id_classe_cv', 'id_materia_cv',
+            'nome_studente', 'email_studente', 'github_username', 'roster_identifier',
+        ];
+        foreach ($normalized as $table => &$columns) {
+            if (in_array($table, $providerTables, true)) {
+                continue;
+            }
+            $columns = array_values(array_diff($columns, $forbiddenDomainColumns));
+        }
+        unset($columns);
 
         return self::$columnsCache = $normalized;
     }

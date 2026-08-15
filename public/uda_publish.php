@@ -27,18 +27,23 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 use App\Core\GoogleTokenProvider;
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
+use App\Core\ProviderNeutralMappingService;
 use App\Integration\GoogleClassroomAPI;
 use App\Integration\GoogleDriveAPI;
 
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
+$mappingService = new ProviderNeutralMappingService(
+    $dbAdapter,
+    (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'))
+);
 
 $error_message = null;
 $success_message = null;
 $publishLog = [];
 
 // Carica le mappature ClasseViva -> Google Classroom
-$classroomMappings = $dbAdapter->findAll('CLASSROOM_MAPPINGS');
+$classroomMappings = $mappingService->listGoogleClassroomMappings();
 
 /**
  * Trova il corso Google Classroom mappato per una classe

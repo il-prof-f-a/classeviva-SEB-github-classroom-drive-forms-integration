@@ -1,4 +1,6 @@
 <?php
+
+define('REQUIRES_CLASSEVIVA', true);
 /**
  * Recupera gli evento_id dei voti per poterli cancellare
  */

@@ -23,11 +23,17 @@ class RubricManager
 {
     private DatabaseAdapterInterface $db;
     private array $config;
+    private SpreadsheetFileService $fileService;
 
-    public function __construct(DatabaseAdapterInterface $db, array $config)
+    public function __construct(
+        DatabaseAdapterInterface $db,
+        array $config,
+        ?SpreadsheetFileService $fileService = null
+    )
     {
         $this->db = $db;
         $this->config = $config;
+        $this->fileService = $fileService ?? SpreadsheetFileService::fromConfig($config);
     }
 
     /**
@@ -41,8 +47,7 @@ class RubricManager
      */
     public function importRubricaDaTemplate(string $filePath, string $udaId, array $argomenti = []): Rubrica
     {
-        // Usa DatabaseManager per caricare il file in modo sicuro
-        $spreadsheet = IOFactory::load($filePath);
+        $spreadsheet = $this->fileService->loadExternalFile($filePath);
         $sheet = $spreadsheet->getSheetByName('MASTER');
 
         if ($sheet === null) {
@@ -341,8 +346,8 @@ class RubricManager
             throw new Exception("Rubrica non trovata o non compilata");
         }
 
-        // Carica il template usando DatabaseManager (metodo sicuro)
-        $spreadsheet = $this->db->loadTemplate('Rubrica valutazione orale VUOTA.xlsx');
+        // Carica il template tramite il servizio file dedicato
+        $spreadsheet = $this->fileService->loadTemplate('Rubrica valutazione orale VUOTA.xlsx');
 
         // Usa il foglio "studente data"
         $sheet = $spreadsheet->getSheetByName('studente data');

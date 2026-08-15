@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Core;
 
 use App\Core\Database\DatabaseAdapterInterface;
@@ -7,311 +9,218 @@ use App\Integration\ClasseVivaAPI;
 use Exception;
 
 /**
- * StudentiManager - Gestisce studenti da ClasseViva
+ * Facciata di sincronizzazione roster.
  *
- * APPROCCIO GDPR-COMPLIANT:
- * - Salva SOLO ID studente ClasseViva e riferimento classe nel database locale
- * - Nome e cognome recuperati on-demand da ClasseViva API
- * - Nessun dato personale salvato permanentemente
- *
- * Funzionalità:
- * - Sincronizzazione studenti da ClasseViva
- * - Cache ID studenti per velocizzare interfacce
- * - Recupero dati personali on-demand
- * - Gestione studenti per classe e UDA
+ * Gli ID ClasseViva restano confinati in STUDENTI_IDENTITA_ESTERNE e nelle
+ * integrazioni del gruppo; STUDENTI contiene esclusivamente l'identità interna.
  */
 class StudentiManager
 {
     private DatabaseAdapterInterface $db;
-    private ClasseVivaAPI $api;
+    private ?ClasseVivaAPI $api;
     private array $config;
-
-    // Cache in-memory per ridurre chiamate API
+    private string $userId;
+    private StudentRepository $students;
+    private StudentIdentityRepository $identities;
+    private GroupStudentRepository $memberships;
+    private StudentResourceRepository $resources;
+    private StudentIdentityResolver $identityResolver;
+    private StudentRosterService $rosterService;
     private array $studentiCache = [];
 
-    public function __construct(DatabaseAdapterInterface $db, ClasseVivaAPI $api, array $config)
+    public function __construct(DatabaseAdapterInterface $db, ?ClasseVivaAPI $api, array $config)
     {
         $this->db = $db;
         $this->api = $api;
         $this->config = $config;
+        $this->userId = (string)($config['user_id'] ?? ($_SESSION['user_id'] ?? 'system'));
+        $this->students = new StudentRepository($db, $this->userId);
+        $this->identities = new StudentIdentityRepository($db, $this->userId);
+        $this->memberships = new GroupStudentRepository($db, $this->userId);
+        $this->resources = new StudentResourceRepository($db, $this->userId);
+        $this->identityResolver = new StudentIdentityResolver(
+            $this->students,
+            $this->identities,
+            $this->memberships,
+            $this->resources
+        );
+        $this->rosterService = new StudentRosterService($this->identityResolver, $this->memberships);
     }
 
     /**
-     * Sincronizza studenti di una classe da ClasseViva
+     * Sincronizza un roster già acquisito dal provider.
+     * Le etichette anagrafiche restano nella risposta in memoria e non vengono
+     * mai passate al repository.
      *
-     * Salva solo ID studente e riferimento classe (GDPR-compliant)
-     * Nome e cognome non salvati, recuperati on-demand
-     *
-     * @param string $idClasseCV ID classe ClasseViva
-     * @param string $nomeClasse Nome classe (es: "3C")
-     * @return array Statistiche sync: ['sincronizzati' => n, 'nuovi' => n, 'disattivati' => n]
+     * @param list<array<string,mixed>> $roster
+     * @return array{sincronizzati:int,nuovi:int,disattivati:int}
      */
+    public function sincronizzaRoster(
+        string $groupId,
+        string $provider,
+        string $externalContextId,
+        array $roster
+    ): array {
+        $new = 0;
+        foreach ($roster as $entry) {
+            $externalId = trim((string)($entry['id'] ?? $entry['external_user_id'] ?? ''));
+            if ($externalId !== '' && $this->identityResolver->resolve($provider, $externalId) === null) {
+                $new++;
+            }
+        }
+        $normalized = array_map(static function (array $entry): array {
+            return [
+                'external_user_id' => (string)($entry['id'] ?? $entry['external_user_id'] ?? ''),
+                'display_name' => trim((string)($entry['display_name'] ?? (($entry['cognome'] ?? '') . ' ' . ($entry['nome'] ?? '')))),
+            ];
+        }, $roster);
+        $synced = $this->rosterService->sync($groupId, $provider, $externalContextId, $normalized);
+        $this->clearCache();
+        return [
+            'sincronizzati' => count($synced),
+            'nuovi' => $new,
+            'disattivati' => 0,
+        ];
+    }
+
     public function sincronizzaStudentiClasse(string $idClasseCV, string $nomeClasse): array
     {
-        try {
-            // Recupera studenti da ClasseViva
-            $studentiCV = $this->api->getStudentiClasse($idClasseCV);
-
-            $stats = [
-                'sincronizzati' => 0,
-                'nuovi' => 0,
-                'disattivati' => 0
-            ];
-
-            // Recupera studenti esistenti per questa classe
-            $studentiLocali = $this->db->findAll('STUDENTI');
-            $studentiClasseLocali = array_filter($studentiLocali, fn($s) => ($s['id_classe_cv'] ?? '') === $idClasseCV);
-
-            // Mappa studenti locali per ID
-            $studentiLocaliMap = [];
-            foreach ($studentiClasseLocali as $s) {
-                $studentiLocaliMap[$s['id_studente_cv'] ?? ''] = $s;
-            }
-
-            // ID studenti da ClasseViva
-            $idStudentiCV = array_map(fn($s) => $s['id'], $studentiCV);
-
-            // Aggiungi/aggiorna studenti da ClasseViva
-            foreach ($studentiCV as $studenteCV) {
-                $idStudenteCV = $studenteCV['id'];
-
-                $dati = [
-                    'id_studente_cv' => $idStudenteCV,
-                    'id_classe_cv' => $idClasseCV,
-                    'nome_classe' => $nomeClasse,
-                    'data_sincronizzazione' => date('Y-m-d H:i:s'),
-                    'attivo' => 1
-                ];
-
-                if (isset($studentiLocaliMap[$idStudenteCV])) {
-                    // Studente esiste, aggiorna
-                    $this->db->updateRow('STUDENTI', ['id_studente_cv' => $idStudenteCV], $dati);
-                } else {
-                    // Studente nuovo, inserisci
-                    $this->db->insertRow('STUDENTI', $dati);
-                    $stats['nuovi']++;
-                }
-
-                $stats['sincronizzati']++;
-            }
-
-            // Disattiva studenti non più presenti in ClasseViva
-            foreach ($studentiLocaliMap as $idStudenteCV => $studenteLocale) {
-                if (!in_array($idStudenteCV, $idStudentiCV)) {
-                    $this->db->updateRow('STUDENTI', ['id_studente_cv' => $idStudenteCV], ['attivo' => 0]);
-                    $stats['disattivati']++;
-                }
-            }
-
-            // Pulisci cache
-            unset($this->studentiCache[$idClasseCV]);
-
-            return $stats;
-
-        } catch (Exception $e) {
-            throw new Exception("Errore sincronizzazione studenti classe $idClasseCV: " . $e->getMessage());
+        if ($this->api === null) {
+            throw new Exception('API ClasseViva non configurata');
         }
+        $link = (new TeachingGroupIntegrationRepository($this->db, $this->userId))
+            ->findByContext('classeviva', $idClasseCV);
+        if ($link === null) {
+            $group = (new TeachingGroupRepository($this->db, $this->userId))->create([
+                'nome_gruppo' => $nomeClasse,
+                'nome_classe' => $nomeClasse,
+            ]);
+            $link = (new TeachingGroupIntegrationRepository($this->db, $this->userId))->link([
+                'id_gruppo' => $group['id_gruppo'],
+                'provider' => 'classeviva',
+                'tipo_risorsa' => 'classe',
+                'external_context_id' => $idClasseCV,
+                'external_name' => $nomeClasse,
+            ]);
+        }
+        $roster = $this->api->getStudentiClasse($idClasseCV);
+        return $this->sincronizzaRoster(
+            (string)$link['id_gruppo'],
+            'classeviva',
+            $idClasseCV,
+            is_array($roster) ? $roster : []
+        );
     }
 
-    /**
-     * Sincronizza tutte le classi del docente
-     *
-     * @return array Statistiche totali sync
-     */
     public function sincronizzaTutteLeClassi(): array
     {
-        try {
-            // Recupera tutte le classi del docente
-            $classi = $this->api->getClasses();
-
-            $statsGlobali = [
-                'classi_sincronizzate' => 0,
-                'studenti_sincronizzati' => 0,
-                'nuovi' => 0,
-                'disattivati' => 0
-            ];
-
-            foreach ($classi as $classe) {
-                $idClasseCV = $classe['id'] ?? $classe['classId'] ?? '';
-                $nomeClasse = $classe['name'] ?? $classe['className'] ?? $idClasseCV;
-
-                $stats = $this->sincronizzaStudentiClasse($idClasseCV, $nomeClasse);
-
-                $statsGlobali['classi_sincronizzate']++;
-                $statsGlobali['studenti_sincronizzati'] += $stats['sincronizzati'];
-                $statsGlobali['nuovi'] += $stats['nuovi'];
-                $statsGlobali['disattivati'] += $stats['disattivati'];
-            }
-
-            return $statsGlobali;
-
-        } catch (Exception $e) {
-            throw new Exception("Errore sincronizzazione tutte le classi: " . $e->getMessage());
+        if ($this->api === null) {
+            throw new Exception('API ClasseViva non configurata');
         }
+        $stats = ['classi_sincronizzate' => 0, 'studenti_sincronizzati' => 0, 'nuovi' => 0, 'disattivati' => 0];
+        foreach ($this->api->getClasses() as $class) {
+            $classId = (string)($class['id'] ?? $class['classId'] ?? '');
+            if ($classId === '') {
+                continue;
+            }
+            $result = $this->sincronizzaStudentiClasse($classId, (string)($class['name'] ?? $class['className'] ?? $classId));
+            $stats['classi_sincronizzate']++;
+            $stats['studenti_sincronizzati'] += $result['sincronizzati'];
+            $stats['nuovi'] += $result['nuovi'];
+            $stats['disattivati'] += $result['disattivati'];
+        }
+        return $stats;
     }
 
-    /**
-     * Recupera studenti di una classe con nomi da ClasseViva
-     *
-     * @param string $idClasseCV ID classe ClasseViva
-     * @param bool $soloAttivi Se true, solo studenti attivi
-     * @return array Array di studenti con id, nome, cognome
-     */
     public function getStudentiClasse(string $idClasseCV, bool $soloAttivi = true): array
     {
-        // Controlla cache
         $cacheKey = $idClasseCV . '_' . ($soloAttivi ? 'attivi' : 'tutti');
         if (isset($this->studentiCache[$cacheKey])) {
             return $this->studentiCache[$cacheKey];
         }
-
-        try {
-            // Recupera studenti locali
-            $studentiLocali = $this->db->findAll('STUDENTI');
-            $studentiClasse = array_filter($studentiLocali, function ($s) use ($idClasseCV, $soloAttivi) {
-                $stessaClasse = ($s['id_classe_cv'] ?? '') === $idClasseCV;
-                $attivo = !$soloAttivi || ($s['attivo'] ?? 0) == 1;
-                return $stessaClasse && $attivo;
-            });
-
-            if (empty($studentiClasse)) {
-                // Nessuno studente sincronizzato, prova a sincronizzare ora
-                $nomeClasse = 'Classe ' . $idClasseCV;
-                $this->sincronizzaStudentiClasse($idClasseCV, $nomeClasse);
-
-                // Ricarica
-                $studentiLocali = $this->db->findAll('STUDENTI');
-                $studentiClasse = array_filter($studentiLocali, function ($s) use ($idClasseCV, $soloAttivi) {
-                    $stessaClasse = ($s['id_classe_cv'] ?? '') === $idClasseCV;
-                    $attivo = !$soloAttivi || ($s['attivo'] ?? 0) == 1;
-                    return $stessaClasse && $attivo;
-                });
+        $link = (new TeachingGroupIntegrationRepository($this->db, $this->userId))
+            ->findByContext('classeviva', $idClasseCV);
+        if ($link === null) {
+            return [];
+        }
+        $groupId = (string)$link['id_gruppo'];
+        $group = (new TeachingGroupRepository($this->db, $this->userId))->findById($groupId) ?? [];
+        $students = [];
+        foreach ($this->memberships->listForGroup($groupId) as $membership) {
+            if ($soloAttivi && ($membership['stato'] ?? 'attivo') !== 'attivo') {
+                continue;
             }
-
-            // Recupera nomi da ClasseViva API (on-demand, GDPR-compliant)
-            $studentiConNomi = [];
-            foreach ($studentiClasse as $studenteLocale) {
-                $idStudenteCV = $studenteLocale['id_studente_cv'] ?? '';
-
-                try {
-                    // Recupera dati personali da API ClasseViva
-                    $studenteCV = $this->api->getStudente($idStudenteCV);
-
-                    $studentiConNomi[] = [
-                        'id' => $idStudenteCV,
-                        'nome' => $studenteCV['nome'] ?? '',
-                        'cognome' => $studenteCV['cognome'] ?? '',
-                        'nome_completo' => ($studenteCV['cognome'] ?? '') . ' ' . ($studenteCV['nome'] ?? ''),
-                        'id_classe_cv' => $studenteLocale['id_classe_cv'] ?? '',
-                        'nome_classe' => $studenteLocale['nome_classe'] ?? ''
-                    ];
-                } catch (Exception $e) {
-                    // Se API fallisce, usa placeholder
-                    error_log("Errore recupero dati studente $idStudenteCV: " . $e->getMessage());
-                    $studentiConNomi[] = [
-                        'id' => $idStudenteCV,
-                        'nome' => 'N/D',
-                        'cognome' => 'Studente ' . substr($idStudenteCV, -4),
-                        'nome_completo' => 'Studente ' . substr($idStudenteCV, -4),
-                        'id_classe_cv' => $studenteLocale['id_classe_cv'] ?? '',
-                        'nome_classe' => $studenteLocale['nome_classe'] ?? ''
-                    ];
+            $studentId = (string)$membership['id_studente'];
+            $cvIdentity = null;
+            foreach ($this->identities->listForStudent($studentId) as $identity) {
+                if (($identity['provider'] ?? '') === 'classeviva') {
+                    $cvIdentity = $identity;
+                    break;
                 }
             }
-
-            // Ordina per cognome
-            usort($studentiConNomi, fn($a, $b) => strcmp($a['cognome'], $b['cognome']));
-
-            // Salva in cache
-            $this->studentiCache[$cacheKey] = $studentiConNomi;
-
-            return $studentiConNomi;
-
-        } catch (Exception $e) {
-            throw new Exception("Errore recupero studenti classe: " . $e->getMessage());
+            if ($cvIdentity === null) {
+                continue;
+            }
+            $externalId = (string)$cvIdentity['external_user_id'];
+            $profile = $this->api?->getStudente($externalId) ?? [];
+            $students[] = [
+                'id' => $externalId,
+                'nome' => (string)($profile['nome'] ?? ''),
+                'cognome' => (string)($profile['cognome'] ?? ''),
+                'nome_completo' => trim((string)($profile['cognome'] ?? '') . ' ' . (string)($profile['nome'] ?? '')),
+                // Chiavi di presentazione legacy, non persistite.
+                'id_classe_cv' => $idClasseCV,
+                'nome_classe' => (string)($group['nome_classe'] ?? ''),
+            ];
         }
+        usort($students, static fn(array $a, array $b): int => strcmp($a['cognome'], $b['cognome']));
+        return $this->studentiCache[$cacheKey] = $students;
     }
 
-    /**
-     * Recupera studente singolo con dati personali da ClasseViva
-     *
-     * @param string $idStudenteCV ID studente ClasseViva
-     * @return array|null Dati studente o null se non trovato
-     */
     public function getStudente(string $idStudenteCV): ?array
     {
+        if ($this->api === null) {
+            return null;
+        }
         try {
-            $studenteCV = $this->api->getStudente($idStudenteCV);
-
+            $profile = $this->api->getStudente($idStudenteCV);
             return [
                 'id' => $idStudenteCV,
-                'nome' => $studenteCV['nome'] ?? '',
-                'cognome' => $studenteCV['cognome'] ?? '',
-                'nome_completo' => ($studenteCV['cognome'] ?? '') . ' ' . ($studenteCV['nome'] ?? '')
+                'nome' => (string)($profile['nome'] ?? ''),
+                'cognome' => (string)($profile['cognome'] ?? ''),
+                'nome_completo' => trim((string)($profile['cognome'] ?? '') . ' ' . (string)($profile['nome'] ?? '')),
             ];
-
-        } catch (Exception $e) {
-            error_log("Errore recupero studente $idStudenteCV: " . $e->getMessage());
+        } catch (Exception $exception) {
+            error_log('Errore recupero studente ' . $idStudenteCV . ': ' . $exception->getMessage());
             return null;
         }
     }
 
-    /**
-     * Ottiene lista classi sincronizzate
-     *
-     * @return array Array di classi uniche con conteggio studenti
-     */
     public function getClassiSincronizzate(): array
     {
-        $studentiLocali = $this->db->findAll('STUDENTI');
-
-        $classiMap = [];
-        foreach ($studentiLocali as $studente) {
-            $idClasse = $studente['id_classe_cv'] ?? '';
-            $nomeClasse = $studente['nome_classe'] ?? '';
-            $attivo = ($studente['attivo'] ?? 0) == 1;
-
-            if (!isset($classiMap[$idClasse])) {
-                $classiMap[$idClasse] = [
-                    'id_classe_cv' => $idClasse,
-                    'nome_classe' => $nomeClasse,
-                    'studenti_attivi' => 0,
-                    'studenti_disattivati' => 0
-                ];
-            }
-
-            if ($attivo) {
-                $classiMap[$idClasse]['studenti_attivi']++;
-            } else {
-                $classiMap[$idClasse]['studenti_disattivati']++;
-            }
+        $result = [];
+        $links = $this->db->findWhere('GRUPPI_INTEGRAZIONI', ['provider' => 'classeviva']);
+        foreach ($links as $link) {
+            $groupId = (string)($link['id_gruppo'] ?? '');
+            $classId = (string)($link['external_context_id'] ?? '');
+            $members = $this->memberships->listForGroup($groupId);
+            $active = count(array_filter($members, static fn(array $row): bool => ($row['stato'] ?? 'attivo') === 'attivo'));
+            $result[] = [
+                'id_classe_cv' => $classId,
+                'nome_classe' => (string)($link['external_name'] ?? ''),
+                'studenti_attivi' => $active,
+                'studenti_disattivati' => count($members) - $active,
+            ];
         }
-
-        return array_values($classiMap);
+        return $result;
     }
 
-    /**
-     * Verifica se uno studente esiste ed è attivo
-     *
-     * @param string $idStudenteCV ID studente ClasseViva
-     * @return bool True se studente esiste ed è attivo
-     */
     public function studenteEsiste(string $idStudenteCV): bool
     {
-        $studentiLocali = $this->db->findAll('STUDENTI');
-
-        foreach ($studentiLocali as $studente) {
-            if (($studente['id_studente_cv'] ?? '') === $idStudenteCV && ($studente['attivo'] ?? 0) == 1) {
-                return true;
-            }
-        }
-
-        return false;
+        $student = $this->identityResolver->resolve('classeviva', $idStudenteCV);
+        return $student !== null && ($student['stato'] ?? 'attivo') === 'attivo';
     }
 
-    /**
-     * Pulisce cache in-memory
-     */
     public function clearCache(): void
     {
         $this->studentiCache = [];

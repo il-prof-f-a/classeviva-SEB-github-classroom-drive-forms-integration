@@ -3,11 +3,16 @@ require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
+use App\Core\ProviderNeutralMappingService;
 use App\Integration\GoogleDriveAPI;
 use App\Utils\UdaMetadataHelper;
 
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
+$mappingService = new ProviderNeutralMappingService(
+    $dbAdapter,
+    (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'))
+);
 $error = null;
 $udaComplete = null;
 $message = '';
@@ -148,7 +153,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             case 'delete_classe':
                 $assegnazioneId = $_POST['assegnazione_id'] ?? '';
-                $dbAdapter->deleteRow('CLASSI_ASSEGNATE', $assegnazioneId, 'id_assegnazione');
+                $dbAdapter->deleteClasseAssegnata((string)$assegnazioneId);
                 $udaManager->updateUDA($udaId, [
                     'classi_target' => UdaMetadataHelper::classTargetFromAssignments($dbAdapter->findClassiAssegnate($udaId))
                 ]);
@@ -236,7 +241,7 @@ try {
     unset($mat);
 
     // Carica mappature GitHub Classroom
-    $allGithubMappings = $dbAdapter->findAll('GITHUB_CLASSROOMS');
+    $allGithubMappings = $mappingService->listGithubClassroomMappings();
 
     // Calcola statistiche se ci sono voti
     $stats = null;
@@ -245,7 +250,7 @@ try {
     }
 
     // Recupera tutti i classroom mappings attivi per verificare associazioni
-    $classroomMappings = $dbAdapter->findAll('CLASSROOM_MAPPINGS');
+    $classroomMappings = $mappingService->listGoogleClassroomMappings();
 
     // Calcola statistiche domande
     $allDomande = $dbAdapter->findAll('DOMANDE_INTERROGAZIONE');

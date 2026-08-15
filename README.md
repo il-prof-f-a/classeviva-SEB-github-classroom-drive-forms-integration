@@ -142,14 +142,40 @@ Per staging e produzione sostituire `APP_URL` e i due redirect con URL HTTPS del
 Il wizard segue un flusso in sette passaggi:
 
 1. **Informazioni generali**: titolo, argomento, disciplina, metodologia, anno, periodo, descrizione, note e stato. Questi dati sono compilati manualmente; non viene eseguito alcun import automatico dall’argomento Classroom.
-2. **Classi e integrazioni**: selezionare almeno una coppia classe–materia ClasseViva. Le mappature Google Classroom e GitHub Classroom sono facoltative. Se una mappatura globale esiste già, viene preselezionata. Per crearla o modificarla usare i pulsanti di configurazione: dopo il salvataggio è possibile tornare al wizard senza perdere le selezioni.
+2. **Classi e integrazioni**: assegnare uno o più gruppi didattici interni. Il gruppo può esistere senza ClasseViva e può essere collegato in seguito a ClasseViva, Google Classroom o GitHub Classroom. Le mappature globali esistenti vengono preselezionate; i pulsanti di configurazione consentono di tornare al wizard senza perdere le selezioni.
 3. **Materiali**: aggiungere materiali manualmente, da Drive oppure caricare le risorse dei corsi Google Classroom mappati.
 4. **Obiettivi**: cercare e selezionare gli obiettivi dal catalogo.
 5. **Domande**: usare l’editor condiviso o `import_questions.php` per importare JSON, CSV, Excel e, quando disponibile, Google Forms collegati.
 6. **Test**: collegare Forms, compiti Classroom e assignment GitHub dai cataloghi filtrati sulle classi selezionate; Kahoot, Socrative e altri strumenti restano collegamenti manuali.
 7. **Riepilogo**: controllare dati, classi, integrazioni, contenuti e origine degli elementi prima del salvataggio.
 
-Le mappature vengono salvate nelle integrazioni globali e sono quindi riutilizzabili dalle UDA successive. La presenza di almeno una mappatura Classroom o GitHub porta automaticamente una nuova UDA dallo stato `bozza` allo stato `attiva`; classe e materia restano l’unico requisito obbligatorio dello step delle assegnazioni.
+Le mappature vengono salvate nelle integrazioni globali e sono quindi riutilizzabili dalle UDA successive. La presenza di almeno una mappatura Classroom o GitHub porta automaticamente una nuova UDA dallo stato `bozza` allo stato `attiva`; non è obbligatorio collegare ClasseViva per creare il gruppo o l'UDA.
+
+## Modello dati provider-neutral
+
+Il database applicativo è SQL-only e supporta `sqlite` e `mysql`. Una classe-materia è rappresentata da un record interno in `GRUPPI_DIDATTICI`; i collegamenti a provider esterni sono righe indipendenti in `GRUPPI_INTEGRAZIONI`. Un'UDA usa `UDA_GRUPPI`, quindi può essere assegnata a gruppi senza dipendere da una chiave ClasseViva.
+
+Gli studenti hanno un `id_studente` interno. Gli identificativi ClasseViva, Google Classroom e GitHub Classroom vivono in `STUDENTI_IDENTITA_ESTERNE`; assignment, repository e submission sono risorse in `STUDENTI_RISORSE_ESTERNE`. Nomi, cognomi ed email non vengono persistiti: quando servono all'interfaccia vengono recuperati dal provider nel contesto della richiesta.
+
+Per cambiare backend impostare in `config/.env`:
+
+```dotenv
+DB_TYPE=sqlite
+DB_SQLITE_FILE=storage/uda.sqlite
+```
+
+oppure compilare `DB_TYPE=mysql`, `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME` e `DB_PASSWORD`. L'avvio applica automaticamente la migrazione versionata e gli indici. Per azzerare solo il dominio didattico locale, preservando utenti, integrazioni e cataloghi:
+
+```bash
+php scripts/reset_teaching_domain.php --dry-run
+php scripts/reset_teaching_domain.php --apply --confirm=RESET-TEACHING-DOMAIN
+```
+
+Lo script rifiuta ambienti di produzione e salva sempre un report locale.
+
+La rimozione fisica delle sei tabelle legacy Ã¨ una migrazione separata e non
+automatica. Per i dettagli della procedura locale e staging consultare
+[`docs/deployment/legacy-table-migration.md`](docs/deployment/legacy-table-migration.md).
 
 ## GitHub Classroom
 
@@ -248,6 +274,6 @@ La pipeline GitHub Actions esegue validazione Composer, lint PHP, controlli di p
 
 ## Licenza
 
-Il progetto è distribuito da Francesco Adriani con licenza [Creative Commons Attribuzione - Non commerciale - Condividi allo stesso modo 4.0 Internazionale](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.it) (`CC BY-NC-SA 4.0`). Sono consentite condivisione e modifica con attribuzione, esclusivamente per usi non commerciali e mantenendo la stessa licenza sulle opere derivate. Il testo giuridico completo è nel file `LICENSE`.
+Il progetto è distribuito da Francesco Adriani con licenza [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) (`PolyForm-Noncommercial-1.0.0`). Sono consentiti uso, modifica e distribuzione esclusivamente per finalità non commerciali e secondo i termini della licenza ufficiale. Il file `LICENSE` riporta il riferimento legale e l'URL dei termini completi.
 
-La licenza si applica esclusivamente ai materiali sui quali l'autore può concedere tali diritti. Librerie, marchi, formati, template e altri componenti di terze parti restano soggetti alle rispettive licenze e condizioni d'uso. La clausola `NC` rende questo progetto source-available per usi non commerciali, non open source secondo la definizione OSI.
+La licenza si applica esclusivamente ai materiali sui quali l'autore può concedere tali diritti. Librerie, marchi, formati, template e altri componenti di terze parti restano soggetti alle rispettive licenze e condizioni d'uso. La restrizione non commerciale rende questo progetto source-available per usi non commerciali, non open source secondo la definizione OSI.

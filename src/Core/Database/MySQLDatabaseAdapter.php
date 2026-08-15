@@ -87,6 +87,24 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
      */
     public function findAll(string $sheetName): array
     {
+        if ($sheetName === 'CLASSI_ASSEGNATE') {
+            return \App\Core\LegacyUdaDataGateway::findAllClassiAssegnate($this);
+        }
+        if ($sheetName === 'CLASSI') {
+            return \App\Utils\LegacyTeachingGroupView::classes($this);
+        }
+        if ($sheetName === 'CLASSROOM_MAPPINGS') {
+            return \App\Core\ProviderNeutralMappingService::legacyRows($this, 'google_classroom');
+        }
+        if ($sheetName === 'GITHUB_CLASSROOMS') {
+            return \App\Core\ProviderNeutralMappingService::legacyRows($this, 'github_classroom');
+        }
+        if ($sheetName === 'MAPPATURA_STUDENTI') {
+            return \App\Core\LegacyStudentMappingGateway::findAll($this);
+        }
+        if ($sheetName === 'GITHUB_ASSIGNMENT_STUDENT_MAP') {
+            return \App\Core\LegacyGithubStudentMapGateway::findAll($this);
+        }
         try {
             $tableName = $this->sanitizeTableName($sheetName);
 
@@ -95,7 +113,7 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
             }
 
             $stmt = $this->pdo->query("SELECT * FROM `{$tableName}`");
-            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+            return \App\Core\StudentReferenceGateway::exposeRows($this, $sheetName, $stmt->fetchAll(PDO::FETCH_ASSOC));
 
         } catch (PDOException $e) {
             throw new Exception("Errore lettura da '{$sheetName}': " . $e->getMessage());
@@ -107,6 +125,38 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
      */
     public function findWhere(string $sheetName, array $where): array
     {
+        if ($sheetName === 'CLASSI_ASSEGNATE') {
+            return \App\Core\LegacyUdaDataGateway::findClassiAssegnateWhere($this, $where);
+        }
+        if ($sheetName === 'CLASSI') {
+            return \App\Utils\LegacyTeachingGroupView::filter(
+                \App\Utils\LegacyTeachingGroupView::classes($this),
+                $where
+            );
+        }
+        if ($sheetName === 'CLASSROOM_MAPPINGS') {
+            return \App\Core\ProviderNeutralMappingService::filterLegacyRows(
+                \App\Core\ProviderNeutralMappingService::legacyRows($this, 'google_classroom'), $where
+            );
+        }
+        if ($sheetName === 'GITHUB_CLASSROOMS') {
+            return \App\Core\ProviderNeutralMappingService::filterLegacyRows(
+                \App\Core\ProviderNeutralMappingService::legacyRows($this, 'github_classroom'), $where
+            );
+        }
+        if ($sheetName === 'MAPPATURA_STUDENTI') {
+            return \App\Core\LegacyStudentMappingGateway::findWhere($this, $where);
+        }
+        if ($sheetName === 'GITHUB_ASSIGNMENT_STUDENT_MAP') {
+            return \App\Core\LegacyGithubStudentMapGateway::findWhere($this, $where);
+        }
+        if (\App\Core\StudentReferenceGateway::handles($sheetName)
+            && \App\Core\StudentReferenceGateway::hasExternalCriteria($where)) {
+            return \App\Core\StudentReferenceGateway::filterExposed(
+                \App\Core\StudentReferenceGateway::exposeRows($this, $sheetName, $this->findAll($sheetName)),
+                $where
+            );
+        }
         if (empty($where)) {
             return $this->findAll($sheetName);
         }
@@ -131,7 +181,11 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
             $stmt = $this->pdo->prepare($sql);
             $stmt->execute($params);
 
-            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+            return \App\Core\StudentReferenceGateway::exposeRows(
+                $this,
+                $sheetName,
+                $stmt->fetchAll(PDO::FETCH_ASSOC)
+            );
 
         } catch (PDOException $e) {
             throw new Exception("Errore query su '{$sheetName}': " . $e->getMessage());
@@ -152,6 +206,21 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
      */
     public function insertRow(string $sheetName, array $data): bool
     {
+        if ($sheetName === 'CLASSROOM_MAPPINGS') {
+            return \App\Core\ProviderNeutralMappingService::insertLegacy($this, 'google_classroom', $data);
+        }
+        if ($sheetName === 'GITHUB_CLASSROOMS') {
+            return \App\Core\ProviderNeutralMappingService::insertLegacy($this, 'github_classroom', $data);
+        }
+        if ($sheetName === 'MAPPATURA_STUDENTI') {
+            return \App\Core\LegacyStudentMappingGateway::insert($this, $data);
+        }
+        if ($sheetName === 'GITHUB_ASSIGNMENT_STUDENT_MAP') {
+            return \App\Core\LegacyGithubStudentMapGateway::insert($this, $data);
+        }
+        if (\App\Core\StudentReferenceGateway::handles($sheetName)) {
+            $data = \App\Core\StudentReferenceGateway::normalizeWrite($this, $sheetName, $data);
+        }
         try {
             $tableName = $this->sanitizeTableName($sheetName);
 
@@ -182,6 +251,21 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
      */
     public function updateRow(string $sheetName, string $keyField, $keyValue, array $data): bool
     {
+        if ($sheetName === 'CLASSROOM_MAPPINGS') {
+            return \App\Core\ProviderNeutralMappingService::updateLegacy($this, 'google_classroom', (string)$keyValue, $data);
+        }
+        if ($sheetName === 'GITHUB_CLASSROOMS') {
+            return \App\Core\ProviderNeutralMappingService::updateLegacy($this, 'github_classroom', (string)$keyValue, $data);
+        }
+        if ($sheetName === 'MAPPATURA_STUDENTI') {
+            return \App\Core\LegacyStudentMappingGateway::update($this, (string)$keyValue, $data);
+        }
+        if ($sheetName === 'GITHUB_ASSIGNMENT_STUDENT_MAP') {
+            return \App\Core\LegacyGithubStudentMapGateway::update($this, (string)$keyValue, $data);
+        }
+        if (\App\Core\StudentReferenceGateway::handles($sheetName)) {
+            $data = \App\Core\StudentReferenceGateway::normalizeWrite($this, $sheetName, $data);
+        }
         try {
             $tableName = $this->sanitizeTableName($sheetName);
 
@@ -215,6 +299,12 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
      */
     public function deleteRow(string $sheetName, $keyValue, string $keyField = 'id'): bool
     {
+        if ($sheetName === 'CLASSROOM_MAPPINGS') {
+            return \App\Core\ProviderNeutralMappingService::deleteLegacy($this, 'google_classroom', (string)$keyValue);
+        }
+        if ($sheetName === 'GITHUB_CLASSROOMS') {
+            return \App\Core\ProviderNeutralMappingService::deleteLegacy($this, 'github_classroom', (string)$keyValue);
+        }
         try {
             $tableName = $this->sanitizeTableName($sheetName);
 
@@ -511,69 +601,6 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
     /**
      * {@inheritDoc}
      */
-    public function loadExternalFile(string $filePath)
-    {
-        if (!file_exists($filePath)) {
-            throw new Exception("File non trovato: {$filePath}");
-        }
-        if (!is_file($filePath)) {
-            throw new Exception("Path non è un file valido: {$filePath}");
-        }
-
-        $maxSize = 50 * 1024 * 1024;
-        if (filesize($filePath) > $maxSize) {
-            throw new Exception("File troppo grande (max 50MB)");
-        }
-
-        $realPath = realpath($filePath);
-        if ($realPath === false) {
-            throw new Exception("Path non valido: {$filePath}");
-        }
-
-        $allowedExts = ['xlsx', 'xls', 'csv'];
-        $ext = strtolower(pathinfo($realPath, PATHINFO_EXTENSION));
-        if (!in_array($ext, $allowedExts)) {
-            try {
-                $identified = strtolower(\PhpOffice\PhpSpreadsheet\IOFactory::identify($realPath));
-            } catch (Exception $e) {
-                $identified = '';
-            }
-
-            if (!in_array($identified, $allowedExts)) {
-                throw new Exception("Tipo file non supportato: {$ext}");
-            }
-        }
-
-        try {
-            return \PhpOffice\PhpSpreadsheet\IOFactory::load($realPath);
-        } catch (Exception $e) {
-            throw new Exception("Impossibile caricare file: " . $e->getMessage());
-        }
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    public function loadTemplate(string $templateName)
-    {
-        if (!preg_match('/^[a-zA-Z0-9_. -]+\.xlsx?$/i', $templateName)) {
-            throw new Exception("Nome template non valido: {$templateName}");
-        }
-
-        $templatePath = ROOT_PATH . '/database/templates/' . $templateName;
-        if (!file_exists($templatePath)) {
-            $templatePath = ROOT_PATH . '/Materiale/' . $templateName;
-            if (!file_exists($templatePath)) {
-                throw new Exception("Template non trovato: {$templateName}");
-            }
-        }
-
-        return $this->loadExternalFile($templatePath);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
     public function getAllSheetNames(): array
     {
         $names = [];
@@ -724,7 +751,7 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
 
     public function findClassiAssegnate(string $udaId): array
     {
-        return $this->findWhere('CLASSI_ASSEGNATE', ['id_uda' => $udaId]);
+        return \App\Core\LegacyUdaDataGateway::findClassiAssegnate($this, $udaId);
     }
 
     public function findVotiByUDA(string $udaId): array
@@ -759,7 +786,12 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
 
     public function insertClasseAssegnata(array $data): bool
     {
-        return $this->insertRow('CLASSI_ASSEGNATE', $data);
+        return \App\Core\LegacyUdaDataGateway::insertClasseAssegnata($this, $data);
+    }
+
+    public function deleteClasseAssegnata(string $id): bool
+    {
+        return \App\Core\LegacyUdaDataGateway::deleteClasseAssegnata($this, $id);
     }
 
     public function updateUDA(string $id, array $data): bool

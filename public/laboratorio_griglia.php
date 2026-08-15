@@ -1,4 +1,6 @@
 <?php
+
+define('REQUIRES_CLASSEVIVA', true);
 /**
  * Laboratorio PiùOMeno - Vista Griglia Classe
  *

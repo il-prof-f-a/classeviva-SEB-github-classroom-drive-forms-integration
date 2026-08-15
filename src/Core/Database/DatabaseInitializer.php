@@ -110,7 +110,7 @@ class DatabaseInitializer
             $report['warnings'] = array_merge($report['warnings'], $validationResult['warnings'] ?? []);
 
             // Aggiungi informazioni aggiuntive
-            $report['info'][] = "Database type: " . ($this->config['database']['type'] ?? 'excel');
+            $report['info'][] = "Database type: " . ($this->config['database']['type'] ?? 'sqlite');
 
         } catch (Exception $e) {
             $report['valid'] = false;
@@ -333,7 +333,7 @@ class DatabaseInitializer
     public function getHealthReport(): array
     {
         $report = [
-            'database_type' => $this->config['database']['type'] ?? 'excel',
+            'database_type' => $this->config['database']['type'] ?? 'sqlite',
             'timestamp' => date('Y-m-d H:i:s'),
             'validation' => $this->validate(),
             'sheets_count' => 0,

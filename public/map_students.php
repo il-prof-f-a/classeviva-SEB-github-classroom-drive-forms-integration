@@ -1,4 +1,6 @@
 <?php
+
+define('REQUIRES_CLASSEVIVA', true);
 /**
  * Mappatura Studenti - GDPR Compliant
  *
@@ -7,6 +9,8 @@
  */
 
 use App\Core\Database\DatabaseFactory;
+use App\Core\ProviderNeutralMappingService;
+use App\Core\StudentProviderMappingService;
 use App\Integration\ClasseVivaAPI;
 use App\Integration\GoogleClassroomAPI;
 
@@ -36,6 +40,9 @@ if (!$cvReady) {
 }
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
+$userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
+$mappingService = new ProviderNeutralMappingService($dbAdapter, $userId);
+$studentMappingService = new StudentProviderMappingService($dbAdapter, $userId);
 $classeVivaAPI = $cvReady ? new ClasseVivaAPI($config) : null;
 $googleClassroomAPI = new GoogleClassroomAPI($config);
 
@@ -47,7 +54,7 @@ if (!$mappingId) {
 }
 
 // Carica il mapping (classe + materia) → classroom
-$allMappings = $dbAdapter->findAll('CLASSROOM_MAPPINGS');
+$allMappings = $mappingService->listGoogleClassroomMappings();
 $mapping = null;
 foreach ($allMappings as $m) {
     $stato = strtolower(trim((string)($m['stato'] ?? 'attivo')));
@@ -64,6 +71,7 @@ if (!$mapping) {
 
 // Estrai dati dalla mappatura
 $idClasseCV = $mapping['id_classe_cv'] ?? '';
+$groupId = (string)($mapping['id_gruppo'] ?? '');
 $courseId = $mapping['id_corso_gc'] ?? '';
 $className = $mapping['nome_classe_cv'] ?? '';
 $subjectName = $mapping['nome_materia_cv'] ?? '';

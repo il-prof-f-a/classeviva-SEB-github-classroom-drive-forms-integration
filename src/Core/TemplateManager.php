@@ -12,14 +12,12 @@ use Exception;
 class TemplateManager
 {
     private array $config;
-    private string $templatePath;
-    private ?DatabaseManager $db = null;
+    private SpreadsheetFileService $fileService;
 
-    public function __construct(array $config, ?DatabaseManager $db = null)
+    public function __construct(array $config, ?SpreadsheetFileService $fileService = null)
     {
         $this->config = $config;
-        $this->templatePath = ROOT_PATH . '/' . $config['paths']['templates'];
-        $this->db = $db;
+        $this->fileService = $fileService ?? SpreadsheetFileService::fromConfig($config);
     }
 
     /**
@@ -30,36 +28,7 @@ class TemplateManager
      */
     public function loadTemplate(string $templateName): Spreadsheet
     {
-        // Se abbiamo DatabaseManager, usa il metodo sicuro
-        if ($this->db !== null) {
-            return $this->db->loadTemplate($templateName);
-        }
-
-        // Fallback: validazione manuale e caricamento
-        // Sanitizza nome template
-        if (!preg_match('/^[a-zA-Z0-9_. -]+\.xlsx?$/i', $templateName)) {
-            throw new Exception("Nome template non valido: {$templateName}");
-        }
-
-        $templatePath = $this->templatePath . $templateName;
-
-        if (!file_exists($templatePath)) {
-            throw new Exception("Template non trovato: {$templateName}");
-        }
-
-        // Usa realpath per sicurezza
-        $realPath = realpath($templatePath);
-        if ($realPath === false) {
-            throw new Exception("Path template non valido");
-        }
-
-        // Verifica che sia dentro la directory template
-        $realTemplateDir = realpath($this->templatePath);
-        if ($realTemplateDir === false || strpos($realPath, $realTemplateDir) !== 0) {
-            throw new Exception("Accesso negato: template fuori directory");
-        }
-
-        return IOFactory::load($realPath);
+        return $this->fileService->loadTemplate($templateName);
     }
 
     /**

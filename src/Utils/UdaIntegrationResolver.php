@@ -7,6 +7,42 @@ namespace App\Utils;
 final class UdaIntegrationResolver
 {
     /**
+     * Indicizza i collegamenti già risolti dal gruppo interno.
+     *
+     * @param list<array<string,mixed>> $rows
+     * @return array<string,array<string,array<string,mixed>>>
+     */
+    public static function indexGroupIntegrations(array $rows): array
+    {
+        $index = [];
+        foreach ($rows as $row) {
+            $groupId = trim((string)($row['id_gruppo'] ?? ''));
+            $provider = trim((string)($row['provider'] ?? ''));
+            $contextId = trim((string)($row['external_context_id'] ?? ''));
+            if ($groupId === '' || $provider === '' || $contextId === '') {
+                continue;
+            }
+            $index[$groupId][$provider] = [
+                ...$row,
+                'group_id' => $groupId,
+                'provider' => $provider,
+                'context_id' => $contextId,
+                'subject_id' => trim((string)($row['external_subject_id'] ?? '')),
+            ];
+        }
+        return $index;
+    }
+
+    /**
+     * @param list<array<string,mixed>> $rows
+     * @return array<string,mixed>|null
+     */
+    public static function providerForGroup(string $groupId, string $provider, array $rows): ?array
+    {
+        return self::indexGroupIntegrations($rows)[$groupId][$provider] ?? null;
+    }
+
+    /**
      * @param list<array<string,mixed>> $rows
      * @return array<string,array<string,mixed>>
      */

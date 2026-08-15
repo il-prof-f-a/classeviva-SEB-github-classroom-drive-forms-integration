@@ -1,4 +1,6 @@
 <?php
+
+define('REQUIRES_CLASSEVIVA', true);
 /**
  * Pubblica le evidenze +/- come annotazioni su ClasseViva.
  * Puo' essere chiamata:

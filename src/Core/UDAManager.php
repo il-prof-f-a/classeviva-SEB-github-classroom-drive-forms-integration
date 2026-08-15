@@ -14,7 +14,7 @@ use App\Core\Database\DatabaseAdapterInterface;
  */
 class UDAManager
 {
-    private $dbManager; // DatabaseManager o DatabaseAdapterInterface
+    private $dbManager; // DatabaseAdapterInterface
     private FileManager $fileManager;
     private TemplateManager $templateManager;
     private array $config;
@@ -197,7 +197,7 @@ class UDAManager
             $classi = $this->dbManager->findClassiAssegnate($id);
             foreach ($classi as $c) {
                 if (!empty($c['id_assegnazione'])) {
-                    $this->dbManager->deleteRow('CLASSI_ASSEGNATE', $c['id_assegnazione'], 'id_assegnazione');
+                    $this->dbManager->deleteClasseAssegnata((string)$c['id_assegnazione']);
                 }
             }
 

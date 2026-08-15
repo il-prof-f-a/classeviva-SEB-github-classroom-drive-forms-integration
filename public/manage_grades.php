@@ -1,4 +1,6 @@
 <?php
+
+define('REQUIRES_CLASSEVIVA', true);
 /**
  * Gestione Voti - Visualizza, inserisci e gestisci tutti i voti
  */
@@ -761,4 +763,3 @@ function resolveLinkOrigine(?string $trackingId, string $eventId, $dbAdapter): s
     return $cache[$trackingId];
 }
 ?>
-

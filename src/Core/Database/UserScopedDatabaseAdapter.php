@@ -100,6 +100,24 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
      */
     public function findAll(string $sheetName): array
     {
+        if ($sheetName === 'CLASSI_ASSEGNATE') {
+            return array_values(array_filter(
+                \App\Core\LegacyUdaDataGateway::findAllClassiAssegnate($this->inner),
+                fn(array $row): bool => (string)($row['id_utente'] ?? '') === $this->userId
+            ));
+        }
+        if ($sheetName === 'CLASSI') {
+            return array_values(array_filter(
+                \App\Utils\LegacyTeachingGroupView::classes($this->inner, $this->userId),
+                fn(array $row): bool => (string)($row['id_utente'] ?? '') === $this->userId
+            ));
+        }
+        if ($sheetName === 'CLASSROOM_MAPPINGS') {
+            return \App\Core\ProviderNeutralMappingService::legacyRows($this->inner, 'google_classroom', $this->userId);
+        }
+        if ($sheetName === 'GITHUB_CLASSROOMS') {
+            return \App\Core\ProviderNeutralMappingService::legacyRows($this->inner, 'github_classroom', $this->userId);
+        }
         if ($this->isUserScoped($sheetName)) {
             $ownerColumn = $this->getOwnerColumn($sheetName);
             return $this->inner->findWhere($sheetName, [$ownerColumn => $this->userId]);
@@ -113,6 +131,27 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
      */
     public function findWhere(string $sheetName, array $where): array
     {
+        if ($sheetName === 'CLASSI_ASSEGNATE') {
+            $where['id_utente'] = $this->userId;
+            return \App\Core\LegacyUdaDataGateway::findClassiAssegnateWhere($this->inner, $where);
+        }
+        if ($sheetName === 'CLASSI') {
+            $where['id_utente'] = $this->userId;
+            return \App\Utils\LegacyTeachingGroupView::filter(
+                \App\Utils\LegacyTeachingGroupView::classes($this->inner, $this->userId),
+                $where
+            );
+        }
+        if ($sheetName === 'CLASSROOM_MAPPINGS') {
+            return \App\Core\ProviderNeutralMappingService::filterLegacyRows(
+                \App\Core\ProviderNeutralMappingService::legacyRows($this->inner, 'google_classroom', $this->userId), $where
+            );
+        }
+        if ($sheetName === 'GITHUB_CLASSROOMS') {
+            return \App\Core\ProviderNeutralMappingService::filterLegacyRows(
+                \App\Core\ProviderNeutralMappingService::legacyRows($this->inner, 'github_classroom', $this->userId), $where
+            );
+        }
         $where = $this->applyUserFilter($sheetName, $where);
         return $this->inner->findWhere($sheetName, $where);
     }
@@ -164,6 +203,11 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
      */
     public function updateRow(string $sheetName, string $keyField, $keyValue, array $data): bool
     {
+        if (in_array($sheetName, ['MAPPATURA_STUDENTI', 'CLASSROOM_MAPPINGS', 'GITHUB_CLASSROOMS', 'GITHUB_ASSIGNMENT_STUDENT_MAP'], true)
+            || \App\Core\StudentReferenceGateway::handles($sheetName)) {
+            $data['id_utente'] = $this->userId;
+            return $this->inner->updateRow($sheetName, $keyField, $keyValue, $data);
+        }
         $ownerColumn = $this->getOwnerColumn($sheetName);
 
         // Per sicurezza, se la tabella è user-scoped verifichiamo che la riga
@@ -187,6 +231,12 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
      */
     public function deleteRow(string $sheetName, $keyValue, string $keyField = 'id'): bool
     {
+        if ($sheetName === 'CLASSROOM_MAPPINGS' || $sheetName === 'GITHUB_CLASSROOMS') {
+            $rows = $this->findWhere($sheetName, ['id_mapping' => (string)$keyValue]);
+            if ($rows === []) return false;
+            $provider = $sheetName === 'CLASSROOM_MAPPINGS' ? 'google_classroom' : 'github_classroom';
+            return \App\Core\ProviderNeutralMappingService::deleteLegacy($this->inner, $provider, (string)$keyValue);
+        }
         $ownerColumn = $this->getOwnerColumn($sheetName);
 
         if ($ownerColumn !== null) {
@@ -371,22 +421,6 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
     /**
      * {@inheritDoc}
      */
-    public function loadExternalFile(string $filePath)
-    {
-        return $this->inner->loadExternalFile($filePath);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    public function loadTemplate(string $templateName)
-    {
-        return $this->inner->loadTemplate($templateName);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
     public function getAllSheetNames(): array
     {
         return $this->inner->getAllSheetNames();
@@ -441,7 +475,7 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
 
     public function findClassiAssegnate(string $udaId): array
     {
-        return $this->findWhere('CLASSI_ASSEGNATE', ['id_uda' => $udaId]);
+        return \App\Core\LegacyUdaDataGateway::findClassiAssegnate($this, $udaId);
     }
 
     public function findVotiByUDA(string $udaId): array
@@ -481,7 +515,13 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
 
     public function insertClasseAssegnata(array $data): bool
     {
-        return $this->insertRow('CLASSI_ASSEGNATE', $data);
+        $data['id_utente'] = $this->userId;
+        return \App\Core\LegacyUdaDataGateway::insertClasseAssegnata($this, $data);
+    }
+
+    public function deleteClasseAssegnata(string $id): bool
+    {
+        return \App\Core\LegacyUdaDataGateway::deleteClasseAssegnata($this, $id);
     }
 
     public function updateUDA(string $id, array $data): bool

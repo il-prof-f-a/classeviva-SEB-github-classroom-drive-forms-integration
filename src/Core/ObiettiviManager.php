@@ -21,11 +21,17 @@ class ObiettiviManager
 {
     private DatabaseAdapterInterface $db;
     private array $config;
+    private SpreadsheetFileService $fileService;
 
-    public function __construct(DatabaseAdapterInterface $db, array $config)
+    public function __construct(
+        DatabaseAdapterInterface $db,
+        array $config,
+        ?SpreadsheetFileService $fileService = null
+    )
     {
         $this->db = $db;
         $this->config = $config;
+        $this->fileService = $fileService ?? SpreadsheetFileService::fromConfig($config);
     }
 
     /**
@@ -179,8 +185,7 @@ class ObiettiviManager
      */
     private function parseExcel(string $filePath): array
     {
-        // Usa DatabaseManager per caricare il file in modo sicuro
-        $spreadsheet = $this->db->loadExternalFile($filePath);
+        $spreadsheet = $this->fileService->loadExternalFile($filePath);
         $sheet = $spreadsheet->getActiveSheet();
 
         $data = $sheet->toArray(null, true, true, true);
