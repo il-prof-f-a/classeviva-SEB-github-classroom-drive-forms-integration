@@ -1,7 +1,6 @@
 <?php
 
-define('REQUIRES_CLASSEVIVA', true);
-define('SKIP_CV_TOKEN_POPUP', true);
+define('REQUIRES_CLASSEVIVA', false);
 /**
  * Mappatura Studenti - GDPR Compliant
  *

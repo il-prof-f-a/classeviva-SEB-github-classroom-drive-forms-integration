@@ -414,6 +414,7 @@ $architectureTests = [
     'github review provider-neutral' => __DIR__ . '/public/github_review_provider_neutral.php',
     'wizard catalog groups' => __DIR__ . '/public/wizard_catalog_groups.php',
     'legacy mapping banner' => __DIR__ . '/public/legacy_mapping_banner.php',
+    'provider neutral gate' => __DIR__ . '/public/provider_neutral_gate.php',
     'provider-neutral mappings' => __DIR__ . '/domain/provider_neutral_mappings.php',
     'ClasseViva student sync' => __DIR__ . '/integration/classeviva_student_sync.php',
     'provider-neutral E2E' => __DIR__ . '/e2e/new_uda_provider_neutral.php',

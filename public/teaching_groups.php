@@ -2,8 +2,7 @@
 
 declare(strict_types=1);
 
-define('REQUIRES_CLASSEVIVA', true);
-define('SKIP_CV_TOKEN_POPUP', true);
+define('REQUIRES_CLASSEVIVA', false);
 require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;

@@ -42,10 +42,9 @@ if (!str_contains($markup, 'ClasseVivaTokenGuard::getTokenState')
     || !str_contains($markup, 'token_valid')) {
     $failures[] = 'gating ClasseViva senza popup mancante';
 }
-if (!str_contains($markup, "define('REQUIRES_CLASSEVIVA', true)")
-    || !str_contains($markup, "define('SKIP_CV_TOKEN_POPUP', true)")
+if (!str_contains($markup, "define('REQUIRES_CLASSEVIVA', false)")
     || !str_contains($markup, 'catalogError')) {
-    $failures[] = 'bootstrap gate o stato errore catalogo mancante';
+    $failures[] = 'pagina provider-neutral (senza gate globale) o stato errore catalogo mancante';
 }
 
 foreach ([
