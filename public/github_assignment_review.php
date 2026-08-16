@@ -6,10 +6,15 @@
 require_once '../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
+use App\Core\ProviderNeutralMappingService;
+use App\Core\TeachingGroupIntegrationRepository;
+use App\Core\UdaGroupRepository;
 use App\Integration\GitHubIntegration;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 $github = new GitHubIntegration($config);
+$userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
+$mappingService = new ProviderNeutralMappingService($dbAdapter, $userId);
 $github->loadTokenFromSession();
 $isAuthenticated = $github->isAuthenticated();
 
@@ -193,16 +198,14 @@ if ($action === 'rubric_load') {
         });
 
         $idUda = (string)($test['id_uda'] ?? '');
-        $idClasseCv = (string)($_GET['id_classe_cv'] ?? '');
-        $idMateriaCv = (string)($_GET['id_materia_cv'] ?? '');
+        $idGruppo = (string)($_GET['id_gruppo'] ?? '');
 
         $where = [
             'id_uda' => $idUda,
             'id_rubrica' => $rubricId,
-            'id_studente_cv' => $studentId
+            'id_studente' => $studentId
         ];
-        if ($idClasseCv !== '') $where['id_classe_cv'] = $idClasseCv;
-        if ($idMateriaCv !== '') $where['id_materia_cv'] = $idMateriaCv;
+        if ($idGruppo !== '') $where['id_gruppo'] = $idGruppo;
 
         $saved = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $where);
         $savedRow = $saved[0] ?? null;
@@ -242,8 +245,7 @@ if ($action === 'rubric_save') {
 
         $rubricId = (string)$testId;
         $idUda = (string)($test['id_uda'] ?? '');
-        $idClasseCv = (string)($payload['id_classe_cv'] ?? '');
-        $idMateriaCv = (string)($payload['id_materia_cv'] ?? '');
+        $idGruppo = (string)($payload['id_gruppo'] ?? '');
         $nomeStudente = (string)($payload['nome_studente'] ?? '');
 
         $datiJson = $payload['dati_json'] ?? null;
@@ -261,18 +263,16 @@ if ($action === 'rubric_save') {
         $where = [
             'id_uda' => $idUda,
             'id_rubrica' => $rubricId,
-            'id_studente_cv' => $studentId
+            'id_studente' => $studentId
         ];
-        if ($idClasseCv !== '') $where['id_classe_cv'] = $idClasseCv;
-        if ($idMateriaCv !== '') $where['id_materia_cv'] = $idMateriaCv;
+        if ($idGruppo !== '') $where['id_gruppo'] = $idGruppo;
 
         $existing = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $where);
         $rowData = [
             'id_uda' => $idUda,
             'id_rubrica' => $rubricId,
-            'id_studente_cv' => $studentId,
-            'id_classe_cv' => $idClasseCv,
-            'id_materia_cv' => $idMateriaCv,
+            'id_studente' => $studentId,
+            'id_gruppo' => $idGruppo,
             'data_valutazione' => date('Y-m-d H:i:s'),
             'voto_finale' => $votoNumerico !== null ? (string)$votoNumerico : '',
             'voto_numerico' => $votoNumerico !== null ? (string)$votoNumerico : '',
@@ -818,12 +818,12 @@ if ($teacherUrl) {
 
 // Determina la GitHub Classroom "API id" da usare:
 // - prioritÃ : valore giÃ  salvato nel TEST
-// - fallback: mappatura classe/materia -> GitHub classroom (GITHUB_CLASSROOMS) derivata dalla UDA
+// - fallback: integrazione github_classroom del gruppo didattico derivata dalla UDA
 // - solo come ultima risorsa: candidato dal link docente (che in alcune UI Ã¨ un ID diverso dall'API)
 $mappingRow = null;
 $allMaps = [];
 try {
-    $allMaps = $dbAdapter->findAll('GITHUB_CLASSROOMS');
+    $allMaps = $mappingService->listGithubClassroomMappings();
 } catch (Exception $e) {
     $allMaps = [];
 }
@@ -851,28 +851,34 @@ if (!$mappingRow && $classroomIdCandidateFromUrl !== '') {
 
 if (!$mappingRow && !empty($test['id_uda'])) {
     try {
-        $udaPairs = [];
-        $udaAssignments = $dbAdapter->findWhere('CLASSI_ASSEGNATE', ['id_uda' => (string)$test['id_uda']]);
-        foreach ($udaAssignments as $a) {
-            $classId = (string)($a['id_classe_cv'] ?? ($a['id_classe'] ?? ''));
-            $subjId = (string)($a['id_materia_cv'] ?? '');
-            if ($classId !== '' && $subjId !== '') {
-                $udaPairs[$classId . '|' . $subjId] = [$classId, $subjId];
-            }
-        }
-
+        // Gruppi didattici dell'UDA con integrazione github_classroom.
+        $groupRepo = new UdaGroupRepository($dbAdapter, $userId);
+        $integrationRepo = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
         $candidates = [];
-        foreach ($udaPairs as [$classId, $subjId]) {
-            foreach ($allMaps as $m) {
-                if ((string)($m['id_classe_cv'] ?? '') === $classId && (string)($m['id_materia_cv'] ?? '') === $subjId) {
-                    $candidates[(string)($m['id_mapping'] ?? '')] = $m;
-                }
+        foreach ($groupRepo->listForUda((string)$test['id_uda']) as $assignment) {
+            $gid = (string)($assignment['id_gruppo'] ?? '');
+            if ($gid === '') {
+                continue;
+            }
+            $integration = $integrationRepo->findForGroupProvider($gid, 'github_classroom');
+            if ($integration === null) {
+                continue;
+            }
+            $cid = (string)($integration['external_context_id'] ?? '');
+            if ($githubClassroomId === '' || $cid === $githubClassroomId) {
+                $candidates[$gid] = $integration;
             }
         }
 
         if (count($candidates) === 1) {
-            $mappingRow = array_values($candidates)[0];
-            $githubClassroomId = (string)($mappingRow['github_classroom_id'] ?? '');
+            $only = array_values($candidates)[0];
+            $githubClassroomId = (string)($only['external_context_id'] ?? '');
+            foreach ($allMaps as $m) {
+                if ((string)($m['github_classroom_id'] ?? '') === $githubClassroomId) {
+                    $mappingRow = $m;
+                    break;
+                }
+            }
         }
     } catch (Exception $e) {
         // non bloccare
@@ -882,7 +888,7 @@ if (!$mappingRow && !empty($test['id_uda'])) {
 // Se non ho ancora l'ID assignment, prova a validare/riusare l'eventuale candidato numerico dal link
 if ($githubAssignmentId === '' && $assignmentIdCandidateFromUrl !== '') {
     try {
-        $existing = $dbAdapter->findWhere('GITHUB_ASSIGNMENT_STUDENT_MAP', [
+        $existing = $dbAdapter->findWhere('GITHUB_ASSIGNMENT_STUDENT_LINKS', [
             'id_assignment' => $assignmentIdCandidateFromUrl
         ]);
         if (!empty($existing)) {
@@ -1014,34 +1020,36 @@ if (($githubClassroomId && $githubClassroomId !== ($test['github_classroom_id'] 
     }
 }
 
-// Carica mapping studenti per assignment
+// Carica mapping studenti per assignment (provider-neutral)
 $studentMap = [];
 if (!empty($githubAssignmentId)) {
-    $studentMap = $dbAdapter->findWhere('GITHUB_ASSIGNMENT_STUDENT_MAP', [
+    $linkRows = $dbAdapter->findWhere('GITHUB_ASSIGNMENT_STUDENT_LINKS', [
         'id_assignment' => $githubAssignmentId
     ]);
-
-    // Fallback: se la tabella è stata popolata in passato con id_utente non coerente,
-    // prova a leggere senza scoping e filtra per utente corrente.
-    if (empty($studentMap)) {
-        try {
-            $rawAdapter = DatabaseFactory::create($config);
-            $rows = $rawAdapter->findWhere('GITHUB_ASSIGNMENT_STUDENT_MAP', [
-                'id_assignment' => $githubAssignmentId
+    foreach ($linkRows as $link) {
+        $internalId = (string)($link['id_studente'] ?? '');
+        $githubUsername = '';
+        $rosterIdentifier = '';
+        if ($internalId !== '') {
+            $identities = $dbAdapter->findWhere('STUDENTI_IDENTITA_ESTERNE', [
+                'id_studente' => $internalId,
+                'provider' => 'github_classroom',
             ]);
-            $sessionUserId = (string)($_SESSION['user_id'] ?? '');
-            $legacyUserId = (string)($config['user_profile']['id'] ?? '');
-
-            $studentMap = array_values(array_filter($rows, function ($r) use ($sessionUserId, $legacyUserId) {
-                $uid = (string)($r['id_utente'] ?? '');
-                if ($sessionUserId !== '' && $uid === $sessionUserId) return true;
-                if ($legacyUserId !== '' && $uid === $legacyUserId) return true;
-                // legacy: righe senza owner
-                return $uid === '';
-            }));
-        } catch (Exception $e) {
-            // continua senza fallback
+            foreach ($identities as $identity) {
+                $githubUsername = (string)($identity['external_user_id'] ?? '');
+                $metadata = json_decode((string)($identity['metadata_json'] ?? '{}'), true);
+                if (is_array($metadata)) {
+                    $rosterIdentifier = (string)($metadata['roster_identifier'] ?? '');
+                }
+                break;
+            }
         }
+        $studentMap[] = [
+            'id_studente' => $internalId,
+            'github_username' => $githubUsername,
+            'roster_identifier' => $rosterIdentifier,
+            'student_repository_url' => (string)($link['student_repository_url'] ?? ''),
+        ];
     }
 }
 
@@ -1147,7 +1155,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         $tipoVoto = $_POST['tipo_voto'] ?? 'scritto';
         $grades = $_POST['voto'] ?? [];
         $comments = $_POST['commento'] ?? [];
-        $studentIds = $_POST['id_studente_cv'] ?? [];
+        $studentIds = $_POST['id_studente'] ?? [];
         $usernames = $_POST['github_username'] ?? [];
         $repos = $_POST['repo_url'] ?? [];
 
@@ -1155,8 +1163,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             throw new Exception("Mappatura classe/materia GitHub non trovata");
         }
 
-        $idClasse = $mappingRow['id_classe_cv'] ?? '';
-        $idMateria = $mappingRow['id_materia_cv'] ?? '';
+        $idGruppo = (string)($mappingRow['id_gruppo'] ?? '');
 
         $testDateRaw = $test['data_somministrazione'] ?? ($test['data_creazione'] ?? null);
         $testDate = null;
@@ -1209,9 +1216,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             $votoData = [
                 'id_voto' => 'VOTO_' . uniqid(),
                 'id_uda' => $test['id_uda'],
-                'id_studente_cv' => $studentId,
-                'id_classe_cv' => $idClasse,
-                'id_materia_cv' => $idMateria,
+                'id_gruppo' => $idGruppo,
+                'id_studente' => $studentId,
                 'tipo_voto' => $tipoVoto,
                 'voto' => $voto,
                 'giudizio' => $giudizio,
@@ -1219,10 +1225,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 'data_valutazione' => $testDate,
                 'data_creazione' => date('Y-m-d H:i:s'),
                 'pubblicato' => 0,
-                'id_annotazione_cv' => null,
+                'provider_pubblicazione' => null,
+                'external_publication_id' => null,
                 'num_evidenze_positive' => 0,
                 'num_evidenze_negative' => 0,
                 'num_evidenze_totali' => 0,
+                'id_utente' => $userId,
                 'link_origine' => $linkOrigine
             ];
 
@@ -1240,8 +1248,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 }
 
 	$availableGrades = getClasseVivaGrades();
-	$idClasse = $idClasse ?? '';
-	$idMateria = $idMateria ?? '';
+	$idGruppo = $idGruppo ?? '';
 
 	?>
 <!DOCTYPE html>
@@ -1449,7 +1456,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
                                 $commitCountTotal = $acceptedItem ? ($acceptedItem['commit_count'] ?? null) : null;
                                 $defaultBranch = $acceptedItem ? (string)($acceptedItem['repository']['default_branch'] ?? ($acceptedItem['default_branch'] ?? '')) : null;
-                                $studentId = $row['id_studente_cv'] ?? '';
+                                $studentId = $row['id_studente'] ?? '';
                                 $lastCommit = $commitInfo[$lowerUser]['last_commit'] ?? null;
                                 $recentCount = $commitInfo[$lowerUser]['recent_count'] ?? null;
                                 $prefill = [];
@@ -1582,7 +1589,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                         <?php endif; ?>
                                     </td>
                                     <td>
-                                        <input type="hidden" name="id_studente_cv[<?= $idx ?>]" value="<?= htmlspecialchars($studentId) ?>">
+                                        <input type="hidden" name="id_studente[<?= $idx ?>]" value="<?= htmlspecialchars($studentId) ?>">
                                         <?php if ($studentId): ?>
                                             <span class="badge bg-success">Associato</span>
                                             <small class="text-muted d-block">ID: <?= htmlspecialchars($studentId) ?></small>
@@ -2016,8 +2023,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	        const RUBRIC_CTX = {
 	            test_id: <?= json_encode((string)$testId) ?>,
 	            id_uda: <?= json_encode((string)($test['id_uda'] ?? '')) ?>,
-	            id_classe_cv: <?= json_encode((string)($idClasse ?? '')) ?>,
-	            id_materia_cv: <?= json_encode((string)($idMateria ?? '')) ?>,
+	            id_gruppo: <?= json_encode((string)($idGruppo ?? '')) ?>,
 	            rubric_editor_url: <?= json_encode('github_rubriche.php?test_id=' . urlencode((string)$testId)) ?>
 	        };
 
@@ -2208,9 +2214,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                    const payload = {
 	                        student_id: rubricContext.student_id,
 	                        nome_studente: rubricContext.nome_studente || '',
-	                        id_classe_cv: RUBRIC_CTX.id_classe_cv || '',
-	                        id_materia_cv: RUBRIC_CTX.id_materia_cv || '',
-	                        voto_numerico: gradeRounded !== null ? gradeRounded : null,
+	                        id_gruppo: RUBRIC_CTX.id_gruppo || '',
 	                        dati_json: {
 	                            kind: 'github_rubric',
 	                            test_id: RUBRIC_CTX.test_id,
@@ -2315,11 +2319,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            const url = new URL(window.location.href);
 	            url.searchParams.set('action', 'rubric_load');
 	            url.searchParams.set('student_id', studentId);
-	            url.searchParams.set('id_classe_cv', RUBRIC_CTX.id_classe_cv || '');
-	            url.searchParams.set('id_materia_cv', RUBRIC_CTX.id_materia_cv || '');
-
-	            const res = await fetch(url.toString(), {headers: {'Accept': 'application/json'}});
-	            const data = await res.json();
+	            url.searchParams.set('id_gruppo', RUBRIC_CTX.id_gruppo || '');
 	            if (!data.ok) {
 	                if (rubricHost) rubricHost.innerHTML = '<div class="text-danger">Errore: ' + escapeHtml(data.error || 'Errore') + '</div>';
 	                return;

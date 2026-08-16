@@ -7,8 +7,8 @@
 require_once '../bootstrap.php';
 
 use App\Integration\GitHubIntegration;
-use App\Integration\ClasseVivaAPI;
 use App\Core\Database\DatabaseFactory;
+use App\Core\ProviderNeutralMappingService;
 use App\Core\UDAManager;
 
 $pageTitle = "Gestione Assignment GitHub";
@@ -16,6 +16,7 @@ $pageTitle = "Gestione Assignment GitHub";
 // Inizializza servizi
 $github = new GitHubIntegration($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
+$mappingService = new ProviderNeutralMappingService($dbAdapter, (string)($_SESSION['user_id'] ?? 'system'));
 $udaManager = new UDAManager($config);
 
 // Carica token da sessione
@@ -111,7 +112,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'publish_gc' && isset($_GET['i
 // Carica dati per la pagina
 $assignments = $dbAdapter->findAll('GITHUB_ASSIGNMENTS');
 $udas = $udaManager->getAllUDAs();
-$classroomMappings = $dbAdapter->findAll('GITHUB_CLASSROOMS');
+$classroomMappings = $mappingService->listGithubClassroomMappings();
 
 // Applica filtri se presenti
 $filterUda = $_GET['filter_uda'] ?? '';
@@ -364,7 +365,7 @@ $filteredAssignments = array_filter($assignments, function($assignment) use ($fi
                                     <?php foreach ($classroomMappings as $mapping): ?>
                                         <option value="<?= htmlspecialchars($mapping['id_mapping']) ?>">
                                             <?= htmlspecialchars($mapping['classroom_name']) ?>
-                                            (<?= htmlspecialchars($mapping['id_classe_cv']) ?> - <?= htmlspecialchars($mapping['id_materia_cv']) ?>)
+                                            (<?= htmlspecialchars($mapping['github_classroom_id'] ?? '') ?>)
                                         </option>
                                     <?php endforeach; ?>
                                 </select>

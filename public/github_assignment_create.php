@@ -7,6 +7,7 @@
 require_once '../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
+use App\Core\ProviderNeutralMappingService;
 use App\Models\UDA;
 use App\Integration\GitHubIntegration;
 
@@ -22,6 +23,7 @@ if (!$idUda) {
 // Inizializza servizi
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 $github = new GitHubIntegration($config);
+$mappingService = new ProviderNeutralMappingService($dbAdapter, (string)($_SESSION['user_id'] ?? 'system'));
 
 // Carica UDA direttamente dal DatabaseAdapter
 $udaData = $dbAdapter->findUDAById($idUda);
@@ -55,14 +57,8 @@ $activeTemplates = array_filter($templates, function($t) {
     return $t['attivo'] === 'si';
 });
 
-// Carica mappature GitHub Classroom per questa UDA/classe
-$githubMappings = $dbAdapter->findAll('GITHUB_CLASSROOMS');
-
-// Carica classi assegnate a questa UDA
-$udaAssignments = $dbAdapter->findAll('CLASSI_ASSEGNATE');
-$udaClasses = array_filter($udaAssignments, function($a) use ($idUda) {
-    return $a['id_uda'] === $idUda;
-});
+// Carica mappature GitHub Classroom (provider-neutral, da GRUPPI_INTEGRAZIONI)
+$githubMappings = $mappingService->listGithubClassroomMappings();
 
 // Step 1: Form preparazione dati
 $formData = $_SESSION['github_assignment_form'] ?? [];
@@ -440,7 +436,7 @@ function generateSlug($title) {
                                     <option value="<?= htmlspecialchars($mapping['id_mapping']) ?>"
                                             <?= ($formData['classroom_mapping_id'] ?? '') === $mapping['id_mapping'] ? 'selected' : '' ?>>
                                         <?= htmlspecialchars($mapping['classroom_name']) ?>
-                                        (<?= htmlspecialchars($mapping['id_classe_cv']) ?> - <?= htmlspecialchars($mapping['id_materia_cv']) ?>)
+                                        (<?= htmlspecialchars($mapping['github_classroom_id'] ?? '') ?>)
                                     </option>
                                 <?php endforeach; ?>
                             </select>
