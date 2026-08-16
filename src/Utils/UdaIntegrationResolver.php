@@ -50,19 +50,27 @@ final class UdaIntegrationResolver
     {
         $index = [];
         foreach ($rows as $row) {
+            $groupId = self::firstValue($row, ['id_gruppo']);
             $classId = self::firstValue($row, ['id_classe_cv', 'classeviva_class_id']);
             $subjectId = self::firstValue($row, ['id_materia_cv', 'classeviva_subject_id']);
             $courseId = self::firstValue($row, ['id_corso_gc', 'google_course_id']);
-            if ($classId === '' || $subjectId === '' || $courseId === '') {
+            if ($courseId === '') {
                 continue;
             }
-            $index[self::key($classId, $subjectId)] = [
+            $entry = [
                 ...$row,
+                'group_id' => $groupId,
                 'class_id' => $classId,
                 'subject_id' => $subjectId,
                 'course_id' => $courseId,
                 'course_name' => self::firstValue($row, ['nome_corso_gc', 'google_course_name']),
             ];
+            if ($classId !== '' && $subjectId !== '') {
+                $index[self::key($classId, $subjectId)] = $entry;
+            }
+            if ($groupId !== '') {
+                $index[self::groupKey($groupId)] = $entry;
+            }
         }
         return $index;
     }
@@ -75,19 +83,27 @@ final class UdaIntegrationResolver
     {
         $index = [];
         foreach ($rows as $row) {
+            $groupId = self::firstValue($row, ['id_gruppo']);
             $classId = self::firstValue($row, ['id_classe_cv']);
             $subjectId = self::firstValue($row, ['id_materia_cv']);
             $classroomId = self::firstValue($row, ['github_classroom_id']);
-            if ($classId === '' || $subjectId === '' || $classroomId === '') {
+            if ($classroomId === '') {
                 continue;
             }
-            $index[self::key($classId, $subjectId)] = [
+            $entry = [
                 ...$row,
+                'group_id' => $groupId,
                 'class_id' => $classId,
                 'subject_id' => $subjectId,
                 'classroom_id' => $classroomId,
                 'classroom_name' => self::firstValue($row, ['classroom_name']),
             ];
+            if ($classId !== '' && $subjectId !== '') {
+                $index[self::key($classId, $subjectId)] = $entry;
+            }
+            if ($groupId !== '') {
+                $index[self::groupKey($groupId)] = $entry;
+            }
         }
         return $index;
     }
@@ -111,6 +127,24 @@ final class UdaIntegrationResolver
     }
 
     /**
+     * @param list<array<string,mixed>> $rows
+     * @return array<string,mixed>|null
+     */
+    public static function classroomForGroup(string $groupId, array $rows): ?array
+    {
+        return self::indexClassroomMappings($rows)[self::groupKey($groupId)] ?? null;
+    }
+
+    /**
+     * @param list<array<string,mixed>> $rows
+     * @return array<string,mixed>|null
+     */
+    public static function githubForGroup(string $groupId, array $rows): ?array
+    {
+        return self::indexGithubMappings($rows)[self::groupKey($groupId)] ?? null;
+    }
+
+    /**
      * @param list<array<string,mixed>> $selectedRows
      */
     public static function hasIntegration(array $selectedRows): bool
@@ -129,6 +163,11 @@ final class UdaIntegrationResolver
     private static function key(string $classId, string $subjectId): string
     {
         return trim($classId) . '|' . trim($subjectId);
+    }
+
+    private static function groupKey(string $groupId): string
+    {
+        return 'group:' . trim($groupId);
     }
 
     /** @param array<string,mixed> $row @param list<string> $keys */
