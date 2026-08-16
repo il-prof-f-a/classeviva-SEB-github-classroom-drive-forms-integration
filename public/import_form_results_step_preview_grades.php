@@ -4,9 +4,8 @@
  */
 
 $formResponses = $_SESSION['form_responses'] ?? [];
-$autoClassId = $_SESSION['auto_class_id'] ?? null;
-$autoSubjectId = $_SESSION['auto_subject_id'] ?? null;
-$classroomMapping = $_SESSION['classroom_mapping'] ?? null;
+$resolution = $_SESSION['resolution'] ?? ['group_id' => null, 'matches' => [], 'unmatched' => []];
+$groupId = $_SESSION['group_id'] ?? ($resolution['group_id'] ?? null);
 $cbmEnabled = $_SESSION['cbm_enabled'] ?? false;
 $cbmParams = $_SESSION['cbm_params'] ?? null;
 $cbmAvailable = $cbmEnabled && !empty($formResponses);
@@ -93,64 +92,25 @@ if ($cbmAvailable) {
 }
 
 // Recupera classi e materie per importazione
-try {
-    $classiMaterie = $cv->getClassesWithTeacherSubjects();
-} catch (Exception $e) {
-    // Se fallisce, usa array vuoto e mostra errore
-    $classiMaterie = [];
-    $errorMessage = "Errore nel caricamento classi/materie: " . $e->getMessage();
-}
-
-// Recupera mappature studenti Google -> ClasseViva
-$allMappatureStudenti = $dbAdapter->findAll('MAPPATURA_STUDENTI');
-
-// Arricchisci formResponses con dati studente ClasseViva
+// Risoluzione provider-neutral degli studenti (email -> id_studente interno).
+$resolutionMatches = $resolution['matches'] ?? [];
 $studentiNonMappati = [];
 $studentiMappati = 0;
 
 foreach ($formResponses as &$response) {
-    $studentEmail = $response['email'];
-    $studentFound = false;
-
-    // Cerca studente nella mappatura
-    foreach ($allMappatureStudenti as $mappatura) {
-        $gcId = $mappatura['id_studente_gc'] ?? '';
-        $emailGoogle = $mappatura['email_google'] ?? '';
-
-        // Match per email o ID Google
-        if ($gcId === $studentEmail || $emailGoogle === $studentEmail) {
-            $studentId = $mappatura['id_studente_cv'] ?? null;
-
-            if ($studentId) {
-                // Usa nome dalla mappatura se disponibile, altrimenti usa ID
-                $response['student_cv_id'] = $studentId;
-
-                // Prova a usare nome dalla mappatura
-                $nomeMappatura = trim(($mappatura['nome_studente'] ?? '') . ' ' . ($mappatura['cognome_studente'] ?? ''));
-
-                if (!empty($nomeMappatura) && $nomeMappatura !== ' ') {
-                    $response['student_cv_name'] = $nomeMappatura;
-                } else {
-                    // Fallback: usa ID se non c'è nome in mappatura
-                    $response['student_cv_name'] = 'ID: ' . $studentId;
-                }
-
-                $response['mapped'] = true;
-                $studentFound = true;
-                $studentiMappati++;
-                break;
-            }
-        }
-    }
-
-    if (!$studentFound) {
+    $studentEmail = strtolower(trim((string)($response['email'] ?? '')));
+    $match = $resolutionMatches[$studentEmail] ?? null;
+    if ($match !== null && ($match['id_studente'] ?? '') !== '') {
+        $response['mapped'] = true;
+        $response['internal_student_id'] = (string)$match['id_studente'];
+        $studentiMappati++;
+    } else {
         $response['mapped'] = false;
-        $response['student_cv_name'] = null;
-        $studentiNonMappati[] = $studentEmail;
+        $response['internal_student_id'] = null;
+        $studentiNonMappati[] = (string)($response['email'] ?? '');
     }
 }
 unset($response);
-
 // Statistiche
 $totaleRisposte = count($formResponses);
 $sufficienti = count(array_filter($formResponses, fn($r) => $r['voto_numerico'] >= 6));
@@ -224,34 +184,16 @@ $mediaVoti = $totaleRisposte > 0 ? array_sum(array_column($formResponses, 'voto_
                         <input type="hidden" name="test_id" value="<?= htmlspecialchars($testId) ?>">
                         <input type="hidden" name="uda_id" value="<?= htmlspecialchars($udaId) ?>">
 
-                        <!-- Selezione Classe, Materia e Tipo Voto -->
+                        <!-- Configurazione Importazione -->
                         <div class="card mb-3 bg-light">
                             <div class="card-body">
                                 <h6 class="mb-3">
                                     <i class="bi bi-gear"></i> Configurazione Importazione
-                                    <?php if ($autoClassId && $autoSubjectId): ?>
-                                        <span class="badge bg-info">Auto-rilevata da Classroom</span>
+                                    <?php if ($groupId): ?>
+                                        <span class="badge bg-info">Gruppo didattico rilevato</span>
                                     <?php endif; ?>
                                 </h6>
                                 <div class="row g-3">
-                                    <div class="col-md-4">
-                                        <label class="form-label">Classe *</label>
-                                        <select name="class_id" class="form-select" required id="classSelect">
-                                            <option value="">-- Seleziona Classe --</option>
-                                            <?php foreach ($classiMaterie as $classe): ?>
-                                                <option value="<?= htmlspecialchars($classe['id']) ?>"
-                                                    <?= $autoClassId === $classe['id'] ? 'selected' : '' ?>>
-                                                    <?= htmlspecialchars($classe['name']) ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <label class="form-label">Materia *</label>
-                                        <select name="subject_id" class="form-select" required id="subjectSelect">
-                                            <option value="">-- Prima seleziona classe --</option>
-                                        </select>
-                                    </div>
                                     <div class="col-md-4">
                                         <label class="form-label">Tipo Voto *</label>
                                         <select name="grade_type" class="form-select" required id="gradeTypeSelect">
@@ -259,9 +201,7 @@ $mediaVoti = $totaleRisposte > 0 ? array_sum(array_column($formResponses, 'voto_
                                             <option value="O">🗣️ Orale</option>
                                             <option value="P">🛠️ Pratico</option>
                                         </select>
-                                        <small class="form-text text-muted">
-                                            Dove verrà registrato il voto sul registro
-                                        </small>
+                                        <small class="form-text text-muted">Dove verrà registrato il voto</small>
                                     </div>
                                 </div>
                             </div>
@@ -284,7 +224,7 @@ $mediaVoti = $totaleRisposte > 0 ? array_sum(array_column($formResponses, 'voto_
                                             <input type="checkbox" id="checkAll" onclick="toggleAllResponses()" title="Seleziona tutti">
                                         </th>
                                         <th>Email Google</th>
-                                        <th>Studente ClasseViva</th>
+                                        <th>Studente associato</th>
                                         <th class="text-center">Punteggio</th>
                                         <th class="text-center">%</th>
                                         <th class="text-center">Voto</th>
@@ -327,15 +267,12 @@ $mediaVoti = $totaleRisposte > 0 ? array_sum(array_column($formResponses, 'voto_
                                                 <?php endif; ?>
                                             </td>
                                             <td>
-                                                <select name="student_mapping[<?= htmlspecialchars($response['response_id']) ?>]"
-                                                        class="form-select form-select-sm student-select"
-                                                        data-response-id="<?= htmlspecialchars($response['response_id']) ?>"
-                                                        data-response-email="<?= htmlspecialchars($response['email']) ?>"
-                                                        data-preselected-id="<?= htmlspecialchars($response['student_cv_id'] ?? '') ?>"
-                                                        onchange="handleStudentChange(this)">
-                                                    <option value="">Caricamento studenti...</option>
-                                                </select>
-                                                <small class="student-status text-muted"></small>
+                                                <?php if ($isMapped): ?>
+                                                    <input type="hidden" name="student_mapping[<?= htmlspecialchars($response['response_id']) ?>]" value="<?= htmlspecialchars($response['internal_student_id'] ?? '') ?>">
+                                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> ID: <?= htmlspecialchars($response['internal_student_id'] ?? '') ?></span>
+                                                <?php else: ?>
+                                                    <span class="badge bg-warning text-dark">Non mappato</span>
+                                                <?php endif; ?>
                                             </td>
                                             <td class="text-center">
                                                 <small><?= $response['total_score'] ?> / <?= $response['max_score'] ?></small>
@@ -533,9 +470,6 @@ $mediaVoti = $totaleRisposte > 0 ? array_sum(array_column($formResponses, 'voto_
 <?php endif; ?>
 
 <script>
-// Dati classi e materie da PHP
-const classiMaterie = <?= json_encode($classiMaterie) ?>;
-const autoSubjectId = <?= json_encode($autoSubjectId) ?>;
 const studentSeries = <?= json_encode($studentSeries) ?>;
 let scatterChart = null;
 let currentPoints = [];
@@ -543,38 +477,9 @@ let selectedStudentKey = null;
 let selectedStudentIndex = null;
 const studentIndexByKey = new Map();
 
-// Gestione selezione classe -> materia
-document.getElementById('classSelect').addEventListener('change', function() {
-    const classId = this.value;
-    const subjectSelect = document.getElementById('subjectSelect');
 
-    subjectSelect.innerHTML = '<option value="">-- Seleziona Materia --</option>';
-
-    if (classId) {
-        const classe = classiMaterie.find(c => c.id == classId);
-        if (classe && classe.subjects) {
-            classe.subjects.forEach(subject => {
-                const option = document.createElement('option');
-                option.value = subject.id;
-                option.textContent = subject.name;
-                // Auto-seleziona materia se rilevata
-                if (autoSubjectId && subject.id == autoSubjectId) {
-                    option.selected = true;
-                }
-                subjectSelect.appendChild(option);
-            });
-        }
-    }
-
-    checkPublishButton();
-});
-
-// Trigger change per popolare materie se classe pre-selezionata
+// Inizializzazione al caricamento
 window.addEventListener('DOMContentLoaded', function() {
-    const classSelect = document.getElementById('classSelect');
-    if (classSelect.value) {
-        classSelect.dispatchEvent(new Event('change'));
-    }
     updateSelectedCount();
     renderScatter(null);
 
@@ -591,17 +496,14 @@ window.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-document.getElementById('subjectSelect').addEventListener('change', checkPublishButton);
 document.getElementById('gradeTypeSelect').addEventListener('change', checkPublishButton);
 
 function checkPublishButton() {
-    const classId = document.getElementById('classSelect').value;
-    const subjectId = document.getElementById('subjectSelect').value;
     const gradeType = document.getElementById('gradeTypeSelect').value;
     const publishBtn = document.getElementById('publishBtn');
     const publishInfo = document.getElementById('publishInfo');
 
-    const canPublish = classId && subjectId && gradeType;
+    const canPublish = !!gradeType;
     publishBtn.disabled = !canPublish;
 
     if (canPublish) {
@@ -609,7 +511,7 @@ function checkPublishButton() {
         publishInfo.textContent = `Come voto ${gradeTypeName}`;
         publishInfo.className = 'text-success small fw-bold';
     } else {
-        publishInfo.textContent = 'Seleziona classe, materia e tipo voto';
+        publishInfo.textContent = 'Seleziona il tipo voto';
         publishInfo.className = 'text-muted small';
     }
 
@@ -907,145 +809,6 @@ function showStudentLevels(email) {
     panel.innerHTML = table;
 }
 
-// ====== CARICAMENTO STUDENTI VIA AJAX ======
-const autoClassId = <?= json_encode($autoClassId) ?>;
-let studentsData = [];
 
-// Funzione per generare la parte email dallo studente
-function generateEmailPart(email) {
-    const parts = email.toLowerCase().split('@');
-    return parts[0] || '';
-}
-
-// Carica studenti dalla classe selezionata
-async function loadStudentsForClass(classId) {
-    if (!classId) return;
-
-    try {
-        const response = await fetch(`ajax_load_students_with_cache.php?class_id=${classId}`);
-        const data = await response.json();
-
-        if (data.success) {
-            studentsData = data.students;
-            console.log(`Caricati ${data.count} studenti${data.cached ? ' (da cache)' : ''}`);
-            populateStudentDropdowns();
-        } else {
-            throw new Error(data.error || 'Errore sconosciuto');
-        }
-    } catch (error) {
-        console.error('Errore caricamento studenti:', error);
-        showStudentLoadError(error.message);
-    }
-}
-
-// Popola tutti i dropdown con gli studenti caricati
-function populateStudentDropdowns() {
-    const selects = document.querySelectorAll('.student-select');
-
-    selects.forEach(select => {
-        const responseEmail = select.getAttribute('data-response-email');
-        const preselectedId = select.getAttribute('data-preselected-id');
-        const responseEmailPart = generateEmailPart(responseEmail);
-
-        // Svuota il select
-        select.innerHTML = '<option value="">-- Seleziona studente --</option>';
-
-        // Aggiungi opzioni studenti
-        let autoMatchId = null;
-        studentsData.forEach(student => {
-            const option = document.createElement('option');
-            option.value = student.id;
-            option.textContent = student.display_name;
-            option.setAttribute('data-email', student.generated_email);
-
-            // Auto-match per email
-            if (student.email_part.toLowerCase() === responseEmailPart.toLowerCase()) {
-                autoMatchId = student.id;
-            }
-
-            select.appendChild(option);
-        });
-
-        // Seleziona lo studente: priorità a preselected, poi auto-match
-        const selectedId = preselectedId || autoMatchId;
-        if (selectedId) {
-            select.value = selectedId;
-            // Abilita la checkbox
-            const row = select.closest('tr');
-            const checkbox = row.querySelector('.response-checkbox');
-            if (checkbox) {
-                checkbox.disabled = false;
-                checkbox.checked = true;
-                row.setAttribute('data-mapped', '1');
-            }
-            // Mostra status
-            const status = row.querySelector('.student-status');
-            if (status) {
-                status.innerHTML = '<i class="bi bi-check-circle text-success"></i> Mappato';
-                status.className = 'student-status text-success small';
-            }
-        }
-    });
-
-    updateSelectedCount();
-}
-
-// Mostra errore di caricamento
-function showStudentLoadError(errorMsg) {
-    const selects = document.querySelectorAll('.student-select');
-    selects.forEach(select => {
-        select.innerHTML = '<option value="">Errore caricamento</option>';
-        const status = select.closest('tr').querySelector('.student-status');
-        if (status) {
-            status.innerHTML = `<i class="bi bi-exclamation-triangle"></i> ${errorMsg}`;
-            status.className = 'student-status text-danger small';
-        }
-    });
-}
-
-// Gestisce il cambio di selezione studente
-function handleStudentChange(selectElement) {
-    const row = selectElement.closest('tr');
-    const checkbox = row.querySelector('.response-checkbox');
-    const status = row.querySelector('.student-status');
-    const studentId = selectElement.value;
-
-    if (studentId) {
-        // Studente selezionato
-        checkbox.disabled = false;
-        checkbox.checked = true;
-        row.setAttribute('data-mapped', '1');
-        if (status) {
-            status.innerHTML = '<i class="bi bi-check-circle text-success"></i> Mappato';
-            status.className = 'student-status text-success small';
-        }
-    } else {
-        // Nessuno studente selezionato
-        checkbox.disabled = true;
-        checkbox.checked = false;
-        row.setAttribute('data-mapped', '0');
-        if (status) {
-            status.innerHTML = '<i class="bi bi-exclamation-triangle text-warning"></i> Non mappato';
-            status.className = 'student-status text-warning small';
-        }
-    }
-
-    updateSelectedCount();
-}
-
-// Carica studenti al caricamento pagina
-window.addEventListener('DOMContentLoaded', function() {
-    if (autoClassId) {
-        loadStudentsForClass(autoClassId);
-    }
-});
-
-// Ricarica studenti quando cambia la classe
-document.getElementById('classSelect').addEventListener('change', function() {
-    const newClassId = this.value;
-    if (newClassId) {
-        loadStudentsForClass(newClassId);
-    }
-});
 </script>
 

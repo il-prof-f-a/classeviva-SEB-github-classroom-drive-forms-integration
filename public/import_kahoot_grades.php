@@ -13,13 +13,18 @@ try {
 }
 
 use App\Core\Database\DatabaseFactory;
-use App\Integration\ClasseVivaAPI;
+use App\Core\GradeImportStudentService;
+use App\Core\TeachingGroupIntegrationRepository;
+use App\Core\UdaGroupRepository;
+use App\Integration\GoogleClassroomAPI;
 
 try {
     $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 } catch (Exception $e) {
     die("Errore inizializzazione database: " . $e->getMessage());
 }
+
+$userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
 
 /**
  * Calcola il voto più vicino nella scala ClasseViva
@@ -111,80 +116,79 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['kahoot_csv'])) {
             }
         }
 
-        // Carica associazione UDA -> Classe
-        $udaClassi = $dbAdapter->findWhere('UDA_CLASSI', ['id_uda' => $test['id_uda']]);
-        if (empty($udaClassi)) {
-            throw new Exception("Nessuna classe associata all'UDA. Vai su map_classes.php per associare le classi.");
-        }
-
-        // Usa prima classe associata (potremmo migliorare permettendo selezione)
-        $udaClasse = $udaClassi[0];
-        $idClasse = $udaClasse['id_classe_cv'];
-        $idMateria = $udaClasse['id_materia_cv'];
-
-        // Carica studenti da ClasseViva
-        $classeVivaAPI = new ClasseVivaAPI($config);
-        $studentiClasseViva = $classeVivaAPI->getStudentiClasse($idClasse);
-
-        if (empty($studentiClasseViva)) {
-            throw new Exception("Nessuno studente trovato in ClasseViva per la classe ID: $idClasse");
-        }
-
-        // Parse righe CSV
-        while (($row = fgetcsv($handle)) !== false) {
-            if (count($row) <= max($nameIdx, $scoreIdx)) {
-                continue; // Riga non valida
-            }
-
-            $nomeKahoot = trim($row[$nameIdx]);
-            $punteggio = floatval($row[$scoreIdx]);
-
-            if (empty($nomeKahoot)) {
+        // Risoluzione provider-neutral: gruppo + roster Classroom per il match nomi.
+        $groupId = null;
+        $courseId = null;
+        foreach ((new UdaGroupRepository($dbAdapter, $userId))->listForUda((string)$test['id_uda']) as $assignment) {
+            $candidateGroup = (string)($assignment['id_gruppo'] ?? '');
+            if ($candidateGroup === '') {
                 continue;
             }
-
-            // Match con studenti ClasseViva
-            $matched = null;
-            $nomeKahootLower = strtolower($nomeKahoot);
-
-            foreach ($studentiClasseViva as $studente) {
-                $nomeCV = strtolower(trim($studente['cognome'] . ' ' . $studente['nome']));
-                $nomeCVInv = strtolower(trim($studente['nome'] . ' ' . $studente['cognome']));
-
-                // Match esatto o con levenshtein
-                if ($nomeKahootLower === $nomeCV || $nomeKahootLower === $nomeCVInv ||
-                    levenshtein($nomeKahootLower, $nomeCV) <= 3 ||
-                    levenshtein($nomeKahootLower, $nomeCVInv) <= 3) {
-                    $matched = $studente;
-                    break;
-                }
+            $integration = (new TeachingGroupIntegrationRepository($dbAdapter, $userId))->findForGroupProvider($candidateGroup, 'google_classroom');
+            if ($integration !== null) {
+                $groupId = $candidateGroup;
+                $courseId = trim((string)($integration['external_context_id'] ?? ''));
+                break;
             }
+        }
+        if ($groupId === null || $courseId === '') {
+            throw new Exception("Nessun gruppo didattico con corso Google Classroom associato all'UDA.");
+        }
 
-            $matchedStudents[] = [
-                'kahoot_name' => $nomeKahoot,
-                'kahoot_score' => $punteggio,
-                'local_student' => $matched,
-                'match_confidence' => $matched ? 'high' : 'none'
+        $courseStudents = (new GoogleClassroomAPI($config))->getCourseStudents($courseId);
+        $roster = [];
+        foreach ($courseStudents as $courseStudent) {
+            $roster[] = [
+                'external_user_id' => (string)($courseStudent['id'] ?? ''),
+                'display_name' => (string)($courseStudent['name'] ?? ''),
+                'email' => (string)($courseStudent['email'] ?? ''),
             ];
         }
 
+        // Parse righe CSV
+        $kahootNames = [];
+        $kahootScores = [];
+        while (($row = fgetcsv($handle)) !== false) {
+            if (count($row) <= max($nameIdx, $scoreIdx)) {
+                continue;
+            }
+            $nomeKahoot = trim((string)$row[$nameIdx]);
+            if ($nomeKahoot === '') {
+                continue;
+            }
+            $kahootNames[] = $nomeKahoot;
+            $kahootScores[$nomeKahoot] = floatval($row[$scoreIdx]);
+        }
         fclose($handle);
 
-        if (empty($matchedStudents)) {
+        if ($kahootNames === []) {
             throw new Exception("Nessun risultato trovato nel file CSV");
+        }
+
+        $resolution = (new GradeImportStudentService($dbAdapter, $userId))->resolveByName('google_classroom', $courseId, $roster, $kahootNames);
+
+        foreach ($kahootNames as $nomeKahoot) {
+            $match = $resolution['matches'][$nomeKahoot] ?? null;
+            $matchedStudents[] = [
+                'kahoot_name' => $nomeKahoot,
+                'kahoot_score' => $kahootScores[$nomeKahoot],
+                'local_student' => ($match !== null && ($match['id_studente'] ?? '') !== '')
+                    ? ['id' => $match['id_studente']]
+                    : null,
+                'match_confidence' => ($match !== null && ($match['id_studente'] ?? '') !== '') ? 'high' : 'none',
+            ];
         }
 
         // Store data in session per step successivo
         $_SESSION['import_kahoot_data'] = [
             'test_id' => $testId,
-            'id_classe' => $idClasse,
-            'id_materia' => $idMateria,
+            'id_gruppo' => $groupId,
             'matched_students' => $matchedStudents,
-            'classe_name' => $udaClasse['nome_classe'] ?? ''
         ];
 
         header("Location: ?test_id=" . urlencode($testId) . "&step=review");
         exit;
+
 
     } catch (Exception $e) {
         $errorMessage = "Errore caricamento CSV: " . $e->getMessage();
@@ -221,8 +225,7 @@ if ($step === 'import' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $importData = $_SESSION['import_kahoot_data'];
-        $idClasse = $importData['id_classe'];
-        $idMateria = $importData['id_materia'];
+        $groupId = $importData['id_gruppo'] ?? null;
 
         $imported = 0;
         $skipped = 0;
@@ -251,40 +254,6 @@ if ($step === 'import' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             try {
-                // Assicurati che lo studente esista nella tabella STUDENTI
-                $studenteEsistente = $dbAdapter->findOne('STUDENTI', 'id_studente_cv', $studentId);
-
-                if (!$studenteEsistente) {
-                    // Carica info studente da ClasseViva
-                    $classeVivaAPI = new ClasseVivaAPI($config);
-                    $studentiClasseViva = $classeVivaAPI->getStudentiClasse($idClasse);
-
-                    $studenteInfo = null;
-                    foreach ($studentiClasseViva as $s) {
-                        if ($s['id'] === $studentId) {
-                            $studenteInfo = $s;
-                            break;
-                        }
-                    }
-
-                    if ($studenteInfo) {
-                        // Aggiungi lo studente
-                        $studenteData = [
-                            'id_studente_cv' => $studentId,
-                            'id_classe_cv' => $idClasse,
-                            'nome_classe' => $importData['classe_name'],
-                            'data_sincronizzazione' => date('Y-m-d H:i:s'),
-                            'attivo' => 1
-                        ];
-
-                        try {
-                            $dbAdapter->insertRow('STUDENTI', $studenteData);
-                        } catch (Exception $e) {
-                            // Studente già esistente, continua
-                        }
-                    }
-                }
-
                 // Prepara voto/giudizio
                 $voto = null;
                 $giudizio = '';
@@ -302,9 +271,8 @@ if ($step === 'import' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $votoData = [
                     'id_voto' => 'VOTO_' . uniqid(),
                     'id_uda' => $test['id_uda'],
-                    'id_studente_cv' => $studentId,
-                    'id_classe_cv' => $idClasse,
-                    'id_materia_cv' => $idMateria,
+                    'id_gruppo' => $groupId,
+                    'id_studente' => $studentId,
                     'tipo_voto' => $tipoVoto,
                     'voto' => $voto,
                     'giudizio' => $giudizio,
@@ -312,10 +280,12 @@ if ($step === 'import' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     'data_valutazione' => $testDate,
                     'data_creazione' => date('Y-m-d H:i:s'),
                     'pubblicato' => 0,
-                    'id_annotazione_cv' => null,
+                    'provider_pubblicazione' => null,
+                    'external_publication_id' => null,
                     'num_evidenze_positive' => 0,
                     'num_evidenze_negative' => 0,
                     'num_evidenze_totali' => 0,
+                    'id_utente' => $userId,
                     'link_origine' => $linkOrigine
                 ];
 
@@ -463,7 +433,7 @@ if ($step === 'import' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                                             <td>
                                                 <?php if ($match['local_student']): ?>
                                                     <span class="badge bg-success">✓</span>
-                                                    <?= htmlspecialchars($match['local_student']['nome'] . ' ' . $match['local_student']['cognome']) ?>
+                                                    <?= htmlspecialchars('ID: ' . $match['local_student']['id']) ?>
                                                     <input type="hidden" name="student_id[<?= $idx ?>]" value="<?= htmlspecialchars($match['local_student']['id']) ?>">
                                                 <?php else: ?>
                                                     <span class="badge bg-warning">!</span>

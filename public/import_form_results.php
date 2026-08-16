@@ -22,7 +22,8 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 use App\Core\GoogleTokenProvider;
 use App\Core\Database\DatabaseFactory;
 use App\Core\UDAManager;
-use App\Integration\ClasseVivaAPI;
+use App\Core\GradeImportStudentService;
+use App\Integration\GoogleClassroomAPI;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use Google\Client;
 use Google\Service\Forms;
@@ -32,7 +33,6 @@ use Google\Service\Forms\ResponseAnswer;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 $udaManager = new UDAManager($config);
-$cv = new ClasseVivaAPI($config);
 
 $step = $_GET['step'] ?? 'select_test';
 $testId = $_GET['test_id'] ?? $_POST['test_id'] ?? null;
@@ -643,87 +643,26 @@ if ($step === 'read_responses' && $testId) {
             ];
         }
 
-        // Recupera mapping classroom per auto-selezione classe/materia
-        $classroomMapping = null;
-        $autoClassId = null;
-        $autoSubjectId = null;
-
-        // STRATEGIA INTELLIGENTE: Rileva automaticamente il corso Google Classroom dal test
-        // Verifica se il test ha già un google_course_id salvato
-        $googleCourseId = $test['google_course_id'] ?? null;
-
-        $allMappings = $dbAdapter->findAll('CLASSROOM_MAPPINGS');
-
-        // Se il test ha un google_course_id, usa quello per trovare il mapping
-        if ($googleCourseId) {
-            foreach ($allMappings as $mapping) {
-                $stato = strtolower(trim((string)($mapping['stato'] ?? 'attivo')));
-                if (($stato === '' || $stato === 'attivo' || $stato === 'active' || $stato === '1') &&
-                    (($mapping['id_corso_gc'] ?? '') == $googleCourseId)) {
-                    $classroomMapping = $mapping;
-                    $autoClassId = $mapping['id_classe_cv'] ?? null;
-                    $autoSubjectId = $mapping['id_materia_cv'] ?? null;
-                    break;
+        // Risoluzione provider-neutral: gruppo e identità studenti dal roster Classroom vivo.
+        $gradeImportService = new GradeImportStudentService($dbAdapter, $currentUserId);
+        $courseId = trim((string)($test['classroom_course_id'] ?? ''));
+        $resolution = ['group_id' => null, 'matches' => [], 'unmatched' => []];
+        if ($courseId !== '') {
+            try {
+                $classroomAPI = new GoogleClassroomAPI($config);
+                $courseStudents = $classroomAPI->getCourseStudents($courseId);
+                $roster = [];
+                foreach ($courseStudents as $courseStudent) {
+                    $roster[] = [
+                        'external_user_id' => (string)($courseStudent['id'] ?? ''),
+                        'email' => (string)($courseStudent['email'] ?? ''),
+                        'display_name' => (string)($courseStudent['name'] ?? ''),
+                    ];
                 }
-            }
-        }
-
-        // Se non trovato, cerca basandosi sugli studenti che hanno risposto (fallback intelligente)
-        if (!$classroomMapping) {
-            $allStudentMappings = $dbAdapter->findAll('MAPPATURA_STUDENTI');
-
-            // Raccogli email degli studenti che hanno risposto
-            $respondentEmails = array_map(function($r) {
-                return strtolower($r['email']);
-            }, $formResponses);
-
-            // Cerca il mapping con il maggior numero di studenti in comune
-            $bestMapping = null;
-            $bestMatchCount = 0;
-
-            foreach ($allMappings as $mapping) {
-                $stato = strtolower(trim((string)($mapping['stato'] ?? 'attivo')));
-                if (!($stato === '' || $stato === 'attivo' || $stato === 'active' || $stato === '1')) {
-                    continue;
-                }
-
-                $mappingId = $mapping['id_mapping'] ?? null;
-                if (!$mappingId) {
-                    continue;
-                }
-
-                // Conta quanti studenti del form appartengono a questo mapping
-                $matchCount = 0;
-                foreach ($allStudentMappings as $studentMap) {
-                    if (($studentMap['id_mapping_materia'] ?? '') === $mappingId) {
-                        $studentEmail = strtolower($studentMap['email_google'] ?? '');
-                        if ($studentEmail && in_array($studentEmail, $respondentEmails)) {
-                            $matchCount++;
-                        }
-                    }
-                }
-
-                if ($matchCount > $bestMatchCount) {
-                    $bestMatchCount = $matchCount;
-                    $bestMapping = $mapping;
-                }
-            }
-
-            if ($bestMapping && $bestMatchCount > 0) {
-                $classroomMapping = $bestMapping;
-                $autoClassId = $bestMapping['id_classe_cv'] ?? null;
-                $autoSubjectId = $bestMapping['id_materia_cv'] ?? null;
-            } else {
-                // Ultimo fallback: usa il primo mapping attivo
-                foreach ($allMappings as $mapping) {
-                    $stato = strtolower(trim((string)($mapping['stato'] ?? 'attivo')));
-                    if ($stato === '' || $stato === 'attivo' || $stato === 'active' || $stato === '1') {
-                        $classroomMapping = $mapping;
-                        $autoClassId = $mapping['id_classe_cv'] ?? null;
-                        $autoSubjectId = $mapping['id_materia_cv'] ?? null;
-                        break;
-                    }
-                }
+                $respondentEmails = array_map(static fn(array $resp): string => (string)($resp['email'] ?? ''), $formResponses);
+                $resolution = $gradeImportService->resolveByEmail('google_classroom', $courseId, $roster, $respondentEmails);
+            } catch (Exception $e) {
+                $resolution = ['group_id' => null, 'matches' => [], 'unmatched' => [], 'error' => $e->getMessage()];
             }
         }
 
@@ -731,10 +670,8 @@ if ($step === 'read_responses' && $testId) {
         $_SESSION['form_responses'] = $formResponses;
         $_SESSION['test_id'] = $testId;
         $_SESSION['uda_id'] = $udaId;
-        $_SESSION['auto_class_id'] = $autoClassId;
-        $_SESSION['auto_subject_id'] = $autoSubjectId;
-        $_SESSION['classroom_mapping'] = $classroomMapping;
-        $_SESSION["class_students"] = [];
+        $_SESSION['resolution'] = $resolution;
+        $_SESSION['group_id'] = $resolution['group_id'] ?? null;
         $_SESSION['cbm_params'] = $cbmParams;
         $_SESSION['cbm_enabled'] = $cbmEnabled;
         $_SESSION['cbm_mapping_warning'] = $cbmMappingWarning;
@@ -773,11 +710,9 @@ if ($step === 'publish_grades' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $pubblicati = [];
         $errori = [];
 
-        $classId = $_POST['class_id'] ?? null;
-        $subjectId = $_POST['subject_id'] ?? null;
-
-        if (!$classId || !$subjectId) {
-            throw new Exception("Classe e materia sono obbligatorie.");
+        $groupId = $_SESSION['group_id'] ?? null;
+        if (!$groupId) {
+            throw new Exception("Gruppo didattico non rilevato per questo test.");
         }
 
         // Mappa tipo voto per descrizione
@@ -799,7 +734,7 @@ if ($step === 'publish_grades' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $responseId = $responseData['response_id'];
 
             // Usa l'ID studente selezionato dalla tendina (o quello pre-mappato come fallback)
-            $studentId = $studentMapping[$responseId] ?? $responseData['student_cv_id'] ?? null;
+            $studentId = $studentMapping[$responseId] ?? null;
 
             if (!$studentId) {
                 $errori[] = "Email $studentEmail: studente non selezionato (selezionare dalla tendina)";
@@ -867,22 +802,6 @@ if ($step === 'publish_grades' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             ];
             $gradeTypeFull = $gradeTypeMap[$gradeType] ?? 'scritto';
 
-            // Recupera nome materia per il voto (tollerante a errori API)
-            $subjectName = 'Materia';
-            try {
-                $allSubjects = $cv->getSubjects();
-                foreach ($allSubjects as $subject) {
-                    if (($subject['id'] ?? '') == $subjectId) {
-                        $subjectName = $subject['nome'] ?? $subject['description'] ?? 'Materia';
-                        break;
-                    }
-                }
-            } catch (Exception $e) {
-                // fallback silenzioso, evita blocco su cURL error 3
-                $subjectName = 'Materia';
-            }
-
-            $idAnnotCv = null;
             $pubblicatoFlag = 0;
 
             // Salva nel database interno
@@ -907,9 +826,8 @@ if ($step === 'publish_grades' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $dbVoto = [
                 'id_voto' => $votoId,
                 'id_uda' => $udaId,
-                'id_studente_cv' => $studentId,
-                'id_classe_cv' => $classId,
-                'id_materia_cv' => $subjectId,
+                'id_gruppo' => $groupId,
+                'id_studente' => $studentId,
                 'tipo_voto' => '' . strtolower($gradeTypeLabel), // es: scritto
                 'voto' => $voto,
                 'giudizio' => $giudizioText,
@@ -917,10 +835,12 @@ if ($step === 'publish_grades' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 'data_valutazione' => $dataValutazione,
                 'data_creazione' => date('Y-m-d H:i:s'),
                 'pubblicato' => $pubblicatoFlag,
-                'id_annotazione_cv' => $idAnnotCv,
+                'provider_pubblicazione' => null,
+                'external_publication_id' => null,
                 'num_evidenze_positive' => null,
                 'num_evidenze_negative' => null,
                 'num_evidenze_totali' => null,
+                'id_utente' => $currentUserId,
                 'link_origine' => $linkOrigine
             ];
 
@@ -938,9 +858,8 @@ if ($step === 'publish_grades' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                         'id_risposta' => 'CBMRISP_' . uniqid(),
                         'id_test' => $testId,
                         'id_domanda' => $questionId,
-                        'id_studente_cv' => $studentId,
-                        'id_classe_cv' => $classId,
-                        'id_materia_cv' => $subjectId,
+                        'id_gruppo' => $groupId,
+                        'id_studente' => $studentId,
                         'google_response_id' => $responseId,
                         'domanda_label' => $detail['question_label'] ?? '',
                         'confidenza_livello' => $detail['conf_level'] ?? null,
@@ -965,7 +884,7 @@ if ($step === 'publish_grades' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $pubblicati[] = [
                 'email' => $studentEmail,
-                'nome' => $responseData['student_cv_name'] ?? $studentEmail,
+                'nome' => $studentEmail,
                 'voto' => $voto,
                 'percentuale' => $percentuale,
                 'tipo_voto' => $gradeTypeLabel

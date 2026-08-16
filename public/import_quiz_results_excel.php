@@ -15,13 +15,16 @@ session_start();
 $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
+use App\Core\GradeImportStudentService;
+use App\Core\TeachingGroupIntegrationRepository;
+use App\Core\UdaGroupRepository;
 use App\Core\UDAManager;
-use App\Integration\ClasseVivaAPI;
+use App\Integration\GoogleClassroomAPI;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 $udaManager = new UDAManager($config);
-$cv = new ClasseVivaAPI($config);
+$userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
 
 $platform = $_GET['platform'] ?? $_POST['platform'] ?? null;
 $udaId = $_GET['uda_id'] ?? $_POST['uda_id'] ?? null;
@@ -237,30 +240,19 @@ if ($step === 'upload' && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES
             throw new Exception('Il file deve essere in formato .xlsx');
         }
 
-        // Prova a usare associazioni UDA_CLASSI per pre-selezionare classe/materia e studenti,
-        // ma non è obbligatorio in questa fase (serve solo come aiuto per il matching).
-        $udaClassi = [];
-        $studentiClasseViva = [];
-        $idClasse = null;
-        $idMateria = null;
-        try {
-            $udaClassi = $dbAdapter->findWhere('UDA_CLASSI', ['id_uda' => $udaId]);
-        } catch (Exception $e) {
-            $udaClassi = [];
-        }
-
-        if (!empty($udaClassi)) {
-            // Usa prima associazione solo per pre-selezione
-            $udaClasse = $udaClassi[0];
-            $idClasse = $udaClasse['id_classe_cv'] ?? null;
-            $idMateria = $udaClasse['id_materia_cv'] ?? null;
-
-            if ($idClasse) {
-                try {
-                    $studentiClasseViva = $cv->getStudentiClasse($idClasse);
-                } catch (Exception $e) {
-                    $studentiClasseViva = [];
-                }
+        // Risoluzione provider-neutral: gruppo + roster Classroom per il match nomi.
+        $groupId = null;
+        $courseId = null;
+        foreach ((new UdaGroupRepository($dbAdapter, $userId))->listForUda((string)$udaId) as $assignment) {
+            $candidateGroup = (string)($assignment['id_gruppo'] ?? '');
+            if ($candidateGroup === '') {
+                continue;
+            }
+            $integration = (new TeachingGroupIntegrationRepository($dbAdapter, $userId))->findForGroupProvider($candidateGroup, 'google_classroom');
+            if ($integration !== null) {
+                $groupId = $candidateGroup;
+                $courseId = trim((string)($integration['external_context_id'] ?? ''));
+                break;
             }
         }
 
@@ -270,21 +262,39 @@ if ($step === 'upload' && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES
             throw new Exception('Nessuna riga valida trovata nel file.');
         }
 
+        // Risolvi i nomi utente verso id_studente interni.
+        $resolution = ['group_id' => null, 'matches' => [], 'unmatched' => []];
+        if ($groupId !== null && $courseId !== '') {
+            try {
+                $courseStudents = (new GoogleClassroomAPI($config))->getCourseStudents($courseId);
+                $roster = [];
+                foreach ($courseStudents as $courseStudent) {
+                    $roster[] = [
+                        'external_user_id' => (string)($courseStudent['id'] ?? ''),
+                        'display_name' => (string)($courseStudent['name'] ?? ''),
+                        'email' => (string)($courseStudent['email'] ?? ''),
+                    ];
+                }
+                $usernames = array_map(static fn(array $r): string => (string)$r['username'], $rows);
+                $resolution = (new GradeImportStudentService($dbAdapter, $userId))->resolveByName('google_classroom', $courseId, $roster, $usernames);
+            } catch (Exception $e) {
+                $resolution = ['group_id' => null, 'matches' => [], 'unmatched' => []];
+            }
+        }
+
         // Costruisci struttura con matching studenti
         $matchedRows = [];
         foreach ($rows as $rowIdx => $row) {
-            $bestStudent = findBestStudentMatch($row['username'], $studentiClasseViva);
-            $studentId = $bestStudent['id'] ?? null;
-            $studentName = $bestStudent ? trim(($bestStudent['nome'] ?? '') . ' ' . ($bestStudent['cognome'] ?? '')) : null;
-
+            $match = $resolution['matches'][$row['username']] ?? null;
+            $studentId = ($match['id_studente'] ?? null);
             $matchedRows[] = [
                 'username' => $row['username'],
                 'punteggio_label' => $row['punteggio_label'],
                 'percentuale' => $row['percentuale'],
                 'voto' => $row['voto'],
                 'student_id' => $studentId,
-                'student_name' => $studentName,
-                'matched' => $studentId !== null,
+                'student_name' => ($studentId !== null && $studentId !== '') ? 'ID: ' . $studentId : null,
+                'matched' => ($studentId !== null && $studentId !== ''),
             ];
         }
 
@@ -292,11 +302,12 @@ if ($step === 'upload' && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES
             'platform' => $platform,
             'uda_id' => $udaId,
             'test_id' => $testId,
-            'id_classe' => $idClasse,
-            'id_materia' => $idMateria,
-            'studenti' => $studentiClasseViva,
+            'id_gruppo' => $groupId,
             'rows' => $matchedRows,
         ];
+
+        $importData = $_SESSION['import_quiz_excel_data'];
+        $step = 'review';
 
         $importData = $_SESSION['import_quiz_excel_data'];
         $step = 'review';
@@ -335,9 +346,7 @@ if ($step === 'import' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$testDate) {
             $testDate = date('Y-m-d');
         }
-        // Usa classe/materia selezionate nel passo 2 se presenti, altrimenti fallback a quelle auto-rilevate
-        $idClasse = $_POST['class_id'] ?? ($importData['id_classe'] ?? null);
-        $idMateria = $_POST['subject_id'] ?? ($importData['id_materia'] ?? null);
+        $groupId = $importData['id_gruppo'] ?? null;
 
         $studentIds = $_POST['student_id'] ?? [];
         $importFlags = $_POST['import_row'] ?? [];
@@ -383,7 +392,6 @@ if ($step === 'import' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $noteVoto = $descrizione . "\n<{$votoId}>";
 
                 $pubblicatoFlag = 0;
-                $idAnnotCv = null;
 
                 // Determina voto numerico / giudizio da salvare
                 $voto = null;
@@ -399,9 +407,8 @@ if ($step === 'import' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $votoData = [
                     'id_voto' => $votoId,
                     'id_uda' => $udaId,
-                    'id_studente_cv' => $studentId,
-                    'id_classe_cv' => $idClasse,
-                    'id_materia_cv' => $idMateria,
+                    'id_gruppo' => $groupId,
+                    'id_studente' => $studentId,
                     'tipo_voto' => $tipoVoto,
                     'voto' => $voto,
                     'giudizio' => $giudizio,
@@ -409,10 +416,12 @@ if ($step === 'import' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     'data_valutazione' => $testDate,
                     'data_creazione' => date('Y-m-d H:i:s'),
                     'pubblicato' => $pubblicatoFlag,
-                    'id_annotazione_cv' => $idAnnotCv,
+                    'provider_pubblicazione' => null,
+                    'external_publication_id' => null,
                     'num_evidenze_positive' => 0,
                     'num_evidenze_negative' => 0,
                     'num_evidenze_totali' => 0,
+                    'id_utente' => $userId,
                     'link_origine' => $linkOrigine,
                 ];
 
@@ -547,7 +556,7 @@ $progressWidth = $currentStep === 1 ? '33%' : ($currentStep === 2 ? '66%' : '100
         <?php elseif ($step === 'review' && $importData): ?>
             <?php
             $rows = $importData['rows'] ?? [];
-            $studenti = $importData['studenti'] ?? [];
+            
 
             $totaleRisposte = count($rows);
             $sufficienti = count(array_filter($rows, fn($r) => ($r['voto'] ?? 0) >= 6));
@@ -562,26 +571,8 @@ $progressWidth = $currentStep === 1 ? '33%' : ($currentStep === 2 ? '66%' : '100
             $testNumDomande = 'N/D';
             $testSogliaLabel = '60%';
 
-            // Configurazione importazione auto-rilevata da Classroom/UDA_CLASSI (se disponibile)
-            $idClasseSelezionata = $importData['id_classe'] ?? null;
-            $idMateriaSelezionata = $importData['id_materia'] ?? null;
-            $classiMaterie = [];
-            try {
-                $classiMaterie = $cv->getClassesWithTeacherSubjects();
-            } catch (Exception $e) {
-                $classiMaterie = [];
-            }
-
-            // Trova la classe selezionata nella lista classi/materie
-            $classeSelezionata = null;
-            if ($idClasseSelezionata && !empty($classiMaterie)) {
-                foreach ($classiMaterie as $classe) {
-                    if (($classe['id'] ?? null) == $idClasseSelezionata) {
-                        $classeSelezionata = $classe;
-                        break;
-                    }
-                }
-            }
+            // Gruppo didattico risolto in fase di upload.
+            $groupId = $importData['id_gruppo'] ?? null;
             ?>
             <div class="row">
                 <div class="col-md-9">
@@ -621,49 +612,11 @@ $progressWidth = $currentStep === 1 ? '33%' : ($currentStep === 2 ? '66%' : '100
                                         <div class="card-body">
                                             <h6 class="mb-3">
                                                 <i class="bi bi-gear"></i> Configurazione Importazione
-                                                <?php if ($idClasseSelezionata && $idMateriaSelezionata): ?>
-                                                    <span class="badge bg-info ms-2">Auto-rilevata da Classroom</span>
+                                                <?php if ($groupId): ?>
+                                                    <span class="badge bg-info ms-2">Gruppo didattico rilevato</span>
                                                 <?php endif; ?>
                                             </h6>
                                             <div class="row g-3">
-                                                <div class="col-md-4">
-                                                    <label class="form-label">Classe</label>
-                                                    <select name="class_id" id="classSelect" class="form-select">
-                                                        <option value="">-- Seleziona Classe --</option>
-                                                        <?php foreach ($classiMaterie as $classe): ?>
-                                                            <?php
-                                                                $cid = $classe['id'] ?? null;
-                                                                $selected = ($cid && $cid == $idClasseSelezionata) ? 'selected' : '';
-                                                            ?>
-                                                            <option value="<?= htmlspecialchars((string)$cid) ?>" <?= $selected ?>>
-                                                                <?= htmlspecialchars($classe['name'] ?? ('Classe ' . $cid)) ?>
-                                                            </option>
-                                                        <?php endforeach; ?>
-                                                    </select>
-                                                    <small class="form-text text-muted">
-                                                        Classe suggerita dalla mappatura UDA/Classroom (modificabile).
-                                                    </small>
-                                                </div>
-                                                <div class="col-md-4">
-                                                    <label class="form-label">Materia</label>
-                                                    <select name="subject_id" id="subjectSelect" class="form-select">
-                                                        <option value="">-- Seleziona Materia --</option>
-                                                        <?php if ($classeSelezionata && !empty($classeSelezionata['subjects'])): ?>
-                                                            <?php foreach ($classeSelezionata['subjects'] as $subject): ?>
-                                                                <?php
-                                                                    $sid = $subject['id'] ?? null;
-                                                                    $selected = ($sid && $sid == $idMateriaSelezionata) ? 'selected' : '';
-                                                                ?>
-                                                                <option value="<?= htmlspecialchars((string)$sid) ?>" <?= $selected ?>>
-                                                                    <?= htmlspecialchars($subject['name'] ?? ('Materia ' . $sid)) ?>
-                                                                </option>
-                                                            <?php endforeach; ?>
-                                                        <?php endif; ?>
-                                                    </select>
-                                                    <small class="form-text text-muted">
-                                                        Materia suggerita; usata per l'importazione.
-                                                    </small>
-                                                </div>
                                                 <div class="col-md-4">
                                                     <label class="form-label">Tipo voto</label>
                                                     <select name="tipo_voto" class="form-select">
@@ -685,7 +638,7 @@ $progressWidth = $currentStep === 1 ? '33%' : ($currentStep === 2 ? '66%' : '100
                                                 <tr>
                                                     <th>Importa</th>
                                                     <th>Nome utente</th>
-                                                    <th>Studente ClasseViva</th>
+                                                    <th>Studente associato</th>
                                                     <th>Punteggio</th>
                                                     <th>%</th>
                                                     <th>Voto</th>
@@ -707,23 +660,12 @@ $progressWidth = $currentStep === 1 ? '33%' : ($currentStep === 2 ? '66%' : '100
                                                             <input type="hidden" name="username[<?= $idx ?>]" value="<?= htmlspecialchars($row['username']) ?>">
                                                         </td>
                                                         <td>
-                                                            <select name="student_id[<?= $idx ?>]"
-                                                                    class="form-select form-select-sm student-select"
-                                                                    data-username="<?= htmlspecialchars($row['username']) ?>">
-                                                                <option value=""><?= empty($studenti) ? 'Caricamento studenti...' : '-- Seleziona studente --' ?></option>
-                                                                <?php if (!empty($studenti)): ?>
-                                                                    <?php foreach ($studenti as $studente): ?>
-                                                                        <?php
-                                                                            $idStud = $studente['id'] ?? '';
-                                                                            $nomeStud = trim(($studente['cognome'] ?? '') . ' ' . ($studente['nome'] ?? ''));
-                                                                            $selected = ($row['student_id'] ?? '') == $idStud ? 'selected' : '';
-                                                                        ?>
-                                                                        <option value="<?= htmlspecialchars($idStud) ?>" <?= $selected ?>>
-                                                                            <?= htmlspecialchars($nomeStud) ?>
-                                                                        </option>
-                                                                    <?php endforeach; ?>
-                                                                <?php endif; ?>
-                                                            </select>
+                                                            <?php if ($row['student_id']): ?>
+                                                                <input type="hidden" name="student_id[<?= $idx ?>]" value="<?= htmlspecialchars($row['student_id']) ?>">
+                                                                <span class="badge bg-success"><i class="bi bi-check-circle"></i> ID: <?= htmlspecialchars($row['student_id']) ?></span>
+                                                            <?php else: ?>
+                                                                <span class="badge bg-warning text-dark">Non mappato</span>
+                                                            <?php endif; ?>
                                                         </td>
                                                         <td>
                                                             <?= htmlspecialchars($row['punteggio_label']) ?>
@@ -845,223 +787,6 @@ $progressWidth = $currentStep === 1 ? '33%' : ($currentStep === 2 ? '66%' : '100
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <?php if ($step === 'review' && isset($classiMaterie)): ?>
-    <script>
-        // Dati classi/materie da PHP
-        const classiMaterie = <?= json_encode($classiMaterie ?? []) ?>;
-        const autoClassId = <?= json_encode($idClasseSelezionata ?? null) ?>;
 
-        let studentsData = [];
-
-        async function loadStudentsForClass(classId) {
-            if (!classId) {
-                studentsData = [];
-                updateStudentSelects();
-                return;
-            }
-            try {
-                const resp = await fetch(`ajax_load_students_with_cache.php?class_id=${encodeURIComponent(classId)}`);
-                const data = await resp.json();
-                if (!data.success) {
-                    throw new Error(data.error || 'Errore caricamento studenti');
-                }
-                studentsData = data.students || [];
-                updateStudentSelects();
-            } catch (e) {
-                console.error('Errore caricamento studenti:', e);
-                studentsData = [];
-                updateStudentSelects(true, e.message);
-            }
-        }
-
-        function updateStudentSelects(withError = false, errorMsg = '') {
-            const selects = document.querySelectorAll('.student-select');
-            selects.forEach(select => {
-                const username = (select.getAttribute('data-username') || '').toLowerCase();
-                select.innerHTML = '';
-                if (withError) {
-                    const opt = document.createElement('option');
-                    opt.value = '';
-                    opt.textContent = `Errore: ${errorMsg}`;
-                    select.appendChild(opt);
-                    return;
-                }
-                if (!studentsData.length) {
-                    const opt = document.createElement('option');
-                    opt.value = '';
-                    opt.textContent = 'Nessuno studente caricato';
-                    select.appendChild(opt);
-                    return;
-                }
-                const placeholder = document.createElement('option');
-                placeholder.value = '';
-                placeholder.textContent = '-- Seleziona studente --';
-                select.appendChild(placeholder);
-
-                // Trova best match per username
-                let bestId = null;
-                let bestScore = 0;
-                const tokens = username.split(/\s+/).filter(t => t.length >= 3);
-
-                studentsData.forEach(stud => {
-                    const display = (stud.display_name || '').toLowerCase();
-                    let score = 0;
-                    tokens.forEach(tok => {
-                        if (display.includes(tok)) {
-                            score += 3;
-                        }
-                    });
-                    if (score > bestScore) {
-                        bestScore = score;
-                        bestId = stud.id;
-                    }
-
-                    const opt = document.createElement('option');
-                    opt.value = stud.id;
-                    opt.textContent = stud.display_name;
-                    select.appendChild(opt);
-                });
-
-                if (bestId && bestScore > 0) {
-                    select.value = bestId;
-                }
-
-                updateRowMappingStatus(select);
-            });
-        }
-
-        function updateRowMappingStatus(selectElement) {
-            if (!selectElement) return;
-            const row = selectElement.closest('tr');
-            if (!row) return;
-
-            const checkbox = row.querySelector('.response-checkbox');
-            const status = row.querySelector('.student-status');
-            const hasStudent = !!selectElement.value;
-
-            if (checkbox) {
-                checkbox.checked = hasStudent;
-            }
-
-            if (status) {
-                if (hasStudent) {
-                    status.className = 'student-status badge bg-success';
-                    status.textContent = 'Mappato';
-                } else {
-                    status.className = 'student-status badge bg-warning text-dark';
-                    status.textContent = 'Da mappare';
-                }
-            }
-
-            updateSelectedCount();
-            checkPublishButton();
-        }
-
-        function updateSelectedCount() {
-            const selected = document.querySelectorAll('.response-checkbox:checked').length;
-            const publishCount = document.getElementById('publishCount');
-            if (publishCount) {
-                publishCount.textContent = selected;
-            }
-        }
-
-        function checkPublishButton() {
-            const classId = document.getElementById('classSelect') ? document.getElementById('classSelect').value : '';
-            const subjectId = document.getElementById('subjectSelect') ? document.getElementById('subjectSelect').value : '';
-            const tipoVotoSelect = document.querySelector('select[name=\"tipo_voto\"]');
-            const tipoVoto = tipoVotoSelect ? tipoVotoSelect.value : '';
-
-            const publishBtn = document.getElementById('publishBtn');
-            const publishInfo = document.getElementById('publishInfo');
-
-            // Allinea la logica a import_form_results_step_preview_grades.php:
-            // basta che classe, materia e tipo voto siano selezionati
-            const canPublish = !!classId && !!subjectId && !!tipoVoto;
-
-            if (publishBtn) {
-                publishBtn.disabled = !canPublish;
-            }
-
-            if (publishInfo) {
-                if (canPublish) {
-                    let label = 'Scritto';
-                    if (tipoVoto === 'orale') label = 'Orale';
-                    if (tipoVoto === 'pratico') label = 'Pratico';
-                    publishInfo.textContent = `Come voto ${label}`;
-                    publishInfo.className = 'text-success small fw-bold';
-                } else {
-                    publishInfo.textContent = 'Seleziona classe, materia e tipo voto';
-                    publishInfo.className = 'text-muted small';
-                }
-            }
-
-            // Mantieni aggiornato il contatore selezionati
-            updateSelectedCount();
-        }
-
-        function populateSubjectSelect() {
-            const classId = document.getElementById('classSelect').value;
-            const subjectSelect = document.getElementById('subjectSelect');
-            subjectSelect.innerHTML = '<option value="">-- Seleziona Materia --</option>';
-            if (!classId) return;
-            const classe = classiMaterie.find(c => String(c.id) === String(classId));
-            if (classe && Array.isArray(classe.subjects)) {
-                classe.subjects.forEach(sub => {
-                    const opt = document.createElement('option');
-                    opt.value = sub.id;
-                    opt.textContent = sub.name;
-                    if (<?= json_encode($idMateriaSelezionata ?? null) ?> && String(sub.id) === String(<?= json_encode($idMateriaSelezionata ?? null) ?>)) {
-                        opt.selected = true;
-                    }
-                    subjectSelect.appendChild(opt);
-                });
-            }
-        }
-
-        document.addEventListener('DOMContentLoaded', () => {
-            const classSelect = document.getElementById('classSelect');
-            if (classSelect) {
-                classSelect.addEventListener('change', () => {
-                    populateSubjectSelect();
-                    loadStudentsForClass(classSelect.value);
-                    checkPublishButton();
-                });
-                if (autoClassId) {
-                    classSelect.value = String(autoClassId);
-                    populateSubjectSelect();
-                    loadStudentsForClass(autoClassId);
-                }
-            }
-
-            const subjectSelect = document.getElementById('subjectSelect');
-            if (subjectSelect) {
-                subjectSelect.addEventListener('change', checkPublishButton);
-            }
-
-            const tipoVotoSelect = document.querySelector('select[name=\"tipo_voto\"]');
-            if (tipoVotoSelect) {
-                tipoVotoSelect.addEventListener('change', checkPublishButton);
-            }
-
-            // Gestione cambio selezione studente: aggiorna stato, checkbox e pulsante
-            const studentSelects = document.querySelectorAll('.student-select');
-            studentSelects.forEach(select => {
-                select.addEventListener('change', () => updateRowMappingStatus(select));
-            });
-
-            const checkboxes = document.querySelectorAll('.response-checkbox');
-            checkboxes.forEach(cb => {
-                cb.addEventListener('change', () => {
-                    updateSelectedCount();
-                    checkPublishButton();
-                });
-            });
-
-            // Inizializza conteggio e stato pulsante
-            updateSelectedCount();
-            checkPublishButton();
-        });
-    </script>
-    <?php endif; ?>
 </body>
 </html>

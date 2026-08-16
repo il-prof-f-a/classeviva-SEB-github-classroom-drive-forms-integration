@@ -168,4 +168,106 @@ final class GradeImportStudentService
             'unmatched' => array_values(array_unique($unmatched)),
         ];
     }
+
+    /**
+     * Risolve nomi (es. giocatori Kahoot) verso id_studente interni, matchando
+     * i nomi contro un roster provider vivo (normalizzazione + levenshtein <= 3).
+     *
+     * @param list<array<string,mixed>> $roster  righe con external_user_id, display_name, email
+     * @param list<string> $names  nomi da risolvere
+     * @return array{group_id:string, matches:array<string,array{external_user_id:string,id_studente:string|null}>, unmatched:list<string>}
+     */
+    public function resolveByName(string $provider, string $contextId, array $roster, array $names): array
+    {
+        $rosterIndex = [];
+        foreach ($roster as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $externalId = trim((string)($row['external_user_id'] ?? ''));
+            $displayName = trim((string)($row['display_name'] ?? ''));
+            if ($externalId === '' || $displayName === '') {
+                continue;
+            }
+            $rosterIndex[] = [
+                'external_user_id' => $externalId,
+                'display_name' => $displayName,
+                'normalized' => self::normalizeComparable($displayName),
+            ];
+        }
+
+        $externalRows = [];
+        $matches = [];
+        $unmatched = [];
+        foreach ($names as $rawName) {
+            if (!is_scalar($rawName)) {
+                continue;
+            }
+            $name = trim((string)$rawName);
+            if ($name === '') {
+                continue;
+            }
+            $normalized = self::normalizeComparable($name);
+            $best = null;
+            $bestDistance = PHP_INT_MAX;
+            foreach ($rosterIndex as $candidate) {
+                if ($normalized === '' || $candidate['normalized'] === '') {
+                    continue;
+                }
+                $distance = levenshtein($normalized, $candidate['normalized']);
+                if ($distance < $bestDistance) {
+                    $bestDistance = $distance;
+                    $best = $candidate;
+                }
+            }
+            if ($best !== null && $bestDistance <= 3) {
+                $externalRows[] = [
+                    'external_user_id' => $best['external_user_id'],
+                    'display_name' => $best['display_name'],
+                ];
+                $matches[$name] = ['external_user_id' => $best['external_user_id']];
+            } else {
+                $unmatched[] = $name;
+            }
+        }
+
+        $resolved = $this->resolve($provider, $contextId, $externalRows);
+        $byExternal = [];
+        foreach ($resolved['rows'] as $row) {
+            $externalId = trim((string)($row['external_user_id'] ?? ''));
+            $studentId = trim((string)($row['id_studente'] ?? ''));
+            if ($externalId !== '' && $studentId !== '') {
+                $byExternal[$externalId] = $studentId;
+            }
+        }
+        foreach ($matches as $name => $match) {
+            $matches[$name]['id_studente'] = $byExternal[$match['external_user_id']] ?? null;
+        }
+
+        return [
+            'group_id' => $resolved['group_id'],
+            'matches' => $matches,
+            'unmatched' => array_values($unmatched),
+        ];
+    }
+
+    private static function normalizeComparable(string $text): string
+    {
+        $text = trim($text);
+        if ($text === '') {
+            return '';
+        }
+        if (function_exists('mb_strtolower')) {
+            $text = mb_strtolower($text);
+        } else {
+            $text = strtolower($text);
+        }
+        $translit = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $text);
+        if ($translit !== false && $translit !== null) {
+            $text = $translit;
+        }
+        $text = preg_replace('/[^a-z0-9]+/', ' ', $text);
+
+        return trim($text);
+    }
 }
