@@ -400,6 +400,11 @@ foreach ($studentiCV as $cv) {
     ?>
 
     <div class="container mt-4">
+        <div class="alert alert-warning border-0 shadow-sm">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <strong>Percorso legacy (ClasseViva):</strong> questa è la mappatura studenti dipendente da ClasseViva.
+            Per i gruppi didattici moderni usa la <a href="teaching_groups.php">tab Studenti del nuovo editor</a>.
+        </div>
         <div class="alert alert-info">
             <h5 class="mb-2"><i class="bi bi-info-circle"></i> Associazione Selezionata</h5>
             <div class="row">

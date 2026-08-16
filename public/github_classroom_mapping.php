@@ -693,6 +693,11 @@ if ($isAuthenticated) {
     include __DIR__ . '/partials/app_header.php';
     ?>
 <div class="container-fluid mt-4">
+    <div class="alert alert-warning border-0 shadow-sm">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        <strong>Percorso legacy (ClasseViva):</strong> la mappatura studenti qui sotto dipende da ClasseViva.
+        Per i gruppi didattici moderni usa <a href="teaching_groups.php">teaching_groups.php</a> (tab Studenti) e il percorso <code>id_gruppo</code>.
+    </div>
     <div class="row">
         <div class="col-md-12">
 <?php if ($requestScalar($_GET, 'auth') === 'success'): ?>
