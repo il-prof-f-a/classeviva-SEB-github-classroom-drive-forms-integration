@@ -291,6 +291,12 @@ foreach ($classiMaterieCV as $corso) {
     ?>
 
     <div class="container-fluid mt-4">
+
+    <div class="alert alert-warning border-0 shadow-sm">
+    <i class="bi bi-exclamation-triangle-fill"></i>
+    <strong>Pagina legacy:</strong> questa è la mappatura ClasseViva di tipo legacy.
+    Usa la <a href="map_classes.php">mappatura per gruppo didattico</a> per collegare Google Classroom (e GitHub) senza dipendere da ClasseViva.
+</div>
         <?php if ($errorMessage): ?>
         <div class="alert alert-danger alert-dismissible fade show" role="alert">
             <i class="fas fa-exclamation-circle me-2"></i><?= htmlspecialchars($errorMessage) ?>

@@ -286,6 +286,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     ?>
 
     <div class="container-fluid mt-4 mb-5">
+
+    <div class="alert alert-warning border-0 shadow-sm">
+    <i class="bi bi-exclamation-triangle-fill"></i>
+    <strong>Pagina legacy:</strong> questa è la mappatura ClasseViva di tipo legacy.
+    Usa la <a href="map_classes.php">mappatura per gruppo didattico</a> per collegare Google Classroom (e GitHub) senza dipendere da ClasseViva.
+</div>
         <?php if ($error_message): ?>
             <div class="alert alert-danger alert-dismissible fade show">
                 <i class="bi bi-exclamation-triangle"></i> <?= htmlspecialchars($error_message) ?>

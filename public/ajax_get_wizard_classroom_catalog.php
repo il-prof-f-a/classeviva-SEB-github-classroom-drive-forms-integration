@@ -18,15 +18,16 @@ $json = static function (array $payload, int $status = 200): never {
 };
 
 try {
+    $groupIds = array_values(array_filter(array_map('strval', (array)($_GET['id_gruppo'] ?? []))));
     $classIds = array_values(array_filter(array_map('strval', (array)($_GET['class_ids'] ?? []))));
     $subjectIds = array_values(array_map('strval', (array)($_GET['subject_ids'] ?? [])));
     $requestedCourseId = trim((string)($_GET['course_id'] ?? ''));
 
-    if ($classIds === []) {
+    if ($groupIds === [] && $classIds === []) {
         $json([
             'success' => false,
             'error_code' => 'mapping_required',
-            'error' => 'Seleziona prima almeno una classe nello step Classi.'
+            'error' => 'Seleziona prima almeno un gruppo o una classe.'
         ], 422);
     }
 
@@ -37,18 +38,29 @@ try {
     ))->listGoogleClassroomMappings();
     $allowed = [];
     foreach ($mappings as $mapping) {
+        $groupId = (string)($mapping['id_gruppo'] ?? '');
         $classId = (string)($mapping['id_classe_cv'] ?? $mapping['classeviva_class_id'] ?? '');
         $subjectId = (string)($mapping['id_materia_cv'] ?? $mapping['classeviva_subject_id'] ?? '');
         $courseId = trim((string)($mapping['id_corso_gc'] ?? $mapping['google_course_id'] ?? ''));
-        if ($courseId === '' || !in_array($classId, $classIds, true)) {
+        if ($courseId === '') {
             continue;
         }
-        if ($subjectIds !== [] && !in_array($subjectId, $subjectIds, true)) {
-            continue;
+        if ($groupIds !== []) {
+            if (!in_array($groupId, $groupIds, true)) {
+                continue;
+            }
+        } else {
+            if (!in_array($classId, $classIds, true)) {
+                continue;
+            }
+            if ($subjectIds !== [] && !in_array($subjectId, $subjectIds, true)) {
+                continue;
+            }
         }
         $allowed[$courseId] = [
             'id' => $courseId,
             'name' => trim((string)($mapping['nome_corso_gc'] ?? $mapping['google_course_name'] ?? 'Corso Classroom')),
+            'group_id' => $groupId,
             'class_id' => $classId,
             'subject_id' => $subjectId,
         ];

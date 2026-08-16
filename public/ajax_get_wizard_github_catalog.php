@@ -19,15 +19,16 @@ $json = static function (array $payload, int $status = 200): never {
 };
 
 try {
+    $groupIds = array_values(array_filter(array_map('strval', (array)($_GET['id_gruppo'] ?? []))));
     $classIds = array_values(array_filter(array_map('strval', (array)($_GET['class_ids'] ?? []))));
     $subjectIds = array_values(array_map('strval', (array)($_GET['subject_ids'] ?? [])));
     $requestedClassroomId = trim((string)($_GET['classroom_id'] ?? ''));
 
-    if ($classIds === []) {
+    if ($groupIds === [] && $classIds === []) {
         $json([
             'success' => false,
             'error_code' => 'mapping_required',
-            'error' => 'Seleziona prima almeno una classe nello step Classi.'
+            'error' => 'Seleziona prima almeno un gruppo o una classe.'
         ], 422);
     }
 
@@ -38,18 +39,29 @@ try {
     ))->listGithubClassroomMappings();
     $allowed = [];
     foreach ($mappings as $mapping) {
+        $groupId = (string)($mapping['id_gruppo'] ?? '');
         $classId = (string)($mapping['id_classe_cv'] ?? '');
         $subjectId = (string)($mapping['id_materia_cv'] ?? '');
         $classroomId = trim((string)($mapping['github_classroom_id'] ?? ''));
-        if ($classroomId === '' || !in_array($classId, $classIds, true)) {
+        if ($classroomId === '') {
             continue;
         }
-        if ($subjectIds !== [] && !in_array($subjectId, $subjectIds, true)) {
-            continue;
+        if ($groupIds !== []) {
+            if (!in_array($groupId, $groupIds, true)) {
+                continue;
+            }
+        } else {
+            if (!in_array($classId, $classIds, true)) {
+                continue;
+            }
+            if ($subjectIds !== [] && !in_array($subjectId, $subjectIds, true)) {
+                continue;
+            }
         }
         $allowed[$classroomId] = [
             'id' => $classroomId,
             'name' => trim((string)($mapping['classroom_name'] ?? 'GitHub Classroom')),
+            'group_id' => $groupId,
             'class_id' => $classId,
             'subject_id' => $subjectId,
             'org_name' => trim((string)($mapping['github_org_name'] ?? '')),
