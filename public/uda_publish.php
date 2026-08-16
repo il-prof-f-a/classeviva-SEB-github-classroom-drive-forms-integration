@@ -27,73 +27,20 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 use App\Core\GoogleTokenProvider;
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
-use App\Core\ProviderNeutralMappingService;
+use App\Core\TeachingGroupIntegrationRepository;
+use App\Core\TeachingGroupRepository;
+use App\Core\UdaGroupRepository;
 use App\Integration\GoogleClassroomAPI;
-use App\Integration\GoogleDriveAPI;
-
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
-$mappingService = new ProviderNeutralMappingService(
-    $dbAdapter,
-    (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'))
-);
+$userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
+$groupRepo = new UdaGroupRepository($dbAdapter, $userId);
+$integrationRepo = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
+$teachingGroupRepo = new TeachingGroupRepository($dbAdapter, $userId);
 
 $error_message = null;
 $success_message = null;
 $publishLog = [];
-
-// Carica le mappature ClasseViva -> Google Classroom
-$classroomMappings = $mappingService->listGoogleClassroomMappings();
-
-/**
- * Trova il corso Google Classroom mappato per una classe
- *
- * @param string $classId ID della classe ClasseViva
- * @param string $discipline Disciplina dell'UDA
- * @return array|null Mapping trovato o null
- */
-function findMappedCourse($classId, $discipline, $mappings) {
-    // Cerca match esatto prima
-    foreach ($mappings as $mapping) {
-        $mappedSubjectName = $mapping['nome_materia_cv'] ?? '';
-        $mappedClassId = $mapping['id_classe_cv'] ?? '';
-
-        $stato = strtolower(trim((string)($mapping['stato'] ?? 'attivo')));
-        if ($mappedClassId === $classId && ($stato === '' || $stato === 'attivo' || $stato === 'active' || $stato === '1')) {
-            // Match esatto su nome materia
-            if (stripos($mappedSubjectName, $discipline) !== false ||
-                stripos($discipline, $mappedSubjectName) !== false) {
-                return $mapping;
-            }
-        }
-    }
-
-    // Fallback: cerca per ID materia con mappa disciplina
-    $disciplineMap = [
-        'Informatica' => '213064',  // ID reale da ClasseViva
-        'TPSIT' => '213121',  // Tecnologie e Progettazione
-        'Tecnologie e Progettazione' => '213121',
-        'Educazione Civica' => '407842',
-        'Matematica' => 'MATH',
-        'Inglese' => 'ENG',
-        'Storia' => 'HIST',
-    ];
-
-    $subjectId = $disciplineMap[$discipline] ?? null;
-
-    if ($subjectId) {
-        foreach ($mappings as $mapping) {
-            $stato = strtolower(trim((string)($mapping['stato'] ?? 'attivo')));
-            if (($mapping['id_classe_cv'] ?? '') === $classId &&
-                ($mapping['id_materia_cv'] ?? '') === $subjectId &&
-                ($stato === '' || $stato === 'attivo' || $stato === 'active' || $stato === '1')) {
-                return $mapping;
-            }
-        }
-    }
-
-    return null;
-}
 
 // Verifica ID UDA
 $udaId = $_GET['id'] ?? null;
@@ -107,7 +54,7 @@ $udaComplete = null;
 $uda = null;
 $materiali = [];
 $obiettivi = [];
-$classiAssegnate = [];
+$publishTargets = [];
 $tests = [];
 
 try {
@@ -118,37 +65,24 @@ try {
     $uda = $udaComplete['uda'];
     $materiali = $udaComplete['materiali'];
     $obiettivi = $udaComplete['obiettivi'];
-    $classiAssegnate = $udaComplete['classi_assegnate'];
-    // Evita duplicati in visualizzazione (stessa classe + materia)
-    $uniqueAssignments = [];
-    foreach ($classiAssegnate as $assegnazione) {
-        $classId = (string)($assegnazione['id_classe'] ?? '');
-        $subjectId = (string)($assegnazione['id_materia_cv'] ?? '');
-        $key = $classId . '|' . $subjectId;
-        if ($key === '|') {
+    // Gruppi didattici dell'UDA con integrazione Google Classroom attiva.
+    foreach ($groupRepo->listForUda($udaId) as $assignment) {
+        $gid = (string)($assignment['id_gruppo'] ?? '');
+        if ($gid === '') {
             continue;
         }
-
-        if (!isset($uniqueAssignments[$key])) {
-            $uniqueAssignments[$key] = $assegnazione;
+        $integration = $integrationRepo->findForGroupProvider($gid, 'google_classroom');
+        if ($integration === null) {
             continue;
         }
-
-        $current = $uniqueAssignments[$key];
-        $currentPublished = (int)($current['pubblicato_classroom'] ?? 0);
-        $newPublished = (int)($assegnazione['pubblicato_classroom'] ?? 0);
-        if ($newPublished > $currentPublished) {
-            $uniqueAssignments[$key] = $assegnazione;
-            continue;
-        }
-
-        $currentDate = strtotime((string)($current['data_assegnazione'] ?? '')) ?: 0;
-        $newDate = strtotime((string)($assegnazione['data_assegnazione'] ?? '')) ?: 0;
-        if ($newDate > $currentDate) {
-            $uniqueAssignments[$key] = $assegnazione;
-        }
+        $group = $teachingGroupRepo->findById($gid);
+        $publishTargets[] = [
+            'id' => $gid,
+            'nome' => (string)($group['nome_gruppo'] ?? ('Gruppo ' . $gid)),
+            'course_id' => (string)($integration['external_context_id'] ?? ''),
+            'course_name' => (string)($integration['external_name'] ?? ''),
+        ];
     }
-    $classiAssegnate = array_values($uniqueAssignments);
 
     // Carica test associati all'UDA
     $allTests = $dbAdapter->findAll('TEST');
@@ -227,40 +161,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $publishedCount = 0;
         $publishLog = [];
 
-        foreach ($selectedClasses as $assegnId) {
-            // Trova classe assegnata
-            $classe = null;
-            foreach ($classiAssegnate as $ca) {
-                if ($ca['id_assegnazione'] === $assegnId) {
-                    $classe = $ca;
+        foreach ($selectedClasses as $groupId) {
+            // Trova il gruppo didattico target
+            $target = null;
+            foreach ($publishTargets as $t) {
+                if ($t['id'] === $groupId) {
+                    $target = $t;
                     break;
                 }
             }
 
-            if (!$classe) {
-                $publishLog[] = "⚠ Classe non trovata (ID: $assegnId)";
+            if (!$target) {
+                $publishLog[] = "⚠ Gruppo non trovato (ID: $groupId)";
                 continue;
             }
 
-            $publishLog[] = "📋 Pubblicazione per: " . $classe['nome_classe'];
+            $publishLog[] = "📋 Pubblicazione per: " . $target['nome'];
 
-            // Verifica se già pubblicata
-            if (($classe['pubblicato_classroom'] ?? 0) == 1) {  // Fixed: check for 1 not 'SI'
-                $publishLog[] = "ℹ️ Classe già pubblicata, aggiornamento...";
-            }
-
-            // Cerca mapping per questa classe e disciplina
-            $mapping = findMappedCourse($classe['id_classe'], $uda->disciplina, $classroomMappings);
-
+            $courseId = $target['course_id'];
+            $courseName = $target['course_name'];
+            $mapping = ($courseId !== '');
             if ($mapping) {
-                $courseId = $mapping['id_corso_gc'];
-                $courseName = $mapping['nome_corso_gc'];
                 $publishLog[] = "✓ Corso Google Classroom trovato: {$courseName} (ID: {$courseId})";
             } else {
-                $publishLog[] = "⚠ Nessun mapping trovato per {$classe['nome_classe']} - {$uda->disciplina}";
-                $publishLog[] = "  Configura la mappatura in: classroom_mapping.php";
-                // Puoi scegliere se bloccare la pubblicazione o continuare
-                // Per ora continuiamo con un warning
+                $publishLog[] = "⚠ Nessun corso Google Classroom per {$target['nome']}";
             }
 
             try {
@@ -439,20 +363,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     $classroomUrl = "https://classroom.google.com/";
                 }
 
-                // 3. Aggiorna stato nel database (usa updateRow generico)
-                $updateData = [
-                    'pubblicato_classroom' => $mapping ? 1 : 0,
-                    'classroom_url' => $classroomUrl ?? 'https://classroom.google.com/',
+                // 3. Registra la pubblicazione nel DB provider-neutral
+                $existing = $dbAdapter->findWhere('UDA_PUBBLICAZIONI', [
+                    'id_utente' => $userId,
+                    'id_uda' => $udaId,
+                    'id_gruppo' => $target['id'],
+                    'provider' => 'google_classroom',
+                ]);
+                $pubRow = [
+                    'id_uda' => $udaId,
+                    'id_gruppo' => $target['id'],
+                    'provider' => 'google_classroom',
+                    'external_resource_id' => $mapping ? $courseId : '',
+                    'external_url' => $classroomUrl ?? 'https://classroom.google.com/',
                     'stato' => $mapping ? 'pubblicata' : 'preparata',
-                    'note' => $mapping ? "Pubblicato su: {$courseName}" : "Simulato - configura mapping"
+                    'data_pubblicazione' => $mapping ? date('Y-m-d H:i:s') : null,
+                    'id_utente' => $userId,
                 ];
-                $dbAdapter->updateRow('CLASSI_ASSEGNATE', 'id_assegnazione', $assegnId, array_merge($classe, $updateData));
+                if ($existing !== []) {
+                    $dbAdapter->updateRow('UDA_PUBBLICAZIONI', 'id_pubblicazione', $existing[0]['id_pubblicazione'], $pubRow);
+                } else {
+                    $pubRow['id_pubblicazione'] = 'PUB_' . uniqid();
+                    $dbAdapter->insertRow('UDA_PUBBLICAZIONI', $pubRow);
+                }
 
                 if ($mapping) {
-                    $publishLog[] = "  ✅ Pubblicazione REALE completata per " . $classe['nome_classe'];
+                    $publishLog[] = "  ✅ Pubblicazione REALE completata per " . $target['nome'];
                     $publishedCount++;
                 } else {
-                    $publishLog[] = "  ⚠️  Simulazione completata - configura mapping per pubblicare realmente";
+                    $publishLog[] = "  ⚠️  Simulazione completata - nessun corso Google Classroom collegato";
                 }
 
             } catch (Exception $e) {
@@ -585,7 +524,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                         <span class="badge bg-warning text-dark"><?= count($tests) ?> Test</span>
                                     </div>
                                     <div>
-                                        <span class="badge bg-primary"><?= count($classiAssegnate) ?> Classi</span>
+                                        <span class="badge bg-primary"><?= count($publishTargets) ?> Gruppi</span>
                                     </div>
                                 </div>
                             </div>
@@ -595,15 +534,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             </div>
         </div>
 
-        <?php if (empty($classiAssegnate)): ?>
-            <!-- Nessuna classe assegnata -->
+        <?php if (empty($publishTargets)): ?>
+            <!-- Nessun gruppo con corso Google Classroom -->
             <div class="alert alert-warning">
-                <h5 class="alert-heading"><i class="bi bi-exclamation-triangle"></i> Nessuna Classe Assegnata</h5>
-                <p>Prima di pubblicare l'UDA su Google Classroom, devi assegnarla ad almeno una classe.</p>
-                <hr>
-                <a href="uda_assign.php?id=<?= urlencode($udaId) ?>" class="btn btn-warning">
-                    <i class="bi bi-people"></i> Assegna Classi
-                </a>
+                <h5 class="alert-heading"><i class="bi bi-exclamation-triangle"></i> Nessun Gruppo con Corso Google Classroom</h5>
+                <p>Prima di pubblicare l'UDA, assegnala a un gruppo didattico e collega un corso Google Classroom al gruppo.</p>
             </div>
 
         <?php else: ?>
@@ -622,49 +557,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 <p class="mb-0">Per pubblicare su Google Classroom, configura le credenziali Google in <code>config/google_credentials.json</code> e abilita le integrazioni in <code>config.yaml</code>.</p>
                             </div>
                         <?php else: ?>
-                            <p class="mb-3">Seleziona le classi su cui pubblicare questa UDA:</p>
+                            <p class="mb-3">Seleziona i gruppi su cui pubblicare questa UDA:</p>
 
                             <div class="row">
-                                <?php foreach ($classiAssegnate as $classe): ?>
-                                    <?php
-                                    $isPubblicata = (($classe['pubblicato_classroom'] ?? 0) == 1);  // Fixed: check for 1 not 'SI'
-                                    ?>
+                                <?php foreach ($publishTargets as $target): ?>
                                     <div class="col-md-6 mb-3">
-                                        <div class="publish-card <?= $isPubblicata ? '' : '' ?>">
+                                        <div class="publish-card">
                                             <div class="form-check">
-                                                <input class="form-check-input" type="checkbox" value="<?= htmlspecialchars($classe['id_assegnazione']) ?>"
-                                                       id="class_<?= htmlspecialchars($classe['id_assegnazione']) ?>"
-                                                       name="classes[]"
-                                                       <?= $isPubblicata ? '' : '' ?>>
-                                                <label class="form-check-label w-100" for="class_<?= htmlspecialchars($classe['id_assegnazione']) ?>">
+                                                <input class="form-check-input" type="checkbox" value="<?= htmlspecialchars($target['id']) ?>"
+                                                       id="group_<?= htmlspecialchars($target['id']) ?>"
+                                                       name="classes[]">
+                                                <label class="form-check-label w-100" for="group_<?= htmlspecialchars($target['id']) ?>">
                                                     <div class="d-flex justify-content-between align-items-start">
                                                         <div class="flex-grow-1">
-                                                            <h6 class="mb-1"><?= htmlspecialchars($classe['nome_classe']) ?></h6>
+                                                            <h6 class="mb-1"><?= htmlspecialchars($target['nome']) ?></h6>
                                                             <small class="text-muted">
-                                                                <i class="bi bi-calendar-range"></i>
-                                                                <?php if (!empty($classe['data_inizio'])): ?>
-                                                                    <?= date('d/m/Y', strtotime($classe['data_inizio'])) ?>
-                                                                    <?php if (!empty($classe['data_fine'])): ?>
-                                                                        - <?= date('d/m/Y', strtotime($classe['data_fine'])) ?>
-                                                                    <?php endif; ?>
+                                                                <?php if ($target['course_id'] !== ''): ?>
+                                                                    <i class="bi bi-google"></i> <?= htmlspecialchars($target['course_name'] ?: $target['course_id']) ?>
                                                                 <?php else: ?>
-                                                                    Date non specificate
+                                                                    Nessun corso Google Classroom collegato
                                                                 <?php endif; ?>
                                                             </small>
                                                         </div>
-                                                        <div>
-                                                            <?php if ($isPubblicata): ?>
-                                                                <span class="badge bg-success status-badge">Pubblicata</span>
-                                                            <?php else: ?>
-                                                                <span class="badge bg-secondary status-badge">Non pubblicata</span>
-                                                            <?php endif; ?>
-                                                        </div>
                                                     </div>
-                                                    <?php if ($isPubblicata && !empty($classe['data_pubblicazione'])): ?>
-                                                        <small class="text-muted d-block mt-1">
-                                                            <i class="bi bi-clock-history"></i> Pubblicata il: <?= date('d/m/Y H:i', strtotime($classe['data_pubblicazione'])) ?>
-                                                        </small>
-                                                    <?php endif; ?>
                                                 </label>
                                             </div>
                                         </div>

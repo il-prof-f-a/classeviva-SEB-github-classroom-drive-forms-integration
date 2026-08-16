@@ -4,6 +4,9 @@ require_once __DIR__ . '/../bootstrap.php';
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
 use App\Core\ProviderNeutralMappingService;
+use App\Core\TeachingGroupIntegrationRepository;
+use App\Core\TeachingGroupRepository;
+use App\Core\UdaGroupRepository;
 use App\Integration\GoogleDriveAPI;
 use App\Utils\UdaMetadataHelper;
 
@@ -13,6 +16,10 @@ $mappingService = new ProviderNeutralMappingService(
     $dbAdapter,
     (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'))
 );
+$userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
+$groupRepo = new UdaGroupRepository($dbAdapter, $userId);
+$integrationRepo = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
+$teachingGroupRepo = new TeachingGroupRepository($dbAdapter, $userId);
 $error = null;
 $udaComplete = null;
 $message = '';
@@ -251,6 +258,29 @@ try {
 
     // Recupera tutti i classroom mappings attivi per verificare associazioni
     $classroomMappings = $mappingService->listGoogleClassroomMappings();
+
+    // Gruppi didattici dell'UDA con provider Google/GitHub.
+    $gruppi = [];
+    foreach ($groupRepo->listForUda($udaId) as $assignment) {
+        $gid = (string)($assignment['id_gruppo'] ?? '');
+        if ($gid === '') {
+            continue;
+        }
+        $group = $teachingGroupRepo->findById($gid);
+        if ($group === null) {
+            continue;
+        }
+        $google = $integrationRepo->findForGroupProvider($gid, 'google_classroom');
+        $github = $integrationRepo->findForGroupProvider($gid, 'github_classroom');
+        $gruppi[] = [
+            'id_gruppo' => $gid,
+            'nome_gruppo' => (string)($group['nome_gruppo'] ?? ('Gruppo ' . $gid)),
+            'google_course_id' => $google !== null ? (string)($google['external_context_id'] ?? '') : '',
+            'google_course_name' => $google !== null ? (string)($google['external_name'] ?? '') : '',
+            'github_classroom_id' => $github !== null ? (string)($github['external_context_id'] ?? '') : '',
+            'github_classroom_name' => $github !== null ? (string)($github['external_name'] ?? '') : '',
+        ];
+    }
 
     // Calcola statistiche domande
     $allDomande = $dbAdapter->findAll('DOMANDE_INTERROGAZIONE');
@@ -546,10 +576,9 @@ try {
                 </div>
             </div>
 
-            <!-- Classi Assegnate - Toggleable -->
-            <?php if (!empty($classiAssegnate)): ?>
+            <!-- Gruppi Didattici - Toggleable -->
+            <?php if (!empty($gruppi)): ?>
                 <div class="card section-wrapper">
-                    <!-- Barra colorata con titolo, chevron e pulsanti -->
                     <div class="card-header text-white section-header-toggle"
                          style="background-color: #fd7e14;">
                         <div class="section-toggle-area"
@@ -559,7 +588,7 @@ try {
                              aria-controls="classiCollapse">
                             <h6 class="text-white">
                                 <i class="bi bi-chevron-down chevron-icon"></i>
-                                <i class="bi bi-people ms-2"></i> CLASSI ASSEGNATE (<?= count($classiAssegnate) ?>)
+                                <i class="bi bi-people ms-2"></i> GRUPPI DIDATTICI (<?= count($gruppi) ?>)
                             </h6>
                         </div>
                         <div class="btn-container">
@@ -572,111 +601,31 @@ try {
                     <div class="collapse" id="classiCollapse">
                         <div class="card-body">
                         <div class="row">
-                            <?php foreach ($classiAssegnate as $classe): ?>
+                            <?php foreach ($gruppi as $gruppo): ?>
                                 <div class="col-md-4 mb-2">
-                                    <div class="card">
+                                    <div class="card h-100">
                                         <div class="card-body">
-                                            <div class="d-flex justify-content-between align-items-start mb-2">
-                                                <div class="flex-grow-1">
-                                                    <h6>
-                                                        <?= htmlspecialchars($classe['nome_classe']) ?>
-                                                        <?php if (!empty($classe['nome_materia'])): ?>
-                                                            <br><span class="badge bg-primary mt-1">
-                                                                <i class="bi bi-book"></i> <?= htmlspecialchars($classe['nome_materia']) ?>
-                                                            </span>
-                                                        <?php endif; ?>
-                                                    </h6>
-                                                    <small class="text-muted">
-                                                        Assegnata: <?= htmlspecialchars($classe['data_assegnazione']) ?>
-                                                    </small>
-                                                    <?php if ($classe['pubblicato_classroom']): ?>
-                                                        <br><span class="badge bg-success mt-1">Pubblicata su Classroom</span>
-                                                    <?php endif; ?>
+                                            <h6 class="mb-2"><?= htmlspecialchars($gruppo['nome_gruppo']) ?></h6>
+                                            <?php if ($gruppo['google_course_id'] !== ''): ?>
+                                                <div class="alert alert-success py-1 px-2 mb-2">
+                                                    <i class="bi bi-google"></i>
+                                                    Classroom: <?= htmlspecialchars($gruppo['google_course_name'] ?: $gruppo['google_course_id']) ?>
                                                 </div>
-                                                <button type="button"
-                                                        class="btn btn-sm btn-outline-danger"
-                                                        onclick="confirmDeleteClasse('<?= htmlspecialchars($classe['id_assegnazione'] ?? '') ?>', '<?= htmlspecialchars($classe['nome_classe'] ?? '') ?>')"
-                                                        title="Elimina assegnazione">
-                                                    <i class="bi bi-trash"></i>
-                                                </button>
-                                            </div>
-                                            <div class="d-grid gap-2">
-                                                <?php
-                                                // Link a map_classes.php con filtro classe
-                                                $filterParams = http_build_query([
-                                                    'filter_classe' => $classe['id_classe'] ?? '',
-                                                    'highlight' => 'true'
-                                                ]);
-
-                                                // Link a oral_rubric.php per valutazione laboratorio
-                                                $rubricParams = http_build_query([
-                                                    'uda_id' => $udaId,
-                                                    'id_classe' => $classe['id_classe'] ?? '',
-                                                    'id_materia' => $classe['id_materia_cv'] ?? 0
-                                                ]);
-
-                                                // Verifica se esiste già un mapping per questa classe/materia
-                                                $existingMapping = null;
-                                                if (isset($classroomMappings)) {
-                                                    foreach ($classroomMappings as $mapping) {
-                                                        $stato = strtolower(trim((string)($mapping['stato'] ?? 'attivo')));
-                                                        if (($mapping['id_classe_cv'] ?? '') === ($classe['id_classe'] ?? '') &&
-                                                            ($mapping['id_materia_cv'] ?? '') === ($classe['id_materia_cv'] ?? '') &&
-                                                            ($stato === '' || $stato === 'attivo' || $stato === 'active' || $stato === '1')) {
-                                                            $existingMapping = $mapping;
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                                ?>
-
-                                                <?php if ($existingMapping): ?>
-                                                    <div class="alert alert-success py-2 px-3 mb-2">
-                                                        <i class="bi bi-check-circle-fill"></i>
-                                                        Associata a <strong><?= htmlspecialchars($existingMapping['classroom_name'] ?? 'Classroom') ?></strong>
-                                                    </div>
-                                                    <a href="map_classes.php?<?= $filterParams ?>"
-                                                       class="btn btn-sm btn-outline-primary">
-                                                        <i class="bi bi-pencil"></i> Modifica Associazione
-                                                    </a>
-                                                <?php else: ?>
-                                                    <a href="map_classes.php?<?= $filterParams ?>"
-                                                       class="btn btn-sm btn-primary">
-                                                        <i class="bi bi-diagram-3"></i> Associa Classe → Classroom
-                                                    </a>
-                                                <?php endif; ?>
-
-                                                <?php
-                                                // Verifica se esiste mappatura GitHub Classroom
-                                                $githubMapping = null;
-                                                foreach ($allGithubMappings as $ghMap) {
-                                                    if (($ghMap['id_classe_cv'] ?? '') === ($classe['id_classe'] ?? '') &&
-                                                        ($ghMap['id_materia_cv'] ?? '') === ($classe['id_materia_cv'] ?? '')) {
-                                                        $githubMapping = $ghMap;
-                                                        break;
-                                                    }
-                                                }
-                                                ?>
-
-                                                <?php if ($githubMapping): ?>
-                                                    <!-- Mappatura GitHub esistente -->
-                                                    <div class="alert py-2 px-3 mb-2 mt-2" style="background-color: #f3e8ff; border-color: #663399; color: #663399;">
-                                                        <i class="bi bi-github"></i>
-                                                        GitHub: <strong><?= htmlspecialchars($githubMapping['classroom_name'] ?? 'Classroom') ?></strong>
-                                                    </div>
-                                                    <a href="github_classroom_mapping.php"
-                                                       class="btn btn-sm btn-github-outline">
-                                                        <i class="bi bi-gear"></i> Gestisci Mappatura GitHub
-                                                    </a>
-                                                <?php else: ?>
-                                                    <!-- Nessuna mappatura GitHub -->
-                                                    <a href="github_classroom_mapping.php"
-                                                       class="btn btn-sm mt-2"
-                                                       style="background-color: #663399; color: white; border-color: #663399;">
-                                                        <i class="bi bi-github"></i> Mappa a GitHub Classroom
-                                                    </a>
-                                                <?php endif; ?>
-                                            </div>
+                                            <?php else: ?>
+                                                <a href="map_classes.php?group_id=<?= urlencode($gruppo['id_gruppo']) ?>" class="btn btn-sm btn-outline-primary mb-2">
+                                                    <i class="bi bi-diagram-3"></i> Collega Classroom
+                                                </a>
+                                            <?php endif; ?>
+                                            <?php if ($gruppo['github_classroom_id'] !== ''): ?>
+                                                <div class="alert py-1 px-2 mb-2" style="background-color: #f3e8ff; border-color: #663399; color: #663399;">
+                                                    <i class="bi bi-github"></i>
+                                                    GitHub: <?= htmlspecialchars($gruppo['github_classroom_name'] ?: $gruppo['github_classroom_id']) ?>
+                                                </div>
+                                            <?php else: ?>
+                                                <a href="github_classroom_mapping.php?group_id=<?= urlencode($gruppo['id_gruppo']) ?>" class="btn btn-sm mt-2" style="background-color: #663399; color: white; border-color: #663399;">
+                                                    <i class="bi bi-github"></i> Collega GitHub
+                                                </a>
+                                            <?php endif; ?>
                                         </div>
                                     </div>
                                 </div>
