@@ -401,6 +401,7 @@ $architectureTests = [
     'provider-neutral group mappings' => __DIR__ . '/domain/provider_neutral_group_mappings.php',
     'provider capability resolver' => __DIR__ . '/domain/provider_capability_resolver.php',
     'grade import student service' => __DIR__ . '/domain/grade_import_student_service.php',
+    'grade import email resolution' => __DIR__ . '/domain/grade_import_email_resolution.php',
     'classroom import provider-neutral' => __DIR__ . '/public/classroom_import_provider_neutral.php',
     'provider-neutral mappings' => __DIR__ . '/domain/provider_neutral_mappings.php',
     'ClasseViva student sync' => __DIR__ . '/integration/classeviva_student_sync.php',

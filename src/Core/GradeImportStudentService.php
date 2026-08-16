@@ -99,4 +99,73 @@ final class GradeImportStudentService
 
         return ['group_id' => $groupId, 'rows' => $rows];
     }
+
+    /**
+     * Risolve le email dei rispondenti (es. Google Forms) verso id_studente
+     * interni, usando un roster provider vivo (email -> external_user_id)
+     * senza persistere alcuna email.
+     *
+     * @param list<array<string,mixed>> $roster  righe con external_user_id, email, display_name
+     * @param list<string> $emails  email dei rispondenti
+     * @return array{group_id:string, matches:array<string,array{external_user_id:string,id_studente:string|null}>, unmatched:list<string>}
+     */
+    public function resolveByEmail(string $provider, string $contextId, array $roster, array $emails): array
+    {
+        $byEmail = [];
+        foreach ($roster as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $email = strtolower(trim((string)($row['email'] ?? '')));
+            $externalId = trim((string)($row['external_user_id'] ?? ''));
+            if ($email === '' || $externalId === '') {
+                continue;
+            }
+            $byEmail[$email] = $row;
+        }
+
+        $externalRows = [];
+        $matches = [];
+        $unmatched = [];
+        foreach ($emails as $rawEmail) {
+            if (!is_scalar($rawEmail)) {
+                continue;
+            }
+            $email = strtolower(trim((string)$rawEmail));
+            if ($email === '') {
+                continue;
+            }
+            $rosterRow = $byEmail[$email] ?? null;
+            if ($rosterRow === null) {
+                $unmatched[] = $email;
+                continue;
+            }
+            $externalId = trim((string)($rosterRow['external_user_id'] ?? ''));
+            $externalRows[] = [
+                'external_user_id' => $externalId,
+                'display_name' => (string)($rosterRow['display_name'] ?? ''),
+                'email' => (string)($rosterRow['email'] ?? $email),
+            ];
+            $matches[$email] = ['external_user_id' => $externalId];
+        }
+
+        $resolved = $this->resolve($provider, $contextId, $externalRows);
+        $byExternal = [];
+        foreach ($resolved['rows'] as $row) {
+            $externalId = trim((string)($row['external_user_id'] ?? ''));
+            $studentId = trim((string)($row['id_studente'] ?? ''));
+            if ($externalId !== '' && $studentId !== '') {
+                $byExternal[$externalId] = $studentId;
+            }
+        }
+        foreach ($matches as $email => $match) {
+            $matches[$email]['id_studente'] = $byExternal[$match['external_user_id']] ?? null;
+        }
+
+        return [
+            'group_id' => $resolved['group_id'],
+            'matches' => $matches,
+            'unmatched' => array_values(array_unique($unmatched)),
+        ];
+    }
 }
