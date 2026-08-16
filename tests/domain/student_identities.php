@@ -26,6 +26,7 @@ use App\Core\StudentIdentityResolver;
 use App\Core\StudentRepository;
 use App\Core\StudentResourceRepository;
 use App\Core\StudentRosterService;
+use App\Core\TeachingGroupRepository;
 
 $relativeDb = 'storage/temp/students-' . bin2hex(random_bytes(6)) . '.db';
 $absoluteDb = $root . '/' . $relativeDb;
@@ -42,11 +43,22 @@ try {
     $resources = new StudentResourceRepository($adapter, 'USR_A');
     $resolver = new StudentIdentityResolver($students, $identities, $memberships, $resources);
     $roster = new StudentRosterService($resolver, $memberships);
+    (new TeachingGroupRepository($adapter, 'USR_A'))->create([
+        'id_gruppo' => 'GRP_1',
+        'nome_gruppo' => 'Gruppo test',
+    ]);
 
     $student = $resolver->resolveOrCreate('classeviva', 'CV_STUDENT_1');
     $sameStudent = $resolver->resolveOrCreate('classeviva', 'CV_STUDENT_1');
     if (($student['id_studente'] ?? '') !== ($sameStudent['id_studente'] ?? '')) {
         $failures[] = 'resolveOrCreate non idempotente';
+    }
+    if (!$identities->updateContext('classeviva', 'CV_STUDENT_1', 'CV_CLASS_1')) {
+        $failures[] = 'contesto identità non aggiornato';
+    }
+    $contextIdentity = $identities->findByExternal('classeviva', 'CV_STUDENT_1');
+    if (($contextIdentity['external_context_id'] ?? '') !== 'CV_CLASS_1') {
+        $failures[] = 'contesto identità non restituito';
     }
 
     $googleStudent = $resolver->resolveOrCreate('google_classroom', 'GC_STUDENT_1');

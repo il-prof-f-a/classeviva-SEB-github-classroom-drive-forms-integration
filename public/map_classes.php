@@ -1,6 +1,8 @@
 <?php
 
-define('REQUIRES_CLASSEVIVA', true);
+// La pagina legacy resta disponibile anche quando ClasseViva non e\u0300 collegato:
+// i gruppi moderni possono essere gestiti tramite il catalogo provider-neutral.
+define('REQUIRES_CLASSEVIVA', false);
 /**
  * Gestione Completa Associazioni ClasseViva ↔ Google Classroom
  *
@@ -18,6 +20,7 @@ use App\Integration\ClasseVivaAPI;
 use App\Integration\GoogleClassroomAPI;
 use App\Core\ClasseVivaTokenGuard;
 use App\Core\ProviderNeutralMappingService;
+use App\Core\TeachingGroupCatalogService;
 use App\Utils\LocalReturnUrl;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -25,15 +28,50 @@ $mappingService = new ProviderNeutralMappingService(
     $dbAdapter,
     (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'))
 );
+$teachingGroupCatalog = new TeachingGroupCatalogService(
+    $dbAdapter,
+    (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'))
+);
+$csrfSessionKey = 'map_classes_csrf';
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_start();
+}
+if (!is_string($_SESSION[$csrfSessionKey] ?? null) || $_SESSION[$csrfSessionKey] === '') {
+    $_SESSION[$csrfSessionKey] = bin2hex(random_bytes(32));
+}
+$csrfToken = (string)$_SESSION[$csrfSessionKey];
+$postScalar = static function (string $key, string $default = ''): string {
+    $value = $_POST[$key] ?? $default;
+    return is_scalar($value) ? trim((string)$value) : $default;
+};
+$assertCsrf = static function () use ($csrfToken): void {
+    $posted = $_POST['csrf_token'] ?? null;
+    if (!is_string($posted) || $posted === '' || !hash_equals($csrfToken, $posted)) {
+        throw new RuntimeException('Token CSRF non valido. Ricarica la pagina e riprova.');
+    }
+};
 $error_message = null;
 $success_message = null;
 $returnTo = LocalReturnUrl::sanitize(
-    $_GET['return_to'] ?? $_POST['return_to'] ?? null,
+    is_scalar($_GET['return_to'] ?? null)
+        ? $_GET['return_to']
+        : (is_scalar($_POST['return_to'] ?? null) ? $_POST['return_to'] : null),
     basename($_SERVER['PHP_SELF'] ?? 'map_classes.php')
 );
 $isWizardReturn = $returnTo === 'uda_create.php';
+$requestedGroupRaw = $_GET['id_gruppo'] ?? $_POST['id_gruppo'] ?? '';
+$requestedGroupId = is_scalar($requestedGroupRaw) ? trim((string)$requestedGroupRaw) : '';
 
-$redirectAfterMapping = static function (string $message) use ($returnTo): never {
+$redirectAfterMapping = static function (string $message, ?string $groupId = null) use ($returnTo): never {
+    $returnPath = (string)(parse_url($returnTo, PHP_URL_PATH) ?? '');
+    if ($returnPath === 'uda_create.php') {
+        header('Location: uda_create.php?integration_updated=1#2');
+        exit;
+    }
+    if ($returnPath === 'teaching_groups.php' && is_string($groupId) && trim($groupId) !== '') {
+        header('Location: teaching_groups.php?id=' . rawurlencode(trim($groupId)) . '&integration_updated=1');
+        exit;
+    }
     $target = $returnTo;
     $separator = str_contains($target, '?') ? '&' : '?';
     header('Location: ' . $target . $separator . http_build_query([
@@ -46,16 +84,20 @@ $redirectAfterMapping = static function (string $message) use ($returnTo): never
 // Gestione azioni POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     try {
-        if ($_POST['action'] === 'save_mapping') {
+        $action = is_scalar($_POST['action']) ? trim((string)$_POST['action']) : '';
+        $assertCsrf();
+        if ($action === 'save_mapping') {
             // Salva singola mappatura
-            $classId = $_POST['class_id'] ?? '';
-            $className = $_POST['class_name'] ?? '';
-            $subjectId = $_POST['subject_id'] ?? '';
-            $subjectName = $_POST['subject_name'] ?? '';
-            $courseId = $_POST['course_id'] ?? '';
-            $courseName = $_POST['course_name'] ?? '';
+            $classId = $postScalar('class_id');
+            $className = $postScalar('class_name');
+            $subjectId = $postScalar('subject_id');
+            $subjectName = $postScalar('subject_name');
+            $courseId = $postScalar('course_id');
+            $courseName = $postScalar('course_name');
+            $groupRaw = $_POST['id_gruppo'] ?? '';
+            $groupId = is_scalar($groupRaw) ? trim((string)$groupRaw) : '';
 
-            if (empty($classId) || empty($subjectId) || empty($courseId)) {
+            if (empty($courseId) || ($groupId === '' && (empty($classId) || empty($subjectId)))) {
                 throw new Exception("Dati incompleti");
             }
 
@@ -66,14 +108,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 'classeviva_subject_name' => $subjectName,
                 'google_course_id' => $courseId,
                 'google_course_name' => $courseName,
+                'id_gruppo' => $groupId,
             ]);
             $success_message = "Mappatura aggiornata! Ora puoi associare gli studenti.";
 
-            $redirectAfterMapping($success_message);
+            $redirectAfterMapping($success_message, $groupId !== '' ? $groupId : null);
 
-        } elseif ($_POST['action'] === 'save_all_mappings') {
+        } elseif ($action === 'save_all_mappings') {
             // Salvataggio bulk di tutte le mappature selezionate lato client
-            $mappings = json_decode($_POST['mappings'] ?? '[]', true);
+            $rawMappings = $_POST['mappings'] ?? '[]';
+            if (!is_string($rawMappings)) {
+                throw new RuntimeException('Formato mappature non valido.');
+            }
+            $mappings = json_decode($rawMappings, true, 512, JSON_THROW_ON_ERROR);
 
             if (!is_array($mappings) || empty($mappings)) {
                 throw new Exception("Nessuna mappatura da salvare");
@@ -81,14 +128,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
             $savedCount = 0;
             foreach ($mappings as $mapping) {
-                $classId = $mapping['class_id'] ?? '';
-                $className = $mapping['class_name'] ?? '';
-                $subjectId = $mapping['subject_id'] ?? '';
-                $subjectName = $mapping['subject_name'] ?? '';
-                $courseId = $mapping['course_id'] ?? '';
-                $courseName = $mapping['course_name'] ?? '';
+                if (!is_array($mapping)) {
+                    continue;
+                }
+                $readMappingScalar = static function (array $data, string $key): string {
+                    $value = $data[$key] ?? '';
+                    return is_scalar($value) ? trim((string)$value) : '';
+                };
+                $classId = $readMappingScalar($mapping, 'class_id');
+                $className = $readMappingScalar($mapping, 'class_name');
+                $subjectId = $readMappingScalar($mapping, 'subject_id');
+                $subjectName = $readMappingScalar($mapping, 'subject_name');
+                $courseId = $readMappingScalar($mapping, 'course_id');
+                $courseName = $readMappingScalar($mapping, 'course_name');
+                $groupRaw = $mapping['id_gruppo'] ?? '';
+                $groupId = is_scalar($groupRaw) ? trim((string)$groupRaw) : '';
 
-                if (empty($classId) || empty($subjectId) || empty($courseId)) {
+                if (empty($courseId) || ($groupId === '' && (empty($classId) || empty($subjectId)))) {
                     // Salta record incompleti
                     continue;
                 }
@@ -100,22 +156,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     'classeviva_subject_name' => $subjectName,
                     'google_course_id' => $courseId,
                     'google_course_name' => $courseName,
+                    'id_gruppo' => $groupId,
                 ]);
 
                 $savedCount++;
             }
 
             $success_message = "Salvate {$savedCount} mappature con successo! Ora puoi associare gli studenti.";
-            $redirectAfterMapping($success_message);
+            $bulkGroup = '';
+            foreach ($mappings as $mapping) {
+                if (is_array($mapping) && is_scalar($mapping['id_gruppo'] ?? null)) {
+                    $bulkGroup = trim((string)$mapping['id_gruppo']);
+                    if ($bulkGroup !== '') break;
+                }
+            }
+            $redirectAfterMapping($success_message, $bulkGroup !== '' ? $bulkGroup : null);
 
-        } elseif ($_POST['action'] === 'delete_mapping') {
-            $mappingId = $_POST['mapping_id'] ?? '';
+        } elseif ($action === 'delete_mapping') {
+            $mappingId = $postScalar('mapping_id');
+            $deleteGroupId = $requestedGroupId;
             if (!empty($mappingId)) {
-                $mappingService->deactivateMapping((string)$mappingId);
+                foreach ($mappingService->listGoogleClassroomMappings() as $candidate) {
+                    if ((string)($candidate['id_mapping'] ?? '') === $mappingId) {
+                        $deleteGroupId = trim((string)($candidate['id_gruppo'] ?? '')) ?: $deleteGroupId;
+                        break;
+                    }
+                }
+                if ($mappingId === '') {
+                    throw new RuntimeException('Mappatura non valida.');
+                }
+                // La lista e\u0300 gia\u0300 filtrata dall'utente corrente: non accettare
+                // identificativi appartenenti a un altro account.
+                $ownedMapping = false;
+                foreach ($mappingService->listGoogleClassroomMappings() as $candidate) {
+                    if ((string)($candidate['id_mapping'] ?? '') === $mappingId) {
+                        $ownedMapping = true;
+                        break;
+                    }
+                }
+                if (!$ownedMapping) {
+                    throw new RuntimeException('Mappatura non disponibile per questo utente.');
+                }
+                $mappingService->deactivateMapping($mappingId);
                 $success_message = "Mappatura eliminata con successo!";
             }
 
-            $redirectAfterMapping($success_message);
+            $redirectAfterMapping($success_message, $deleteGroupId !== '' ? $deleteGroupId : null);
         }
 
     } catch (Exception $e) {
@@ -124,13 +210,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 }
 
 // Gestione messaggi da redirect
-if (isset($_GET['success'])) {
-    $success_message = $_GET['success'];
+if (is_scalar($_GET['success'] ?? null)) {
+    $success_message = trim((string)$_GET['success']);
 }
 
 // Parametri filtro
-$filterClasse = $_GET['filter_classe'] ?? null;
-$highlightFilter = isset($_GET['highlight']) && $_GET['highlight'] === 'true';
+$filterClasse = is_scalar($_GET['filter_classe'] ?? null)
+    ? trim((string)$_GET['filter_classe'])
+    : null;
+$highlightFilter = is_scalar($_GET['highlight'] ?? null) && $_GET['highlight'] === 'true';
 
 // Carica mappature esistenti
 $existingMappings = $mappingService->listGoogleClassroomMappings();
@@ -147,18 +235,30 @@ foreach ($existingMappings as $mapping) {
 $classeVivaSubjects = [];
 $classeVivaEnabled = false;
 $classeVivaTokenNotice = null;
+$teachingGroupCatalogRows = $teachingGroupCatalog->listForWizard(true);
+$cvState = ClasseVivaTokenGuard::getTokenState($config);
 
-if (($config['classeviva']['enabled'] ?? false)) {
+// ClasseViva e\u0300 opzionale: interroga l'API solo se il token e\u0300 realmente pronto.
+if (($config['classeviva']['enabled'] ?? false) && !empty($cvState['ready'])) {
     try {
         $classeVivaAPI = new ClasseVivaAPI($config);
         $classesWithSubjects = $classeVivaAPI->listTeacherClasses(true);
+        if (!is_array($classesWithSubjects)) {
+            throw new RuntimeException('Risposta ClasseViva non valida.');
+        }
 
         foreach ($classesWithSubjects as $classData) {
+            if (!is_array($classData)) {
+                continue;
+            }
             $classId = $classData['id'] ?? '';
             $className = $classData['name'] ?? '';
-            $subjects = $classData['subjects'] ?? [];
+            $subjects = is_array($classData['subjects'] ?? null) ? $classData['subjects'] : [];
 
             foreach ($subjects as $subject) {
+                if (!is_array($subject)) {
+                    continue;
+                }
                 $subjectId = $subject['subjectId'] ?? $subject['id'] ?? '';
                 $subjectName = $subject['subjectDesc'] ?? $subject['name'] ?? $subject['subjectName'] ?? '';
 
@@ -188,10 +288,63 @@ if (($config['classeviva']['enabled'] ?? false)) {
         $error_message = "Errore ClasseViva: " . $e->getMessage();
     }
 }
-// Se l'API non risulta pronta mostra avviso token
-$cvState = ClasseVivaTokenGuard::getTokenState($config);
+// Se l'API non risulta pronta mostra avviso token; i gruppi gia\u0300 presenti
+// nel catalogo restano comunque gestibili senza ClasseViva.
 if (!$cvState['ready']) {
     $classeVivaTokenNotice = $cvState['notice'] ?: 'Token ClasseViva assente. Autorizza la sessione da Integrazioni.';
+}
+
+// Fallback provider-neutral: se ClasseViva non è disponibile, mostra comunque
+// i gruppi già creati e le relative integrazioni senza obbligare una nuova
+// autenticazione. Le scritture usano l'id_gruppo interno.
+if ($teachingGroupCatalogRows !== []) {
+    $knownGroupIds = [];
+    $knownExternalKeys = [];
+    foreach ($classeVivaSubjects as $existingSubject) {
+        $existingGroupId = trim((string)($existingSubject['group_id'] ?? ''));
+        if ($existingGroupId !== '') {
+            $knownGroupIds[$existingGroupId] = true;
+        }
+        $knownExternalKey = trim((string)($existingSubject['class_id'] ?? ''))
+            . '_' . trim((string)($existingSubject['subject_id'] ?? ''));
+        if ($knownExternalKey !== '_') {
+            $knownExternalKeys[$knownExternalKey] = true;
+        }
+    }
+    foreach ($teachingGroupCatalogRows as $groupRow) {
+        $providers = is_array($groupRow['providers'] ?? null) ? $groupRow['providers'] : [];
+        $cv = is_array($providers['classeviva'] ?? null) ? $providers['classeviva'] : [];
+        $google = is_array($providers['google_classroom'] ?? null) ? $providers['google_classroom'] : [];
+        $groupId = trim((string)($groupRow['id_gruppo'] ?? ''));
+        if ($groupId === '') {
+            continue;
+        }
+        $classId = trim((string)($cv['external_context_id'] ?? ''));
+        $subjectId = trim((string)($cv['external_subject_id'] ?? ''));
+        $className = trim((string)($groupRow['nome_classe'] ?? ''));
+        $subjectName = trim((string)($groupRow['nome_materia'] ?? ''));
+        $externalKey = $classId . '_' . $subjectId;
+        if (isset($knownGroupIds[$groupId]) || ($externalKey !== '_' && isset($knownExternalKeys[$externalKey]))) {
+            continue;
+        }
+        $key = $groupId . '_' . ($subjectId !== '' ? $subjectId : 'group');
+        $classeVivaSubjects[] = [
+            'class_id' => $classId !== '' ? $classId : $groupId,
+            'class_name' => $className !== '' ? $className : (string)($groupRow['nome_gruppo'] ?? $groupId),
+            'subject_id' => $subjectId,
+            'subject_name' => $subjectName !== '' ? $subjectName : 'Gruppo didattico',
+            'key' => $key,
+            'group_id' => $groupId,
+            'mapped' => (($google['external_context_id'] ?? '') !== ''),
+            'mapping_id' => null,
+            'mapped_course_id' => (string)($google['external_context_id'] ?? ''),
+            'mapped_course_name' => (string)($google['external_name'] ?? ''),
+        ];
+        $knownGroupIds[$groupId] = true;
+        if ($externalKey !== '_') {
+            $knownExternalKeys[$externalKey] = true;
+        }
+    }
 }
 
 // Recupera corsi da Google Classroom
@@ -202,6 +355,9 @@ if (($config['google']['classroom']['enabled'] ?? false)) {
     try {
         $googleAPI = new GoogleClassroomAPI($config);
         $googleCourses = $googleAPI->getCourses();
+        if (!is_array($googleCourses)) {
+            throw new RuntimeException('Risposta Google Classroom non valida.');
+        }
         $googleEnabled = true;
     } catch (Exception $e) {
         $error_message = ($error_message ? $error_message . " | " : "") . "Errore Google Classroom: " . $e->getMessage();
@@ -210,6 +366,7 @@ if (($config['google']['classroom']['enabled'] ?? false)) {
 
 // Statistiche
 $totalSubjects = count($classeVivaSubjects);
+$hasTeachingGroups = $teachingGroupCatalogRows !== [];
 $mappedCount = count(array_filter($classeVivaSubjects, fn($s) => $s['mapped']));
 $unmappedCount = $totalSubjects - $mappedCount;
 
@@ -329,6 +486,12 @@ foreach ($classeVivaSubjects as $subject) {
     ?>
 
     <div class="container-fluid mt-4 mb-5">
+        <?php if ($requestedGroupId !== ''): ?>
+            <div class="alert alert-info" role="status">
+                Stai configurando il gruppo didattico <code><?= htmlspecialchars($requestedGroupId) ?></code>.
+                <a class="btn btn-sm btn-outline-primary ms-2" href="teaching_groups.php?tab=groups&amp;id=<?= rawurlencode($requestedGroupId) ?>">Torna all’editor gruppi</a>
+            </div>
+        <?php endif; ?>
         <?php if ($error_message): ?>
             <div class="alert alert-danger alert-dismissible fade show">
                 <i class="bi bi-exclamation-triangle"></i> <?= htmlspecialchars($error_message) ?>
@@ -354,7 +517,7 @@ foreach ($classeVivaSubjects as $subject) {
             </div>
         <?php endif; ?>
 
-        <?php if (!$classeVivaEnabled || !$googleEnabled): ?>
+        <?php if ((!$classeVivaEnabled || !$googleEnabled) && !$hasTeachingGroups): ?>
             <div class="alert alert-warning">
                 <h5 class="alert-heading"><i class="bi bi-exclamation-triangle"></i> Configurazione Incompleta</h5>
                 <p class="mb-0">
@@ -488,8 +651,11 @@ foreach ($classeVivaSubjects as $subject) {
                                                     <?= htmlspecialchars($subject['mapped_course_name']) ?>
                                                 </div>
                                                 <form method="POST" class="d-inline" onsubmit="return confirm('Vuoi eliminare questa associazione?')">
+                                                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                                                     <input type="hidden" name="action" value="delete_mapping">
-                                                    <input type="hidden" name="mapping_id" value="<?= htmlspecialchars($subject['mapping_id']) ?>">
+                                            <input type="hidden" name="mapping_id" value="<?= htmlspecialchars($subject['mapping_id']) ?>">
+                                                    <?php $formGroupId = trim((string)($subject['group_id'] ?? $requestedGroupId)); ?>
+                                                    <?php if ($formGroupId !== ''): ?><input type="hidden" name="id_gruppo" value="<?= htmlspecialchars($formGroupId, ENT_QUOTES, 'UTF-8') ?>"><?php endif; ?>
                                                     <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo) ?>">
                                                     <button type="submit" class="btn btn-sm btn-outline-danger">
                                                         <i class="bi bi-trash"></i>
@@ -499,8 +665,11 @@ foreach ($classeVivaSubjects as $subject) {
                                         </div>
                                     <?php else: ?>
                                         <form method="POST" class="mapping-form">
+                                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                                             <input type="hidden" name="action" value="save_mapping">
                                             <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo) ?>">
+                                            <?php $formGroupId = trim((string)($subject['group_id'] ?? $requestedGroupId)); ?>
+                                            <?php if ($formGroupId !== ''): ?><input type="hidden" name="id_gruppo" value="<?= htmlspecialchars($formGroupId, ENT_QUOTES, 'UTF-8') ?>"><?php endif; ?>
                                             <input type="hidden" name="class_id" value="<?= htmlspecialchars($subject['class_id']) ?>">
                                             <input type="hidden" name="class_name" value="<?= htmlspecialchars($subject['class_name']) ?>">
                                             <input type="hidden" name="subject_id" value="<?= htmlspecialchars($subject['subject_id']) ?>">
@@ -513,6 +682,7 @@ foreach ($classeVivaSubjects as $subject) {
                                                         onchange="updateCourseName('<?= htmlspecialchars($subject['key']) ?>', this)">
                                                     <option value="">-- Seleziona corso --</option>
                                                     <?php foreach ($googleCourses as $course): ?>
+                                                        <?php if (!is_array($course)) continue; ?>
                                                         <option value="<?= htmlspecialchars($course['id']) ?>"
                                                                 data-course-name="<?= htmlspecialchars($course['name']) ?>">
                                                             <?= htmlspecialchars($course['name']) ?>
@@ -620,6 +790,7 @@ foreach ($classeVivaSubjects as $subject) {
                 const subjectIdInput = form.querySelector('input[name="subject_id"]');
                 const subjectNameInput = form.querySelector('input[name="subject_name"]');
                 const courseNameInput = form.querySelector('input[name="course_name"]');
+                const groupIdInput = form.querySelector('input[name="id_gruppo"]');
 
                 const classId = classIdInput ? classIdInput.value : '';
                 const className = classNameInput ? classNameInput.value : '';
@@ -644,7 +815,8 @@ foreach ($classeVivaSubjects as $subject) {
                     subject_id: subjectId,
                     subject_name: subjectName,
                     course_id: courseId,
-                    course_name: courseName
+                    course_name: courseName,
+                    id_gruppo: groupIdInput ? groupIdInput.value : ''
                 });
             });
 
@@ -660,6 +832,11 @@ foreach ($classeVivaSubjects as $subject) {
             const form = document.createElement('form');
             form.method = 'POST';
             form.style.display = 'none';
+
+            const csrfInput = document.createElement('input');
+            csrfInput.name = 'csrf_token';
+            csrfInput.value = <?= json_encode($csrfToken, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+            form.appendChild(csrfInput);
 
             const actionInput = document.createElement('input');
             actionInput.name = 'action';
@@ -682,4 +859,3 @@ foreach ($classeVivaSubjects as $subject) {
     </script>
 </body>
 </html>
-

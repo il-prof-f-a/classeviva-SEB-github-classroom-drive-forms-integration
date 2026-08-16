@@ -61,6 +61,16 @@ class StudentiManager
         string $externalContextId,
         array $roster
     ): array {
+        // Legacy callers supplied an opaque group id before teaching-group
+        // records were mandatory. Materialize a user-owned placeholder so the
+        // hardened membership repository can still enforce ownership.
+        $groups = new TeachingGroupRepository($this->db, $this->userId);
+        if ($groups->findById($groupId) === null) {
+            $groups->create([
+                'id_gruppo' => $groupId,
+                'nome_gruppo' => $groupId,
+            ]);
+        }
         $new = 0;
         foreach ($roster as $entry) {
             $externalId = trim((string)($entry['id'] ?? $entry['external_user_id'] ?? ''));

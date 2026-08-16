@@ -215,15 +215,16 @@ final class ProviderNeutralMappingService
         }
 
         if ($existing !== null) {
-            $this->db->updateRow('GRUPPI_INTEGRAZIONI', 'id_collegamento', $existing['id_collegamento'], [
+            // Aggiorna tramite il repository moderno: oltre a mantenere il
+            // contratto legacy, garantisce sempre il vincolo id_utente sulla
+            // riga esistente (evitando update per sola chiave tecnica).
+            return $this->integrations->upsertForGroupProvider($groupId, [
+                'provider' => $provider,
+                'tipo_risorsa' => $resourceType,
+                'external_context_id' => $externalId,
                 'external_name' => (string)($providerData['external_name'] ?? ''),
                 'metadata_json' => json_encode($providerData['metadata'] ?? [], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
                 'stato' => 'attivo',
-                'ultima_modifica' => date('Y-m-d H:i:s'),
-            ]);
-            return array_merge($existing, [
-                'id_gruppo' => $groupId,
-                'external_name' => (string)($providerData['external_name'] ?? ''),
             ]);
         }
 

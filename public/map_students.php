@@ -1,6 +1,7 @@
 <?php
 
 define('REQUIRES_CLASSEVIVA', true);
+define('SKIP_CV_TOKEN_POPUP', true);
 /**
  * Mappatura Studenti - GDPR Compliant
  *
@@ -11,8 +12,10 @@ define('REQUIRES_CLASSEVIVA', true);
 use App\Core\Database\DatabaseFactory;
 use App\Core\ProviderNeutralMappingService;
 use App\Core\StudentProviderMappingService;
+use App\Core\TeachingGroupCatalogService;
 use App\Integration\ClasseVivaAPI;
 use App\Integration\GoogleClassroomAPI;
+use App\Utils\LocalReturnUrl;
 
 error_reporting(E_ALL);
 
@@ -41,13 +44,65 @@ if (!$cvReady) {
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 $userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
+$teachingGroupCatalog = new TeachingGroupCatalogService($dbAdapter, $userId);
+$csrfSessionKey = 'map_students_csrf';
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_start();
+}
+if (!is_string($_SESSION[$csrfSessionKey] ?? null) || $_SESSION[$csrfSessionKey] === '') {
+    $_SESSION[$csrfSessionKey] = bin2hex(random_bytes(32));
+}
+$csrfToken = (string)$_SESSION[$csrfSessionKey];
+$requestScalar = static function (array $source, string $key, string $default = ''): string {
+    $value = $source[$key] ?? $default;
+    return is_scalar($value) ? trim((string)$value) : $default;
+};
+$assertCsrf = static function () use ($csrfToken): void {
+    $posted = $_POST['csrf_token'] ?? null;
+    if (!is_string($posted) || $posted === '' || !hash_equals($csrfToken, $posted)) {
+        throw new RuntimeException('Token CSRF non valido. Ricarica la pagina e riprova.');
+    }
+};
+
+$groupRaw = $_GET['group_id'] ?? ($_GET['id_gruppo'] ?? ($_POST['group_id'] ?? ($_POST['id_gruppo'] ?? '')));
+$requestedGroupId = is_scalar($groupRaw) ? trim((string)$groupRaw) : '';
+if ($requestedGroupId !== '') {
+    $group = $teachingGroupCatalog->findForWizard($requestedGroupId);
+    if ($group === null) {
+        http_response_code(404);
+        echo 'Gruppo didattico non trovato.';
+        exit;
+    }
+    // I gruppi moderni sono gestiti dall'editor provider-neutral. Non
+    // inizializzare la vecchia tabella MAPPATURA_STUDENTI in questo flusso.
+    $groupReturn = LocalReturnUrl::sanitize(
+        is_scalar($_GET['return_to'] ?? null)
+            ? $_GET['return_to']
+            : (is_scalar($_POST['return_to'] ?? null) ? $_POST['return_to'] : null),
+        'teaching_groups.php?tab=students&id=' . rawurlencode($requestedGroupId)
+    );
+    $groupEditorUrl = 'teaching_groups.php?tab=students&id=' . rawurlencode($requestedGroupId)
+        . '&return_to=' . rawurlencode($groupReturn);
+    ?>
+    <!DOCTYPE html>
+    <html lang="it"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Mappatura studenti</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"></head>
+    <body class="bg-light"><main class="container py-5"><div class="card shadow-sm"><div class="card-body">
+        <h1 class="h4">Mappatura studenti del gruppo didattico</h1>
+        <p class="text-muted">Questo gruppo usa la gestione provider-neutral: le identita vengono collegate nella tab Studenti del nuovo editor.</p>
+        <a class="btn btn-primary" href="<?= htmlspecialchars($groupEditorUrl, ENT_QUOTES, 'UTF-8') ?>">Apri tab Studenti</a>
+    </div></div></main></body></html>
+    <?php
+    exit;
+}
+
 $mappingService = new ProviderNeutralMappingService($dbAdapter, $userId);
 $studentMappingService = new StudentProviderMappingService($dbAdapter, $userId);
 $classeVivaAPI = $cvReady ? new ClasseVivaAPI($config) : null;
 $googleClassroomAPI = new GoogleClassroomAPI($config);
 
-$mappingId = $_GET['mapping_id'] ?? null;
-$action = $_POST['action'] ?? null;
+$mappingId = $requestScalar($_GET, 'mapping_id') ?: null;
+$action = $requestScalar($_POST, 'action') ?: null;
 
 if (!$mappingId) {
     die("ID Mappatura mancante. Torna alla <a href='map_classes.php'>pagina principale</a> e seleziona una materia.");
@@ -107,7 +162,12 @@ try {
 // Gestione salvataggio mappature
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_mappings') {
     try {
-        $mappings = json_decode($_POST['mappings'] ?? '[]', true);
+        $assertCsrf();
+        $rawMappings = $_POST['mappings'] ?? '[]';
+        if (!is_string($rawMappings)) {
+            throw new RuntimeException('Formato mappature non valido.');
+        }
+        $mappings = json_decode($rawMappings, true, 512, JSON_THROW_ON_ERROR);
 
         if (empty($mappings)) {
             throw new Exception("Nessuna mappatura da salvare. Seleziona almeno uno studente.");
@@ -119,8 +179,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_mappings') {
         $errors = [];
 
         foreach ($mappings as $mappingData) {
-            $idStudenteCV = $mappingData['cv_id'] ?? '';
-            $idStudenteGC = $mappingData['gc_id'] ?? '';
+            if (!is_array($mappingData)) {
+                continue;
+            }
+            $cvRaw = $mappingData['cv_id'] ?? '';
+            $gcRaw = $mappingData['gc_id'] ?? '';
+            $methodRaw = $mappingData['method'] ?? 'manuale';
+            $idStudenteCV = is_scalar($cvRaw) ? trim((string)$cvRaw) : '';
+            $idStudenteGC = is_scalar($gcRaw) ? trim((string)$gcRaw) : '';
+            $method = is_scalar($methodRaw) ? trim((string)$methodRaw) : 'manuale';
 
             if (empty($idStudenteCV) || empty($idStudenteGC)) {
                 continue;
@@ -135,7 +202,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_mappings') {
                     'id_studente_gc' => $idStudenteGC,  // SOLO ID
                     'data_associazione' => date('d/m/Y'),
                     'stato' => 'attivo',
-                    'confermato_da' => $mappingData['method'] ?? 'manuale',
+                    'confermato_da' => $method,
                     'note' => ''
                 ];
 
@@ -157,7 +224,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_mappings') {
                     $dataToUpdate = [
                         'id_studente_gc' => $idStudenteGC,
                         'data_associazione' => date('d/m/Y'),
-                        'confermato_da' => $mappingData['method'] ?? 'manuale'
+                        'confermato_da' => $method
                     ];
                     $result = $dbAdapter->updateRow('MAPPATURA_STUDENTI', 'id_mappatura', $existingId, $dataToUpdate);
                     if ($result) {
@@ -580,6 +647,7 @@ foreach ($studentiCV as $cv) {
 
         <!-- Form Mappatura -->
         <form method="POST" id="mappingForm">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
             <input type="hidden" name="action" value="save_mappings">
             <input type="hidden" name="mappings" id="mappingsInput">
 

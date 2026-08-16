@@ -9,6 +9,9 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
 use App\Core\ProviderNeutralMappingService;
+use App\Core\ClasseVivaTokenGuard;
+use App\Core\TeachingGroupCatalogService;
+use App\Core\UdaGroupRepository;
 use App\Integration\ClasseVivaAPI;
 use App\Utils\AcademicPeriodHelper;
 use App\Utils\QuestionEditorHelper;
@@ -17,10 +20,20 @@ use App\Utils\UdaIntegrationResolver;
 
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
+$userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
 $mappingService = new ProviderNeutralMappingService(
     $dbAdapter,
-    (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'))
+    $userId
 );
+$teachingGroupCatalog = new TeachingGroupCatalogService($dbAdapter, $userId);
+$teachingGroupCatalogRows = $teachingGroupCatalog->listForWizard(true);
+$teachingGroupCatalogIndex = [];
+foreach ($teachingGroupCatalogRows as $catalogRow) {
+    $catalogId = trim((string)($catalogRow['id_gruppo'] ?? ''));
+    if ($catalogId !== '') {
+        $teachingGroupCatalogIndex[$catalogId] = $catalogRow;
+    }
+}
 $pickerApiKey = $_ENV['GOOGLE_API_KEY'] ?? '';
 $pickerClientId = $config['google']['oauth_client_id'] ?? '';
 $driveRootId = trim($config['google']['drive']['root_folder_id'] ?? '');
@@ -62,24 +75,41 @@ $_SESSION['uda_create_temp_id'] = $tempUdaId;
 $domandeTempCount = count($dbAdapter->findWhere('DOMANDE_INTERROGAZIONE', ['id_uda' => $tempUdaId]));
 
 $cvClassSubjects = [];
-try {
-    $cvApi = new ClasseVivaAPI($config);
-    $classes = $cvApi->getClassesWithTeacherSubjects();
-    foreach ($classes as $class) {
-        $classId = $class['id'] ?? $class['classId'] ?? '';
-        $className = $class['name'] ?? $class['className'] ?? '';
-        $subjects = $class['subjects'] ?? [];
-        foreach ($subjects as $sub) {
-            $cvClassSubjects[] = [
-                'classId' => $classId,
-                'className' => $className,
-                'subjectId' => $sub['id'] ?? $sub['subjectId'] ?? '',
-                'subjectName' => $sub['name'] ?? $sub['subjectName'] ?? $sub['subjectDesc'] ?? ''
-            ];
+// I suggerimenti ClasseViva sono opzionali: invoca l'API solo quando il token
+// di sessione è realmente pronto. In assenza di token il wizard resta
+// utilizzabile con gruppi provider-neutral e periodi configurati localmente.
+$classevivaState = ClasseVivaTokenGuard::getTokenState($config);
+if ($classevivaState['ready']) {
+    try {
+        $cvApi = new ClasseVivaAPI($config);
+        $classes = $cvApi->getClassesWithTeacherSubjects();
+        if (is_array($classes)) {
+            foreach ($classes as $class) {
+                if (!is_array($class)) {
+                    continue;
+                }
+                $classId = $class['id'] ?? $class['classId'] ?? '';
+                $className = $class['name'] ?? $class['className'] ?? '';
+                $subjects = $class['subjects'] ?? [];
+                if (!is_array($subjects)) {
+                    continue;
+                }
+                foreach ($subjects as $sub) {
+                    if (!is_array($sub)) {
+                        continue;
+                    }
+                    $cvClassSubjects[] = [
+                        'classId' => $classId,
+                        'className' => $className,
+                        'subjectId' => $sub['id'] ?? $sub['subjectId'] ?? '',
+                        'subjectName' => $sub['name'] ?? $sub['subjectName'] ?? $sub['subjectDesc'] ?? ''
+                    ];
+                }
+            }
         }
+    } catch (\Throwable $e) {
+        // I suggerimenti sono opzionali: il wizard resta utilizzabile.
     }
-} catch (\Throwable $e) {
-    // in caso di errore si prosegue con inserimento manuale
 }
 
 $error_message = null;
@@ -126,27 +156,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 break;
             }
         }
+        $postedGroupIds = is_array($_POST['id_gruppo'] ?? null) ? $_POST['id_gruppo'] : [];
+        $selectedGroupRows = [];
+        $selectedGroupIds = [];
+        foreach ($postedGroupIds as $rawGroupId) {
+            if (!is_scalar($rawGroupId)) {
+                continue;
+            }
+            $groupId = trim((string)$rawGroupId);
+            if ($groupId === '' || isset($selectedGroupIds[$groupId])) {
+                continue;
+            }
+            // Il catalogo è costruito con listForWizard(true), quindi contiene
+            // esclusivamente gruppi attivi e già appartenenti all'utente.
+            $groupRow = $teachingGroupCatalogIndex[$groupId] ?? null;
+            if ($groupRow === null || (string)($groupRow['stato'] ?? '') !== 'attivo') {
+                throw new RuntimeException('Gruppo didattico non disponibile.');
+            }
+            $selectedGroupIds[$groupId] = true;
+            $selectedGroupRows[] = $groupRow;
+        }
         $selectedIntegration = false;
+        foreach ($selectedGroupRows as $groupRow) {
+            foreach (['google_classroom', 'github_classroom'] as $provider) {
+                $providerLink = ($groupRow['providers'] ?? [])[$provider] ?? null;
+                if (is_array($providerLink) && trim((string)($providerLink['external_context_id'] ?? '')) !== '') {
+                    $selectedIntegration = true;
+                    break 2;
+                }
+            }
+        }
         $manualClassTarget = trim((string)($_POST['classi_target'] ?? ''));
         $useAssignedClassTarget = filter_var(
             $_POST['classi_target_usa_assegnazioni'] ?? false,
             FILTER_VALIDATE_BOOLEAN
         );
-        $postedClassIds = is_array($_POST['classe_id'] ?? null) ? $_POST['classe_id'] : [];
-        $postedSubjectIds = is_array($_POST['classe_materia'] ?? null) ? $_POST['classe_materia'] : [];
-        foreach ($postedClassIds as $index => $classId) {
-            $subjectId = (string)($postedSubjectIds[$index] ?? '');
-            if (trim((string)$classId) === '' || trim($subjectId) === '') {
-                continue;
-            }
-            $pairKey = trim((string)$classId) . '|' . trim($subjectId);
-            if (isset($classroomMappingIndex[$pairKey]) || isset($githubMappingIndex[$pairKey])) {
-                $selectedIntegration = true;
-            }
-        }
         $disciplineValue = trim((string)($_POST['disciplina'] ?? ''));
         if ($disciplineValue === '') {
-            $subjectNames = is_array($_POST['classe_materia_nome'] ?? null) ? $_POST['classe_materia_nome'] : [];
+            $subjectNames = array_map(
+                static fn(array $group): string => trim((string)($group['nome_materia'] ?? '')),
+                $selectedGroupRows
+            );
             $disciplineValue = UdaMetadataHelper::disciplineFromSubjectNames($subjectNames) ?? '';
         }
 
@@ -287,40 +337,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             }
         }
 
-        // 6. Classi (Step 6 - opzionale)
-        if (isset($_POST['classe_id']) && is_array($_POST['classe_id'])) {
-            $assignedKeys = [];
-            foreach ($_POST['classe_id'] as $index => $classeId) {
-                if (!empty($classeId)) {
-                    $materiaId = $_POST['classe_materia'][$index] ?? '';
-                    $assignmentKey = (string)$classeId . '|' . (string)$materiaId;
-                    if (isset($assignedKeys[$assignmentKey])) {
-                        continue;
-                    }
-                    $assegnazioneId = 'ASSEGN_' . uniqid();
-                    $dbAdapter->insertClasseAssegnata([
-                        'id_utente' => (string)($_SESSION['user_id'] ?? ''),
-                        'id_assegnazione' => $assegnazioneId,
-                        'id_uda' => $udaId,
-                        'id_classe' => $classeId,
-                        'nome_classe' => $_POST['classe_nome'][$index] ?? '',
-                        'id_materia_cv' => $materiaId,
-                        'nome_materia' => $_POST['classe_materia_nome'][$index] ?? '',
-                        'data_assegnazione' => date('Y-m-d H:i:s'),
-                        'pubblicato_classroom' => 0
-                    ]);
-                    $assignedKeys[$assignmentKey] = true;
-                }
-            }
-            if ($useAssignedClassTarget) {
-                $assignedClassTarget = UdaMetadataHelper::classTargetFromAssignments(
-                    $dbAdapter->findClassiAssegnate($udaId)
-                );
-                if ($assignedClassTarget !== '') {
-                    $dbAdapter->updateRow('UDA_ANAGRAFICA', 'id_uda', $udaId, [
-                        'classi_target' => $assignedClassTarget
-                    ]);
-                }
+        // 6. Gruppi didattici (opzionale): il nuovo wizard scrive solo UDA_GRUPPI.
+        $udaGroups = new UdaGroupRepository($dbAdapter, $userId);
+        foreach (array_keys($selectedGroupIds) as $groupId) {
+            $udaGroups->assign($udaId, $groupId);
+        }
+        if ($useAssignedClassTarget && $selectedGroupRows !== []) {
+            $assignedClassTarget = UdaMetadataHelper::classTargetFromAssignments(
+                array_map(static function (array $group): array {
+                    return [
+                        'nome_classe' => (string)($group['nome_classe'] ?? $group['nome_gruppo'] ?? ''),
+                    ];
+                }, $selectedGroupRows)
+            );
+            if ($assignedClassTarget !== '') {
+                $dbAdapter->updateRow('UDA_ANAGRAFICA', 'id_uda', $udaId, [
+                    'classi_target' => $assignedClassTarget
+                ]);
             }
         }
 
@@ -621,17 +654,40 @@ try {
                     <!-- Step 2: Classi Assegnate (OPZIONALE) -->
                     <div class="step" data-step="2">
                         <h3 class="mb-4"><i class="bi bi-diagram-3" style="color: #fd7e14;"></i> Classi e integrazioni</h3>
-                        <p class="text-muted">Assegna questa UDA a una o più classi ClasseViva e verifica le integrazioni disponibili.</p>
+                        <p class="text-muted">Assegna questa UDA a uno o più gruppi didattici (l'assegnazione classe-materia interna) e verifica le integrazioni disponibili.</p>
 
-                        <div class="alert alert-info small"><i class="bi bi-info-circle"></i> L’assegnazione a classe e materia è facoltativa. Le mappature Google Classroom e GitHub sono facoltative e quelle già presenti vengono preselezionate.</div>
+                        <div class="alert alert-info small"><i class="bi bi-info-circle"></i> L'assegnazione classe-materia è facoltativa. Ogni gruppo può essere mappato a ClasseViva, Google Classroom o GitHub Classroom; le mappature già presenti vengono preselezionate.</div>
 
-                        <div id="classi-container">
+                        <div id="teaching-group-selector" class="mb-3">
                             <!-- Template classe verrà inserito qui -->
                         </div>
 
-                        <button type="button" class="btn btn-outline-primary btn-sm mb-3" onclick="addClasse()">
-                            <i class="bi bi-plus-circle"></i> Aggiungi Classe
-                        </button>
+                        <label class="form-label" for="teaching-group-select">Gruppi didattici (assegnazione classe-materia)</label>
+                        <select id="teaching-group-select" name="id_gruppo[]" class="form-select teaching-group-select" multiple size="6" aria-describedby="teaching-group-help">
+                            <?php foreach ($teachingGroupCatalogRows as $group):
+                                $groupId = (string)($group['id_gruppo'] ?? '');
+                                $groupName = trim((string)($group['nome_gruppo'] ?? '')) ?: $groupId;
+                                $className = trim((string)($group['nome_classe'] ?? ''));
+                                $subjectName = trim((string)($group['nome_materia'] ?? ''));
+                                $yearName = trim((string)($group['anno_scolastico'] ?? ''));
+                                $context = trim(implode(' · ', array_filter([$className, $subjectName, $yearName])));
+                            ?>
+                                <option value="<?= htmlspecialchars($groupId) ?>" data-group-id="<?= htmlspecialchars($groupId) ?>">
+                                    <?= htmlspecialchars($groupName . ($context !== '' ? ' — ' . $context : '')) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <div id="teaching-group-help" class="form-text">Usa Ctrl/Cmd per selezionare più gruppi. Le integrazioni configurate vengono riepilogate sotto.</div>
+                        <div id="teaching-group-provider-summary" class="mb-3" aria-live="polite"></div>
+
+                        <div class="d-flex flex-wrap gap-2 mb-3">
+                            <a class="btn btn-outline-primary" href="teaching_groups.php?return_to=uda_create.php#2">
+                                <i class="bi bi-pencil-square"></i> Gestisci gruppi didattici
+                            </a>
+                            <?php if ($teachingGroupCatalogRows === []): ?>
+                                <span class="align-self-center text-muted small">Nessun gruppo disponibile: creane uno per abilitarlo qui.</span>
+                            <?php endif; ?>
+                        </div>
 
                         <div class="d-flex justify-content-between">
                             <button type="button" class="btn btn-secondary btn-lg" onclick="prevStep(2)">
@@ -891,11 +947,13 @@ try {
         let obiettivoCounter = 0;
         let testCounter = 0;
         let domandaCounter = 0;
-        let classeCounter = 0;
+        let selectedGroupIds = [];
 
         const cvClassSubjects = <?= json_encode($cvClassSubjects, JSON_UNESCAPED_UNICODE) ?>;
         const classroomMappingIndex = <?= json_encode($classroomMappingIndex, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
         const githubMappingIndex = <?= json_encode($githubMappingIndex, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+        const teachingGroupCatalog = <?= json_encode(array_values($teachingGroupCatalogRows), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+        const teachingGroupCatalogIndex = <?= json_encode($teachingGroupCatalogIndex, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
         const obiettiviCatalog = <?= json_encode(array_values($allObiettivi), JSON_UNESCAPED_UNICODE) ?>;
         const pickerApiKey = "<?= htmlspecialchars($pickerApiKey) ?>";
         const pickerClientId = "<?= htmlspecialchars($pickerClientId) ?>";
@@ -922,8 +980,15 @@ try {
             document.querySelector('[name="classi_target_usa_assegnazioni"]')?.addEventListener('change', event => {
                 event.target.dataset.userChoice = '1';
             });
-            document.addEventListener('input', event => {
-                if (event.target.matches('input[name="classe_nome[]"]')) refreshClassTargetSuggestion();
+            document.getElementById('teaching-group-select')?.addEventListener('change', event => {
+                selectedGroupIds = Array.from(event.target.selectedOptions || [])
+                    .map(option => String(option.value || '').trim())
+                    .filter(Boolean);
+                refreshClassTargetSuggestion();
+                renderTeachingGroupProviderSummary();
+                renderWizardIntegrationSummary();
+                syncWizardDiscipline();
+                saveWizardDraft();
             });
             restoreWizardDraft();
             const hashStep = Number.parseInt(window.location.hash.replace('#', ''), 10);
@@ -1439,15 +1504,14 @@ try {
         function wizardClassSubjectQuery() {
             const classIds = [];
             const subjectIds = [];
-            document.querySelectorAll('#classi-container .dynamic-item').forEach(row => {
-                const classInput = row.querySelector('input[name="classe_id[]"]');
-                const subjectInput = row.querySelector('input[name="classe_materia[]"]');
-                const classId = String(classInput?.value || '').trim();
-                const subjectId = String(subjectInput?.value || '').trim();
-                if (classId) classIds.push(classId);
-                if (subjectId) subjectIds.push(subjectId);
+            selectedGroupIds.forEach(groupId => {
+                const group = teachingGroupCatalogIndex[groupId] || {};
+                const classeviva = group.providers?.classeviva || null;
+                if (classeviva?.external_context_id) classIds.push(String(classeviva.external_context_id));
+                if (classeviva?.external_subject_id) subjectIds.push(String(classeviva.external_subject_id));
             });
             return {
+                group_ids: [...selectedGroupIds],
                 classIds: [...new Set(classIds)],
                 subjectIds: [...new Set(subjectIds)]
             };
@@ -1842,101 +1906,20 @@ try {
             card.querySelector('.wizard-question-summary').innerHTML = `<strong>${escapeWizardHtml(state.domanda || 'Domanda non ancora compilata.')}</strong><br><span class="badge text-bg-secondary">${state.tipo_domanda === 'multipla' ? 'Risposta multipla' : 'Risposta aperta'}</span> <span class="badge text-bg-info">Difficoltà ${escapeWizardHtml(state.difficolta)}</span>`;
         }
 
-        // Add Classe
-        function addClasse() {
-            classeCounter++;
-            const container = document.getElementById('classi-container');
-            const item = document.createElement('div');
-            item.className = 'dynamic-item';
-            const cvOptions = cvClassSubjects.map(c => `<option value="${c.classId}||${c.className}||${c.subjectId}||${c.subjectName}">${c.className} - ${c.subjectName}</option>`).join('');
-            item.innerHTML = `
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <h6>Classe ${classeCounter}</h6>
-                    <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.parentElement.remove(); refreshClassTargetSuggestion(); renderWizardIntegrationSummary();">
-                        <i class="bi bi-trash"></i>
-                    </button>
-                </div>
-                <div class="row">
-                    <div class="col-md-12 mb-2">
-                        <label class="form-label">Seleziona da ClasseViva (classe - materia)</label>
-                        <select class="form-select" onchange="fillClasseFromSelect(this)">
-                            <option value="">-- Seleziona --</option>
-                            ${cvOptions}
-                        </select>
-                    </div>
-                    <div class="col-md-4 mb-2">
-                        <label class="form-label">ID Classe</label>
-                        <input type="text" class="form-control" name="classe_id[]" placeholder="es. 12345">
-                    </div>
-                    <div class="col-md-4 mb-2">
-                        <label class="form-label">Nome Classe</label>
-                        <input type="text" class="form-control" name="classe_nome[]" placeholder="es. 5A INF">
-                    </div>
-                    <div class="col-md-4 mb-2">
-                        <label class="form-label">Materia</label>
-                        <input type="text" class="form-control" name="classe_materia_nome[]" placeholder="es. Informatica">
-                    </div>
-                    <div class="col-md-12 mb-2">
-                        <label class="form-label">ID Materia (ClasseViva)</label>
-                        <input type="text" class="form-control" name="classe_materia[]" placeholder="es. 213064">
-                    </div>
-                    <div class="col-md-6 mb-2">
-                        <div class="border rounded p-2 bg-white h-100">
-                            <div class="small fw-semibold"><i class="bi bi-google"></i> Google Classroom</div>
-                            <div class="small text-muted integration-status classroom-mapping-status">Non configurata</div>
-                            <a class="small integration-config-link classroom-config-link" href="map_classes.php?return_to=uda_create.php">Configura mappatura</a>
-                            <input type="hidden" name="classe_google_course_id[]" value="">
-                        </div>
-                    </div>
-                    <div class="col-md-6 mb-2">
-                        <div class="border rounded p-2 bg-white h-100">
-                            <div class="small fw-semibold"><i class="bi bi-github"></i> GitHub Classroom</div>
-                            <div class="small text-muted integration-status github-mapping-status">Non configurata</div>
-                            <a class="small integration-config-link github-config-link" href="github_classroom_mapping.php?return_to=uda_create.php">Configura mappatura</a>
-                            <input type="hidden" name="classe_github_classroom_id[]" value="">
-                        </div>
-                    </div>
-                </div>
-            `;
-            container.appendChild(item);
-            refreshClassTargetSuggestion();
-            renderWizardIntegrationSummary();
-        }
-
-        function fillClasseFromSelect(select) {
-            const val = select.value;
-            if (!val) return;
-            const parts = val.split('||');
-            const wrapper = select.closest('.dynamic-item');
-            if (!wrapper) return;
-            const idInput = wrapper.querySelector('input[name="classe_id[]"]');
-            const nomeInput = wrapper.querySelector('input[name="classe_nome[]"]');
-            const materiaNomeInput = wrapper.querySelector('input[name="classe_materia_nome[]"]');
-            const materiaIdInput = wrapper.querySelector('input[name="classe_materia[]"]');
-
-            if (idInput) idInput.value = parts[0] || '';
-            if (nomeInput) nomeInput.value = parts[1] || '';
-            if (materiaIdInput) materiaIdInput.value = parts[2] || '';
-            if (materiaNomeInput) materiaNomeInput.value = parts[3] || '';
-            updateClasseIntegrationStatus(wrapper);
-            syncWizardDiscipline();
-        }
-
         function saveWizardDraft() {
             const value = {
                 fields: {},
-                classes: []
+                selectedGroupIds: []
             };
             ['titolo', 'argomento', 'disciplina', 'metodologia', 'anno_scolastico', 'periodo_scolastico', 'descrizione', 'note', 'classi_target', 'stato'].forEach(name => {
                 const field = document.querySelector(`[name="${name}"]`);
                 if (field) value.fields[name] = field.value;
             });
             value.fields.classi_target_usa_assegnazioni = !!document.querySelector('[name="classi_target_usa_assegnazioni"]')?.checked;
-            document.querySelectorAll('#classi-container .dynamic-item').forEach(row => {
-                const classId = row.querySelector('input[name="classe_id[]"]')?.value || '';
-                const subjectId = row.querySelector('input[name="classe_materia[]"]')?.value || '';
-                if (classId && subjectId) value.classes.push({ classId, subjectId });
-            });
+            value.selectedGroupIds = Array.from(document.getElementById('teaching-group-select')?.selectedOptions || [])
+                .map(option => String(option.value || '').trim())
+                .filter(Boolean);
+            selectedGroupIds = value.selectedGroupIds.slice();
             try { sessionStorage.setItem('uda_create_draft', JSON.stringify(value)); } catch (e) { /* storage non disponibile */ }
         }
 
@@ -1953,53 +1936,18 @@ try {
             if (draft.fields?.periodo_scolastico) {
                 applyAcademicPeriod(document.getElementById('periodo_scolastico'));
             }
-            (Array.isArray(draft.classes) ? draft.classes : []).forEach(pair => {
-                addClasse();
-                const row = document.querySelector('#classi-container .dynamic-item:last-child');
-                const select = row?.querySelector('select');
-                if (!select) return;
-                const option = Array.from(select.options).find(item => {
-                    const parts = String(item.value || '').split('||');
-                    return parts[0] === String(pair.classId) && parts[2] === String(pair.subjectId);
+            const groupSelect = document.getElementById('teaching-group-select');
+            const requestedGroups = Array.isArray(draft.selectedGroupIds) ? draft.selectedGroupIds : [];
+            if (groupSelect) {
+                Array.from(groupSelect.options).forEach(option => {
+                    option.selected = requestedGroups.includes(String(option.value));
                 });
-                if (option) {
-                    select.value = option.value;
-                    fillClasseFromSelect(select);
-                }
-            });
-            refreshClassTargetSuggestion();
-        }
-
-        function updateClasseIntegrationStatus(wrapper) {
-            if (!wrapper) return;
-            const classId = String(wrapper.querySelector('input[name="classe_id[]"]')?.value || '').trim();
-            const subjectId = String(wrapper.querySelector('input[name="classe_materia[]"]')?.value || '').trim();
-            const key = `${classId}|${subjectId}`;
-            const classroom = classroomMappingIndex[key] || null;
-            const github = githubMappingIndex[key] || null;
-            const classroomStatus = wrapper.querySelector('.classroom-mapping-status');
-            const githubStatus = wrapper.querySelector('.github-mapping-status');
-            const classroomLink = wrapper.querySelector('.classroom-config-link');
-            const githubLink = wrapper.querySelector('.github-config-link');
-            const classroomInput = wrapper.querySelector('input[name="classe_google_course_id[]"]');
-            const githubInput = wrapper.querySelector('input[name="classe_github_classroom_id[]"]');
-
-            if (classroomStatus) {
-                classroomStatus.textContent = classroom ? `Associata: ${classroom.course_name || classroom.course_id}` : 'Non configurata';
-                classroomStatus.className = `small integration-status classroom-mapping-status ${classroom ? 'text-success' : 'text-muted'}`;
+                selectedGroupIds = Array.from(groupSelect.selectedOptions).map(option => String(option.value));
             }
-            if (githubStatus) {
-                githubStatus.textContent = github ? `Associata: ${github.classroom_name || github.classroom_id}` : 'Non configurata';
-                githubStatus.className = `small integration-status github-mapping-status ${github ? 'text-success' : 'text-muted'}`;
-            }
-            if (classroomInput) classroomInput.value = classroom?.course_id || '';
-            if (githubInput) githubInput.value = github?.classroom_id || '';
-            const statusSelect = document.querySelector('select[name="stato"]');
-            if (statusSelect && (classroom || github) && statusSelect.value === 'bozza') statusSelect.value = 'attiva';
-            const query = `filter_classe=${encodeURIComponent(classId)}&highlight=true&return_to=uda_create.php`;
-            if (classroomLink) classroomLink.href = `map_classes.php?${query}`;
-            if (githubLink) githubLink.href = `github_classroom_mapping.php?${query}`;
             refreshClassTargetSuggestion();
+            renderTeachingGroupProviderSummary();
+            renderWizardIntegrationSummary();
+            syncWizardDiscipline();
         }
 
         function normalizeAssignedClassTarget(names) {
@@ -2023,10 +1971,8 @@ try {
             const checkbox = document.querySelector('[name="classi_target_usa_assegnazioni"]');
             const field = document.querySelector('[name="classi_target"]');
             if (!panel || !label || !checkbox || !field) return;
-            const names = [...document.querySelectorAll('#classi-container .dynamic-item')]
-                .filter(row => row.querySelector('input[name="classe_id[]"]')?.value.trim()
-                    && row.querySelector('input[name="classe_materia[]"]')?.value.trim())
-                .map(row => row.querySelector('input[name="classe_nome[]"]')?.value || '')
+            const names = selectedGroupIds
+                .map(groupId => teachingGroupCatalogIndex[groupId]?.nome_classe || teachingGroupCatalogIndex[groupId]?.nome_gruppo || '')
                 .filter(Boolean);
             const suggestion = normalizeAssignedClassTarget(names);
             if (!suggestion) {
@@ -2040,29 +1986,47 @@ try {
 
         function renderWizardIntegrationSummary() {
             document.querySelectorAll('[data-wizard-integration-summary]').forEach(container => {
-                const rows = [...document.querySelectorAll('#classi-container .dynamic-item')];
-                const validRows = rows.filter(row => row.querySelector('input[name="classe_id[]"]')?.value.trim()
-                    && row.querySelector('input[name="classe_materia[]"]')?.value.trim());
-                if (!validRows.length) {
+                const groups = selectedGroupIds.map(id => teachingGroupCatalogIndex[id]).filter(Boolean);
+                if (!groups.length) {
                     container.innerHTML = '<div class="alert alert-light border mb-0"><i class="bi bi-info-circle"></i> Nessuna classe o mappatura configurata: puoi continuare con i controlli manuali.</div>';
                     return;
                 }
-                const items = validRows.map(row => {
-                    const className = row.querySelector('input[name="classe_nome[]"]')?.value.trim() || 'Classe';
-                    const subjectName = row.querySelector('input[name="classe_materia_nome[]"]')?.value.trim() || 'Materia';
-                    const classroom = row.querySelector('.classroom-mapping-status')?.textContent.trim() || 'Non configurata';
-                    const github = row.querySelector('.github-mapping-status')?.textContent.trim() || 'Non configurata';
+                const items = groups.map(group => {
+                    const className = String(group.nome_classe || group.nome_gruppo || 'Classe');
+                    const subjectName = String(group.nome_materia || 'Materia');
+                    const classroom = group.providers?.google_classroom?.external_name || group.providers?.google_classroom?.external_context_id || 'Non configurata';
+                    const github = group.providers?.github_classroom?.external_name || group.providers?.github_classroom?.external_context_id || 'Non configurata';
                     return `<li><strong>${escapeWizardHtml(className)}</strong> · ${escapeWizardHtml(subjectName)}<br><small>Google: ${escapeWizardHtml(classroom)} · GitHub: ${escapeWizardHtml(github)}</small></li>`;
                 }).join('');
                 container.innerHTML = `<div class="alert alert-info border mb-0"><div class="d-flex justify-content-between align-items-start gap-2"><div><strong>Assegnazioni e mappature</strong><ul class="mb-0 mt-1">${items}</ul></div><a class="btn btn-sm btn-outline-primary flex-shrink-0" href="uda_create.php#2">Modifica mappature</a></div></div>`;
             });
         }
 
+        function renderTeachingGroupProviderSummary() {
+            const container = document.getElementById('teaching-group-provider-summary');
+            if (!container) return;
+            const groups = selectedGroupIds.map(id => teachingGroupCatalogIndex[id]).filter(Boolean);
+            if (!groups.length) {
+                container.innerHTML = '<div class="alert alert-light border mb-0"><i class="bi bi-info-circle"></i> Nessun gruppo selezionato.</div>';
+                return;
+            }
+            const providerLabels = { classeviva: 'ClasseViva', google_classroom: 'Google Classroom', github_classroom: 'GitHub Classroom' };
+            container.innerHTML = groups.map(group => {
+                const providers = group.providers || {};
+                const badges = Object.keys(providerLabels).map(provider => {
+                    const link = providers[provider];
+                    return `<span class="badge ${link ? 'text-bg-success' : 'text-bg-light border text-dark'} me-1">${providerLabels[provider]}: ${link ? 'configurata' : 'non configurata'}</span>`;
+                }).join('');
+                const details = [group.nome_classe, group.nome_materia, group.anno_scolastico].filter(Boolean).join(' · ');
+                return `<div class="border rounded p-2 mb-2"><strong>${escapeWizardHtml(group.nome_gruppo || group.id_gruppo)}</strong><div class="small text-muted">${escapeWizardHtml(details)}</div><div class="mt-1">${badges}</div></div>`;
+            }).join('');
+        }
+
         function syncWizardDiscipline() {
             const input = document.querySelector('input[name="disciplina"]');
             if (!input || input.dataset.userEdited === '1') return;
-            const subjects = Array.from(document.querySelectorAll('input[name="classe_materia_nome[]"]'))
-                .map(element => String(element.value || '').trim())
+            const subjects = selectedGroupIds
+                .map(groupId => String(teachingGroupCatalogIndex[groupId]?.nome_materia || '').trim())
                 .filter(Boolean);
             const unique = [...new Set(subjects)];
             if (unique.length === 1) input.value = unique[0];
@@ -2704,13 +2668,13 @@ try {
             `;
 
             // Classi
-            const classRows = Array.from(document.querySelectorAll('#classi-container .dynamic-item'));
-            const classiCount = classRows.filter(row => row.querySelector('input[name="classe_id[]"]')?.value).length;
-            const classiSummary = classRows.map(row => {
-                const className = row.querySelector('input[name="classe_nome[]"]')?.value || '';
-                const subjectName = row.querySelector('input[name="classe_materia_nome[]"]')?.value || '';
-                const classroom = row.querySelector('.classroom-mapping-status')?.textContent || 'Non configurata';
-                const github = row.querySelector('.github-mapping-status')?.textContent || 'Non configurata';
+            const selectedGroups = selectedGroupIds.map(id => teachingGroupCatalogIndex[id]).filter(Boolean);
+            const classiCount = selectedGroups.length;
+            const classiSummary = selectedGroups.map(group => {
+                const className = String(group.nome_classe || group.nome_gruppo || '');
+                const subjectName = String(group.nome_materia || '');
+                const classroom = group.providers?.google_classroom?.external_name || group.providers?.google_classroom?.external_context_id || 'Non configurata';
+                const github = group.providers?.github_classroom?.external_name || group.providers?.github_classroom?.external_context_id || 'Non configurata';
                 return `<li><strong>${escapeWizardHtml(className || 'Classe')}</strong> · ${escapeWizardHtml(subjectName || 'Materia')}<br><small>Google: ${escapeWizardHtml(classroom.trim())} · GitHub: ${escapeWizardHtml(github.trim())}</small></li>`;
             }).join('');
             html += `

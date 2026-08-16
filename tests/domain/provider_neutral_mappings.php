@@ -59,6 +59,34 @@ try {
     if (!$service->deactivateMapping((string)($github['id_collegamento'] ?? ''))) {
         $failures[] = 'disattivazione collegamento GitHub fallita';
     }
+
+    // Un gruppo creato dal nuovo editor può essere collegato direttamente a un
+    // provider senza richiedere una coppia ClasseViva. Il facade legacy deve
+    // mantenere il collegamento sul gruppo indicato e non crearne uno implicito.
+    $group = (new App\Core\TeachingGroupRepository($db, 'user-1'))->create([
+        'nome_gruppo' => 'Gruppo solo Google',
+        'nome_classe' => '4 Informatica',
+        'nome_materia' => 'Informatica',
+    ]);
+    $direct = $service->upsertGoogleClassroomMapping([
+        'id_gruppo' => $group['id_gruppo'],
+        'google_course_id' => 'gc-direct',
+        'google_course_name' => 'Corso indipendente',
+    ]);
+    if (($direct['id_gruppo'] ?? '') !== ($group['id_gruppo'] ?? '')) {
+        $failures[] = 'mappatura diretta id_gruppo non mantenuta';
+    }
+    $directRows = $service->listGoogleClassroomMappings();
+    $directRow = null;
+    foreach ($directRows as $row) {
+        if (($row['id_corso_gc'] ?? '') === 'gc-direct') {
+            $directRow = $row;
+            break;
+        }
+    }
+    if (!is_array($directRow) || ($directRow['id_classe_cv'] ?? '') !== '' || ($directRow['id_materia_cv'] ?? '') !== '') {
+        $failures[] = 'mappatura diretta ha introdotto dati ClasseViva impliciti';
+    }
 } catch (Throwable $exception) {
     $failures[] = 'errore inatteso: ' . $exception->getMessage();
 } finally {

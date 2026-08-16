@@ -23,6 +23,12 @@ final class StudentResourceRepository
         if ($provider === '' || $context === '' || $resource === '') {
             throw new RuntimeException('provider, contesto e risorsa esterna sono obbligatori');
         }
+        if ($this->db->findWhere('STUDENTI', [
+            'id_utente' => $this->userId,
+            'id_studente' => $studentId,
+        ]) === []) {
+            throw new RuntimeException('studente non appartenente all’utente corrente');
+        }
         $where = [
             'id_utente' => $this->userId,
             'provider' => $provider,
@@ -60,6 +66,25 @@ final class StudentResourceRepository
 
     public function reassign(string $resourceId, string $studentId): bool
     {
-        return $this->db->updateRow('STUDENTI_RISORSE_ESTERNE', 'id_risorsa', $resourceId, ['id_studente' => $studentId]);
+        if ($this->db->findWhere('STUDENTI', [
+            'id_utente' => $this->userId,
+            'id_studente' => $studentId,
+        ]) === []) {
+            throw new RuntimeException('target studente non appartenente all’utente corrente');
+        }
+        $connection = $this->db->getConnection();
+        if (!$connection instanceof \PDO) {
+            throw new RuntimeException('mutazione risorsa senza ownership verificabile');
+        }
+        $statement = $connection->prepare(
+            'UPDATE STUDENTI_RISORSE_ESTERNE SET id_studente = :id_studente'
+            . ' WHERE id_risorsa = :id_risorsa AND id_utente = :id_utente'
+        );
+        $statement->execute([
+            ':id_studente' => $studentId,
+            ':id_risorsa' => $resourceId,
+            ':id_utente' => $this->userId,
+        ]);
+        return $statement->rowCount() > 0;
     }
 }

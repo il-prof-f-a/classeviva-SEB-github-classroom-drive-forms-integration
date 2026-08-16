@@ -6,6 +6,7 @@ namespace App\Core;
 
 use App\Core\Database\DatabaseAdapterInterface;
 use InvalidArgumentException;
+use RuntimeException;
 
 final class StudentRepository
 {
@@ -46,6 +47,14 @@ final class StudentRepository
         if ($this->findById($studentId) === null) {
             return false;
         }
-        return $this->db->deleteRow('STUDENTI', $studentId, 'id_studente');
+        $connection = $this->db->getConnection();
+        if (!$connection instanceof \PDO) {
+            throw new RuntimeException('cancellazione studente senza ownership verificabile');
+        }
+        $statement = $connection->prepare(
+            'DELETE FROM STUDENTI WHERE id_studente = :id_studente AND id_utente = :id_utente'
+        );
+        $statement->execute([':id_studente' => $studentId, ':id_utente' => $this->userId]);
+        return $statement->rowCount() > 0;
     }
 }

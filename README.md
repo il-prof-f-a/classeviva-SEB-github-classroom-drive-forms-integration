@@ -157,6 +157,31 @@ Il database applicativo è SQL-only e supporta `sqlite` e `mysql`. Una classe-ma
 
 Gli studenti hanno un `id_studente` interno. Gli identificativi ClasseViva, Google Classroom e GitHub Classroom vivono in `STUDENTI_IDENTITA_ESTERNE`; assignment, repository e submission sono risorse in `STUDENTI_RISORSE_ESTERNE`. Nomi, cognomi ed email non vengono persistiti: quando servono all'interfaccia vengono recuperati dal provider nel contesto della richiesta.
 
+### Editor dei gruppi didattici
+
+In locale l'editor è disponibile su
+[`http://localhost:8080/public/teaching_groups.php`](http://localhost:8080/public/teaching_groups.php).
+È possibile creare prima il gruppo interno (anche senza provider), collegare in seguito
+ClasseViva, Google Classroom o GitHub Classroom e aprire la scheda **Studenti** per
+sincronizzare i roster e associare gli identificativi esterni allo studente interno.
+Lo step 2 del wizard UDA seleziona questi gruppi tramite il relativo `id_gruppo` e il
+collegamento **Gestisci gruppi didattici** consente di tornare all'editor.
+
+Lo smoke test riproducibile del flusso completo SQLite (gruppo vuoto, tre provider,
+assegnazione di una UDA a due gruppi, roster, match, riga non mappata e riapertura del database) è:
+
+```bash
+php tests/e2e/teaching_groups_editor.php
+```
+
+Con Docker, dopo il rebuild dell'immagine (`docker compose up -d --build app`),
+il test si esegue montando temporaneamente la directory non distribuita dei test:
+
+```bash
+docker compose run --rm -T -v "./tests:/var/www/html/tests:ro" app \
+  php tests/e2e/teaching_groups_editor.php
+```
+
 Per cambiare backend impostare in `config/.env`:
 
 ```dotenv

@@ -23,10 +23,21 @@ if (strpos($markup, 'Importa da Argomento Classroom') !== false) {
 if (strpos($markup, 'name="classroom_imported"') !== false) {
     failWizardMarkup('campo classroom_imported ancora esposto');
 }
-foreach (['map_classes.php?return_to=uda_create.php', 'github_classroom_mapping.php?return_to=uda_create.php', 'classroomMappingIndex', 'githubMappingIndex'] as $needle) {
+foreach (['teaching_groups.php?return_to=uda_create.php#2', 'teachingGroupCatalog', 'teachingGroupCatalogIndex', 'teaching-group-select', 'id_gruppo[]'] as $needle) {
     if (strpos($markup, $needle) === false) {
         failWizardMarkup("elemento mappatura mancante: {$needle}");
     }
+}
+foreach (['ClasseVivaTokenGuard', "\$classevivaState['ready']", "listForWizard(true)", "['google_classroom', 'github_classroom']"] as $needle) {
+    if (strpos($markup, $needle) === false) {
+        failWizardMarkup("guard o validazione gruppi mancante: {$needle}");
+    }
+}
+if (strpos($markup, 'Assegna questa UDA a una o più classi ClasseViva') !== false) {
+    failWizardMarkup('help step 2 ancora vincolato a ClasseViva');
+}
+if (strpos($markup, '$teachingGroupCatalog->findForWizard($groupId)') !== false) {
+    failWizardMarkup('POST può accettare un gruppo inattivo tramite findForWizard');
 }
 foreach (['updateWizardHash', 'location.hash'] as $needle) {
     if (strpos($markup, $needle) === false) {

@@ -23,6 +23,25 @@ $mappingService = new ProviderNeutralMappingService(
     (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'))
 );
 
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_start();
+}
+$csrfSessionKey = 'github_classroom_mapping_csrf';
+if (!is_string($_SESSION[$csrfSessionKey] ?? null) || $_SESSION[$csrfSessionKey] === '') {
+    $_SESSION[$csrfSessionKey] = bin2hex(random_bytes(32));
+}
+$csrfToken = (string)$_SESSION[$csrfSessionKey];
+$requestScalar = static function (array $source, string $key, string $default = ''): string {
+    $value = $source[$key] ?? $default;
+    return is_scalar($value) ? trim((string)$value) : $default;
+};
+$assertCsrf = static function () use ($csrfToken): void {
+    $posted = $_POST['csrf_token'] ?? null;
+    if (!is_string($posted) || $posted === '' || !hash_equals($csrfToken, $posted)) {
+        throw new RuntimeException('Token CSRF non valido. Ricarica la pagina e riprova.');
+    }
+};
+
 // Carica token da sessione
 $github->loadTokenFromSession();
 $isAuthenticated = $github->isAuthenticated();
@@ -32,25 +51,43 @@ $githubUser = $_SESSION['github_user'] ?? null;
 $successMessage = null;
 $errorMessage = null;
 $warningMessage = null;
-$mapStudentsMode = (isset($_GET['action']) && $_GET['action'] === 'map_students');
-$idUdaFromQuery = $_GET['id_uda'] ?? ($_POST['id_uda'] ?? null);
+$mapStudentsMode = $requestScalar($_GET, 'action') === 'map_students';
+$idUdaFromQuery = $requestScalar($_GET, 'id_uda', $requestScalar($_POST, 'id_uda')) ?: null;
+$groupRaw = array_key_exists('id_gruppo', $_GET) ? $_GET['id_gruppo'] : ($_POST['id_gruppo'] ?? '');
+$requestedGroupId = is_scalar($groupRaw) ? trim((string)$groupRaw) : '';
 $returnTo = LocalReturnUrl::sanitize(
-    $_GET['return_to'] ?? $_POST['return_to'] ?? null,
+    is_scalar($_GET['return_to'] ?? null) ? $_GET['return_to'] : (is_scalar($_POST['return_to'] ?? null) ? $_POST['return_to'] : null),
     basename($_SERVER['PHP_SELF'] ?? 'github_classroom_mapping.php')
 );
 $isWizardReturn = $returnTo === 'uda_create.php';
-$testIdFromQuery = $_GET['test_id'] ?? ($_POST['test_id'] ?? null);
+$redirectAfterMapping = static function (string $message, ?string $groupId = null) use ($returnTo): never {
+    $returnPath = (string)(parse_url($returnTo, PHP_URL_PATH) ?? '');
+    if ($returnPath === 'uda_create.php') {
+        header('Location: uda_create.php?integration_updated=1#2');
+        exit;
+    }
+    if ($returnPath === 'teaching_groups.php' && is_string($groupId) && trim($groupId) !== '') {
+        header('Location: teaching_groups.php?id=' . rawurlencode(trim($groupId)) . '&integration_updated=1');
+        exit;
+    }
+    $target = $returnTo;
+    $separator = str_contains($target, '?') ? '&' : '?';
+    header('Location: ' . $target . $separator . 'integration_updated=1');
+    exit;
+};
+$testIdFromQuery = $requestScalar($_GET, 'test_id', $requestScalar($_POST, 'test_id')) ?: null;
 $testReviewUrl = null;
 if (is_string($testIdFromQuery) && trim($testIdFromQuery) !== '') {
     $testReviewUrl = 'github_assignment_review.php?test_id=' . urlencode(trim($testIdFromQuery));
 }
 
-if (isset($_GET['saved']) && $_GET['saved'] === '1') {
+if ($requestScalar($_GET, 'saved') === '1') {
     $successMessage = "Associazioni studenti salvate.";
 }
 
-// Gestione logout GitHub
-if (isset($_GET['action']) && $_GET['action'] === 'logout_github') {
+// Gestione logout GitHub: mutazione esplicita via POST + CSRF.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $requestScalar($_POST, 'action') === 'logout_github') {
+    $assertCsrf();
     $github->logout();
     $target = $returnTo;
     $separator = str_contains($target, '?') ? '&' : '?';
@@ -59,51 +96,64 @@ if (isset($_GET['action']) && $_GET['action'] === 'logout_github') {
 }
 
 // Gestione salvataggio nuova mappatura
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_mapping') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $requestScalar($_POST, 'action') === 'add_mapping') {
     try {
-        $idClasseCv = $_POST['id_classe_cv'] ?? '';
-        $idMateriaCv = $_POST['id_materia_cv'] ?? '';
-        $githubClassroomId = $_POST['github_classroom_id'] ?? '';
-        $githubOrgName = $_POST['github_org_name'] ?? '';
-        $classroomName = $_POST['classroom_name'] ?? '';
-        $note = $_POST['note'] ?? '';
+        $assertCsrf();
+        $idClasseCv = $requestScalar($_POST, 'id_classe_cv');
+        $idMateriaCv = $requestScalar($_POST, 'id_materia_cv');
+        $githubClassroomId = $requestScalar($_POST, 'github_classroom_id');
+        $githubOrgName = $requestScalar($_POST, 'github_org_name');
+        $classroomName = $requestScalar($_POST, 'classroom_name');
+        $note = $requestScalar($_POST, 'note');
+        $postedGroupRaw = $_POST['id_gruppo'] ?? $requestedGroupId;
+        $postedGroupId = is_scalar($postedGroupRaw) ? trim((string)$postedGroupRaw) : '';
 
-        if (!$idClasseCv || !$idMateriaCv || !$githubClassroomId) {
+        if (!$githubClassroomId || ($postedGroupId === '' && (!$idClasseCv || !$idMateriaCv))) {
             throw new Exception("Classe, Materia e GitHub Classroom sono obbligatori");
         }
 
         $mappingService->upsertGithubClassroomMapping([
             'classeviva_class_id' => $idClasseCv,
-            'classeviva_class_name' => $_POST['classeviva_class_name'] ?? '',
+            'classeviva_class_name' => $requestScalar($_POST, 'classeviva_class_name'),
             'classeviva_subject_id' => $idMateriaCv,
-            'classeviva_subject_name' => $_POST['classeviva_subject_name'] ?? '',
+            'classeviva_subject_name' => $requestScalar($_POST, 'classeviva_subject_name'),
             'github_classroom_id' => $githubClassroomId,
             'github_org_name' => $githubOrgName,
             'classroom_name' => $classroomName,
             'note' => $note,
+            'id_gruppo' => $postedGroupId,
         ]);
         $successMessage = "Mappatura creata con successo!";
+        $redirectAfterMapping($successMessage, $postedGroupId !== '' ? $postedGroupId : null);
 
     } catch (Exception $e) {
         $errorMessage = "Errore: " . $e->getMessage();
     }
 }
 
-// Gestione eliminazione mappatura
-if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])) {
+// Gestione eliminazione mappatura: mai tramite GET.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $requestScalar($_POST, 'action') === 'delete') {
     try {
-        $mappingService->deactivateMapping((string)$_GET['id']);
-        $successMessage = "Mappatura eliminata con successo!";
-
-        $query = $_GET;
-        unset($query['action'], $query['id']);
-        $query['return_to'] = $returnTo;
-        $redirect = 'github_classroom_mapping.php';
-        if (!empty($query)) {
-            $redirect .= '?' . http_build_query($query);
+        $assertCsrf();
+        $mappingIdToDelete = $requestScalar($_POST, 'id');
+        if ($mappingIdToDelete === '') {
+            throw new RuntimeException('Mappatura non valida.');
         }
-        header('Location: ' . $redirect);
-        exit;
+        $mappingGroupId = null;
+        $ownedMapping = false;
+        foreach ($mappingService->listGithubClassroomMappings() as $candidate) {
+            if ((string)($candidate['id_mapping'] ?? '') === $mappingIdToDelete) {
+                $ownedMapping = true;
+                $mappingGroupId = trim((string)($candidate['id_gruppo'] ?? '')) ?: null;
+                break;
+            }
+        }
+        if (!$ownedMapping) {
+            throw new RuntimeException('Mappatura non disponibile per questo utente.');
+        }
+        $mappingService->deactivateMapping($mappingIdToDelete);
+        $successMessage = "Mappatura eliminata con successo!";
+        $redirectAfterMapping($successMessage, $mappingGroupId);
     } catch (Exception $e) {
         $errorMessage = "Errore nell'eliminazione: " . $e->getMessage();
     }
@@ -111,10 +161,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
 
 // Carica mappature esistenti
 $mappings = $mappingService->listGithubClassroomMappings();
-$selectedMappingId = $_GET['mapping_id'] ?? null;
-$selectedAssignmentId = $_GET['assignment_id'] ?? null;
-$selectedAssignmentSlug = $_GET['assignment_slug'] ?? null;
-$filterGithubClassroomId = $_GET['github_classroom_id'] ?? null;
+$selectedMappingId = $requestScalar($_GET, 'mapping_id') ?: null;
+$selectedAssignmentId = $requestScalar($_GET, 'assignment_id') ?: null;
+$selectedAssignmentSlug = $requestScalar($_GET, 'assignment_slug') ?: null;
+$filterGithubClassroomId = $requestScalar($_GET, 'github_classroom_id') ?: null;
 $originalFilterGithubClassroomId = $filterGithubClassroomId;
 $filterRemapped = false;
 $duplicateMappingTuples = [];
@@ -191,7 +241,7 @@ if ($filterGithubClassroomId) {
         return (string)($row['github_classroom_id'] ?? '') === (string)$filterGithubClassroomId;
     }));
 }
-$isFiltered = (bool)($filterGithubClassroomId || !empty($_GET['mapping_id']));
+$isFiltered = (bool)($filterGithubClassroomId || $selectedMappingId !== null);
 
 // Se il filtro riduce a una sola mappatura, preselezionala automaticamente
 if (!$selectedMapping && !$selectedMappingId && count($mappingsForUi) === 1) {
@@ -202,7 +252,8 @@ if (!$selectedMapping && !$selectedMappingId && count($mappingsForUi) === 1) {
 // In modalitÃ  "map_students", se la mappatura/assignment arrivano predefiniti, blocca le select per evitare modifiche accidentali.
 if ($mapStudentsMode) {
     $lockMappingSelect = !empty($selectedMappingId) && ($originalFilterGithubClassroomId || $idUdaFromQuery || $testIdFromQuery);
-    $lockAssignmentSelect = !empty($selectedAssignmentId) && (!empty($_GET['assignment_id']) || !empty($selectedAssignmentSlug));
+    $lockAssignmentSelect = $selectedAssignmentId !== null
+        && ($selectedAssignmentId !== '' || $selectedAssignmentSlug !== null);
 }
 
 // Carica studenti ClasseViva per la mappatura selezionata
@@ -248,7 +299,12 @@ $githubAssignments = [];
 if ($selectedMapping && $isAuthenticated) {
     try {
         $list = $github->listAssignments((string)$apiClassroomIdForAssignments);
-        $githubAssignments = $list['assignments'] ?? $list ?? [];
+        $githubAssignments = is_array($list)
+            ? ($list['assignments'] ?? $list)
+            : [];
+        if (!is_array($githubAssignments)) {
+            $githubAssignments = [];
+        }
     } catch (Exception $e) {
         // Fallback: prova altri classroom_id (dal filtro originale o dal link docente del test)
         $last = $e;
@@ -259,7 +315,12 @@ if ($selectedMapping && $isAuthenticated) {
             }
             try {
                 $list = $github->listAssignments((string)$altId);
-                $githubAssignments = $list['assignments'] ?? $list ?? [];
+                $githubAssignments = is_array($list)
+                    ? ($list['assignments'] ?? $list)
+                    : [];
+                if (!is_array($githubAssignments)) {
+                    $githubAssignments = [];
+                }
                 $apiClassroomIdForAssignments = (string)$altId;
                 $recovered = true;
                 break;
@@ -316,31 +377,46 @@ if ($selectedMapping && $selectedAssignmentId && $isAuthenticated) {
     try {
         $grades = $github->getAssignmentGrades($selectedAssignmentId);
         $accepted = $github->listAcceptedAssignments($selectedAssignmentId);
-        $gradeItems = $grades['grades'] ?? ($grades['data'] ?? $grades ?? []);
-        $acceptedItems = $accepted['accepted_assignments'] ?? ($accepted['data'] ?? $accepted ?? []);
+        $gradeItems = is_array($grades)
+            ? ($grades['grades'] ?? ($grades['data'] ?? $grades))
+            : [];
+        $acceptedItems = is_array($accepted)
+            ? ($accepted['accepted_assignments'] ?? ($accepted['data'] ?? $accepted))
+            : [];
+        $gradeItems = is_array($gradeItems)
+            ? array_values(array_filter($gradeItems, 'is_array'))
+            : [];
+        $acceptedItems = is_array($acceptedItems)
+            ? array_values(array_filter($acceptedItems, 'is_array'))
+            : [];
 
         $acceptedByUser = [];
         $acceptedByRoster = [];
         foreach ($acceptedItems as $item) {
             $user = '';
-            if (!empty($item['students'][0]['login'])) {
-                $user = (string)$item['students'][0]['login'];
-            } elseif (!empty($item['student']['login'])) {
-                $user = (string)$item['student']['login'];
-            } elseif (!empty($item['github_username'])) {
+            $students = is_array($item['students'] ?? null) ? $item['students'] : [];
+            $firstStudent = is_array($students[0] ?? null) ? $students[0] : [];
+            $student = is_array($item['student'] ?? null) ? $item['student'] : [];
+            if (!empty($firstStudent['login']) && is_scalar($firstStudent['login'])) {
+                $user = (string)$firstStudent['login'];
+            } elseif (!empty($student['login']) && is_scalar($student['login'])) {
+                $user = (string)$student['login'];
+            } elseif (!empty($item['github_username']) && is_scalar($item['github_username'])) {
                 $user = (string)$item['github_username'];
             }
             $user = strtolower(trim($user));
             if ($user !== '') $acceptedByUser[$user] = $item;
 
-            $rid = strtolower(trim((string)($item['roster_identifier'] ?? '')));
+            $rid = is_scalar($item['roster_identifier'] ?? null)
+                ? strtolower(trim((string)$item['roster_identifier']))
+                : '';
             if ($rid !== '') $acceptedByRoster[$rid] = $item;
         }
 
         $reposFound = 0;
         foreach ($gradeItems as $g) {
-            $username = $g['github_username'] ?? '';
-            $rosterId = $g['roster_identifier'] ?? '';
+            $username = is_scalar($g['github_username'] ?? null) ? (string)$g['github_username'] : '';
+            $rosterId = is_scalar($g['roster_identifier'] ?? null) ? (string)$g['roster_identifier'] : '';
             $repoUrl = '';
             $defaultBranch = '';
 
@@ -354,13 +430,20 @@ if ($selectedMapping && $selectedAssignmentId && $isAuthenticated) {
             }
 
             if ($match) {
-                $repoUrl = (string)($match['repository']['html_url'] ?? ($match['repository_url'] ?? ''));
-                $defaultBranch = (string)($match['repository']['default_branch'] ?? ($match['default_branch'] ?? ''));
+                $repository = is_array($match['repository'] ?? null) ? $match['repository'] : [];
+                $repoUrl = is_scalar($repository['html_url'] ?? null)
+                    ? (string)$repository['html_url']
+                    : (is_scalar($match['repository_url'] ?? null) ? (string)$match['repository_url'] : '');
+                $defaultBranch = is_scalar($repository['default_branch'] ?? null)
+                    ? (string)$repository['default_branch']
+                    : (is_scalar($match['default_branch'] ?? null) ? (string)$match['default_branch'] : '');
             }
 
             // Fallback: alcune versioni possono restituire direttamente il repo URL nei grades.
             if ($repoUrl === '') {
-                $repoUrl = (string)($g['student_repository_url'] ?? ($g['repository_url'] ?? ''));
+                $repoUrl = is_scalar($g['student_repository_url'] ?? null)
+                    ? (string)$g['student_repository_url']
+                    : (is_scalar($g['repository_url'] ?? null) ? (string)$g['repository_url'] : '');
             }
 
             if ($repoUrl !== '') {
@@ -384,23 +467,51 @@ if ($selectedMapping && $selectedAssignmentId && $isAuthenticated) {
 }
 
 // Salvataggio mapping studenti
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'save_student_map') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $requestScalar($_POST, 'action') === 'save_student_map') {
     try {
-        $mappingId = $_POST['mapping_id'] ?? '';
-        $assignmentId = $_POST['github_assignment_id'] ?? '';
+        $assertCsrf();
+        $mappingId = $requestScalar($_POST, 'mapping_id');
+        $assignmentId = $requestScalar($_POST, 'github_assignment_id');
         $usernames = $_POST['github_username'] ?? [];
         $rosters = $_POST['roster_identifier'] ?? [];
         $repos = $_POST['student_repository_url'] ?? [];
         $studentsCv = $_POST['id_studente_cv'] ?? [];
         $confidence = $_POST['match_confidence'] ?? [];
 
+        foreach (['usernames' => $usernames, 'rosters' => $rosters, 'repos' => $repos, 'studentsCv' => $studentsCv, 'confidence' => $confidence] as $field => $value) {
+            if (!is_array($value)) {
+                throw new RuntimeException("Formato {$field} non valido.");
+            }
+        }
+
         if (!$mappingId || !$assignmentId) {
             throw new Exception("Seleziona mappatura e assignment.");
         }
 
+        $ownedMapping = null;
+        foreach ($mappings as $candidate) {
+            if ((string)($candidate['id_mapping'] ?? '') === $mappingId) {
+                $ownedMapping = $candidate;
+                break;
+            }
+        }
+        if (!is_array($ownedMapping)) {
+            throw new RuntimeException('Mappatura non disponibile per questo utente.');
+        }
+        $assignmentOwned = false;
+        foreach ($githubAssignments as $candidate) {
+            if (is_array($candidate) && (string)($candidate['id'] ?? $candidate['assignment_id'] ?? '') === $assignmentId) {
+                $assignmentOwned = true;
+                break;
+            }
+        }
+        if (!$assignmentOwned) {
+            throw new RuntimeException('Assignment non disponibile per il roster selezionato.');
+        }
+
         // Evita duplicati: rimuove eventuali mapping esistenti per questo assignment
         $existing = $dbAdapter->findWhere('GITHUB_ASSIGNMENT_STUDENT_MAP', [
-            'id_assignment' => $assignmentId
+            'id_assignment' => $assignmentId,
         ]);
         foreach ($existing as $ex) {
             if (!empty($ex['id_map'])) {
@@ -413,10 +524,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
 
         foreach ($usernames as $idx => $uname) {
-            $uname = trim($uname);
+            if (!is_scalar($uname)) {
+                continue;
+            }
+            $uname = trim((string)$uname);
             if (!$uname) continue;
-            $studentIdCv = $studentsCv[$idx] ?? '';
-            $mc = strtoupper(trim($confidence[$idx] ?? ''));
+            $studentIdCvRaw = $studentsCv[$idx] ?? '';
+            $confidenceRaw = $confidence[$idx] ?? '';
+            $rosterRaw = $rosters[$idx] ?? '';
+            $repoRaw = $repos[$idx] ?? '';
+            $studentIdCv = is_scalar($studentIdCvRaw) ? trim((string)$studentIdCvRaw) : '';
+            $mc = is_scalar($confidenceRaw) ? strtoupper(trim((string)$confidenceRaw)) : '';
             if (!in_array($mc, ['AUTO', 'MANUAL', 'UNMATCHED'], true)) {
                 $mc = $studentIdCv ? 'MANUAL' : 'UNMATCHED';
             }
@@ -424,8 +542,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 'id_map' => 'GHMAP_' . uniqid(),
                 'id_assignment' => $assignmentId,
                 'github_username' => $uname,
-                'roster_identifier' => $rosters[$idx] ?? '',
-                'student_repository_url' => $repos[$idx] ?? '',
+                'roster_identifier' => is_scalar($rosterRaw) ? trim((string)$rosterRaw) : '',
+                'student_repository_url' => is_scalar($repoRaw) ? trim((string)$repoRaw) : '',
                 'id_studente_cv' => $studentIdCv,
                 'match_confidence' => $mc,
                 'note' => '',
@@ -439,13 +557,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             if ($testIdFromQuery) {
                 $mapRow = null;
                 foreach ($mappings as $candidate) {
-                    if ((string)($candidate['id_mapping'] ?? '') === (string)$mappingId) {
+                    if ((string)($candidate['id_mapping'] ?? '') === $mappingId) {
                         $mapRow = $candidate;
                         break;
                     }
                 }
                 $update = [
-                    'github_assignment_id' => (string)$assignmentId
+                    'github_assignment_id' => $assignmentId
                 ];
                 if (!empty($mapRow['github_classroom_id'])) {
                     $update['github_classroom_id'] = (string)$mapRow['github_classroom_id'];
@@ -577,7 +695,7 @@ if ($isAuthenticated) {
 <div class="container-fluid mt-4">
     <div class="row">
         <div class="col-md-12">
-<?php if (isset($_GET['auth']) && $_GET['auth'] === 'success'): ?>
+<?php if ($requestScalar($_GET, 'auth') === 'success'): ?>
                 <div class="alert alert-success alert-dismissible fade show">
                     <i class="bi bi-check-circle"></i> Autenticazione GitHub completata con successo!
                     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
@@ -636,9 +754,14 @@ if ($isAuthenticated) {
                                     <?php endif; ?>
                                 </p>
                             </div>
-                            <a href="?action=logout_github" class="btn btn-outline-danger btn-sm">
-                                <i class="bi bi-box-arrow-right"></i> Disconnetti
-                            </a>
+                            <form method="POST" class="d-inline">
+                                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                                <input type="hidden" name="action" value="logout_github">
+                                <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo, ENT_QUOTES, 'UTF-8') ?>">
+                                <button type="submit" class="btn btn-outline-danger btn-sm">
+                                    <i class="bi bi-box-arrow-right"></i> Disconnetti
+                                </button>
+                            </form>
                         </div>
                     <?php else: ?>
                         <p class="mb-3">
@@ -739,13 +862,19 @@ if ($isAuthenticated) {
                                                     if (!empty($selectedAssignmentId)) {
                                                         $deleteParams['assignment_id'] = $selectedAssignmentId;
                                                     }
-                                                    $deleteUrl = '?' . http_build_query($deleteParams);
                                                     ?>
-                                                    <a href="<?= htmlspecialchars($deleteUrl) ?>"
-                                                       class="btn btn-sm btn-outline-danger"
-                                                       onclick="return confirm('Sei sicuro di voler eliminare questa mappatura?')">
-                                                        <i class="bi bi-trash"></i>
-                                                    </a>
+                                                    <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questa mappatura?')">
+                                                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                                                        <input type="hidden" name="action" value="delete">
+                                                        <input type="hidden" name="id" value="<?= htmlspecialchars((string)($mapping['id_mapping'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
+                                                        <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo, ENT_QUOTES, 'UTF-8') ?>">
+                                                        <?php foreach ($deleteParams as $paramName => $paramValue): if ($paramName === 'action' || $paramName === 'id') continue; ?>
+                                                            <input type="hidden" name="<?= htmlspecialchars((string)$paramName, ENT_QUOTES, 'UTF-8') ?>" value="<?= htmlspecialchars((string)$paramValue, ENT_QUOTES, 'UTF-8') ?>">
+                                                        <?php endforeach; ?>
+                                                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                            <i class="bi bi-trash"></i>
+                                                        </button>
+                                                    </form>
                                                 </td>
                                             </tr>
                                         <?php endforeach; ?>
@@ -766,13 +895,18 @@ if ($isAuthenticated) {
                     </div>
                     <div class="card-body">
                         <form method="POST" action="">
+                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                             <input type="hidden" name="action" value="add_mapping">
                             <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo) ?>">
+                            <?php if ($requestedGroupId !== ''): ?><input type="hidden" name="id_gruppo" value="<?= htmlspecialchars($requestedGroupId) ?>"><?php endif; ?>
 
                             <div class="row">
                                 <div class="col-md-6 mb-3">
-                                    <label class="form-label">Classe-Materia (ClasseViva) *</label>
-                                    <select name="classe_materia" id="classeMateria" class="form-select" required>
+                                    <label class="form-label"><?= $requestedGroupId !== '' ? 'Gruppo didattico selezionato' : 'Classe-Materia (ClasseViva) *' ?></label>
+                                    <?php if ($requestedGroupId !== ''): ?>
+                                        <div class="alert alert-info py-2 mb-0">Il collegamento verrà salvato sul gruppo <code><?= htmlspecialchars($requestedGroupId) ?></code>; ClasseViva è facoltativo.</div>
+                                    <?php endif; ?>
+                                    <select name="classe_materia" id="classeMateria" class="form-select" <?= $requestedGroupId === '' ? 'required' : '' ?>>
                                         <option value="">-- Seleziona --</option>
                                         <?php foreach ($classiMaterie as $cm): ?>
                                             <option value="<?= htmlspecialchars($cm['id_classe']) ?>,<?= htmlspecialchars($cm['id_materia']) ?>"
@@ -958,6 +1092,7 @@ if ($isAuthenticated) {
                             }
                             ?>
                             <form method="POST">
+                                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                                 <input type="hidden" name="action" value="save_student_map">
                                 <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo) ?>">
                                 <input type="hidden" name="mapping_id" value="<?= htmlspecialchars($selectedMappingId) ?>">

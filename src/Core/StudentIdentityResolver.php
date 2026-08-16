@@ -36,6 +36,11 @@ final class StudentIdentityResolver
         return $student;
     }
 
+    /**
+     * Merge all provider identities, memberships and resources into the target.
+     * Callers that need all-or-nothing semantics must provide a transaction;
+     * TeachingGroupStudentService is the transactional entry point.
+     */
     public function merge(string $sourceStudentId, string $targetStudentId): bool
     {
         if ($sourceStudentId === $targetStudentId) {

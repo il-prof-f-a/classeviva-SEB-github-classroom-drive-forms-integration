@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Core;
 
 use App\Core\Database\DatabaseAdapterInterface;
+use RuntimeException;
 
 final class GroupStudentRepository
 {
@@ -16,6 +17,18 @@ final class GroupStudentRepository
 
     public function add(string $groupId, string $studentId, array $data = []): array
     {
+        if ($this->db->findWhere('GRUPPI_DIDATTICI', [
+            'id_utente' => $this->userId,
+            'id_gruppo' => $groupId,
+        ]) === []) {
+            throw new RuntimeException('gruppo non appartenente all’utente corrente');
+        }
+        if ($this->db->findWhere('STUDENTI', [
+            'id_utente' => $this->userId,
+            'id_studente' => $studentId,
+        ]) === []) {
+            throw new RuntimeException('studente non appartenente all’utente corrente');
+        }
         $where = ['id_utente' => $this->userId, 'id_gruppo' => $groupId, 'id_studente' => $studentId];
         $existing = $this->db->findWhere('GRUPPI_STUDENTI', $where);
         if ($existing !== []) {
@@ -49,11 +62,41 @@ final class GroupStudentRepository
 
     public function reassign(string $membershipId, string $studentId): bool
     {
-        return $this->db->updateRow('GRUPPI_STUDENTI', 'id_iscrizione', $membershipId, ['id_studente' => $studentId]);
+        if ($this->db->findWhere('STUDENTI', [
+            'id_utente' => $this->userId,
+            'id_studente' => $studentId,
+        ]) === []) {
+            throw new RuntimeException('target studente non appartenente all’utente corrente');
+        }
+        $connection = $this->db->getConnection();
+        if (!$connection instanceof \PDO) {
+            throw new RuntimeException('mutazione membership senza ownership verificabile');
+        }
+        $statement = $connection->prepare(
+            'UPDATE GRUPPI_STUDENTI SET id_studente = :id_studente'
+            . ' WHERE id_iscrizione = :id_iscrizione AND id_utente = :id_utente'
+        );
+        $statement->execute([
+            ':id_studente' => $studentId,
+            ':id_iscrizione' => $membershipId,
+            ':id_utente' => $this->userId,
+        ]);
+        return $statement->rowCount() > 0;
     }
 
     public function delete(string $membershipId): bool
     {
-        return $this->db->deleteRow('GRUPPI_STUDENTI', $membershipId, 'id_iscrizione');
+        $connection = $this->db->getConnection();
+        if (!$connection instanceof \PDO) {
+            throw new RuntimeException('cancellazione membership senza ownership verificabile');
+        }
+        $statement = $connection->prepare(
+            'DELETE FROM GRUPPI_STUDENTI WHERE id_iscrizione = :id_iscrizione AND id_utente = :id_utente'
+        );
+        $statement->execute([
+            ':id_iscrizione' => $membershipId,
+            ':id_utente' => $this->userId,
+        ]);
+        return $statement->rowCount() > 0;
     }
 }
