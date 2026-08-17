@@ -204,6 +204,15 @@ try {
     $providerErrors['github_classroom'] = 'Servizio GitHub Classroom non disponibile: ' . $exception->getMessage();
 }
 
+$githubAuthUrl = null;
+if (!($providerReady['github_classroom'] ?? false) && isset($github) && !empty($config['github']['client_id'] ?? '')) {
+    try {
+        $githubAuthUrl = $github->getAuthorizationUrl(null, (string)($_SERVER['REQUEST_URI'] ?? 'teaching_groups.php'));
+    } catch (Throwable $ignored) {
+        $githubAuthUrl = null;
+    }
+}
+
 $redirectAfterAction = static function (string $message, array $flashData = []) use ($returnTo): never {
     $_SESSION['teaching_groups_flash'] = ['success' => $message] + $flashData;
     $returnPath = (string)(parse_url($returnTo, PHP_URL_PATH) ?? '');
@@ -877,6 +886,8 @@ $skipOnboardingBanner = true;
     <?php if (is_array($studentSyncFlash)): ?><div class="alert alert-info" role="alert"><strong>Roster sincronizzato</strong>: <?= $escape($studentSyncFlash['count']) ?> righe.
         <?php if ($studentSyncFlash['display_names'] !== []): ?><ul class="mb-0"><?php foreach ($studentSyncFlash['display_names'] as $displayName): ?><li><?= $escape($displayName) ?></li><?php endforeach; ?></ul><?php endif; ?>
     </div><?php endif; ?>
+
+    <?php if ($githubAuthUrl !== null): ?><div class="d-flex justify-content-end mb-3"><a href="<?= $escape($githubAuthUrl) ?>" class="btn btn-dark">Autorizza GitHub</a></div><?php endif; ?>
 
 
     <?php if ($tab === 'students'): ?>
