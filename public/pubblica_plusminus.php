@@ -1,6 +1,5 @@
 <?php
 
-define('REQUIRES_CLASSEVIVA', true);
 /**
  * Pubblica le evidenze +/- come annotazioni su ClasseViva.
  * Puo' essere chiamata:
@@ -25,6 +24,7 @@ register_shutdown_function(function () use (&$__pubblica_done) {
 });
 
 use App\Core\Database\DatabaseFactory;
+use App\Core\ProviderCapabilityResolver;
 use App\Integration\ClasseVivaAPI;
 
 try {
@@ -58,6 +58,7 @@ try {
 
     $db = DatabaseFactory::createWithInitialization($config, true);
     $cv = new ClasseVivaAPI($config);
+    $userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
     $valutazioniColumns = [];
     $valutazioniColumnSet = [];
     try {
@@ -77,6 +78,10 @@ try {
     $fUda = $_POST['id_uda'] ?? $_GET['id_uda'] ?? null;
     $fClasse = $_POST['id_classe_cv'] ?? $_GET['id_classe_cv'] ?? null;
     $fMateria = $_POST['id_materia_cv'] ?? $_GET['id_materia_cv'] ?? null;
+    if ($fClasse && $fMateria && !ProviderCapabilityResolver::supportsCvForPair($db, $userId, (string)$fClasse, (string)$fMateria, 'publish_annotation')) {
+        echo json_encode(['ok' => false, 'error' => 'La classe non è collegata a un gruppo con ClasseViva.']);
+        exit;
+    }
 
     // Estrai evidenze non registrate
     if ($fUda || $fClasse || $fMateria) {

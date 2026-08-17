@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Core;
 
+use App\Core\Database\DatabaseAdapterInterface;
+
 /**
  * Risoluzione di capability provider-neutral: gruppo + provider + operazione.
  *
@@ -24,6 +26,7 @@ final class ProviderCapabilityResolver
      */
     private const OPERATIONS = [
         self::PROVIDER_CLASSEVIVA => [
+            'list_classes',
             'sync_roster',
             'list_grades',
             'import_grades',
@@ -56,6 +59,50 @@ final class ProviderCapabilityResolver
         }
 
         return self::isLinked($groupLinks, $provider);
+    }
+
+    /**
+     * Risolve i collegamenti attivi del gruppo e valuta la capability.
+     */
+    public static function supportsForGroup(
+        DatabaseAdapterInterface $db,
+        string $userId,
+        string $groupId,
+        string $provider,
+        string $operation
+    ): bool {
+        $links = (new TeachingGroupIntegrationRepository($db, $userId))->listForGroup($groupId);
+
+        return self::supports($links, $provider, $operation);
+    }
+
+    /**
+     * Verifica una capability ClasseViva derivando il gruppo dalla coppia
+     * classe/materia. Comodo per le pagine CV-only che ricevono id_classe_cv/id_materia_cv.
+     */
+    public static function supportsCvForPair(
+        DatabaseAdapterInterface $db,
+        string $userId,
+        string $classId,
+        string $subjectId,
+        string $operation
+    ): bool {
+        $integration = (new TeachingGroupIntegrationRepository($db, $userId))->findByExternal(
+            'classeviva',
+            trim($classId),
+            trim($subjectId)
+        );
+        if ($integration === null) {
+            // Classe legacy non ancora migrata: nessun vincolo di gruppo; il check
+            // token (gestito dal chiamante) resta l'unico vincolo. Backward-compat.
+            return true;
+        }
+        $groupId = trim((string)($integration['id_gruppo'] ?? ''));
+        if ($groupId === '') {
+            return true;
+        }
+
+        return self::supportsForGroup($db, $userId, $groupId, 'classeviva', $operation);
     }
 
     /**

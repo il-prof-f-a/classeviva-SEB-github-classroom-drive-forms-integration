@@ -1,6 +1,5 @@
 <?php
 
-define('REQUIRES_CLASSEVIVA', true);
 /**
  * Gestione Associazioni Classe-Materia → Google Classroom
  * Interfaccia migliorata per associare le combinazioni (classe, materia) di ClasseViva

@@ -1,6 +1,5 @@
 <?php
 
-define('REQUIRES_CLASSEVIVA', true);
 /**
  * Pubblicazione Valutazioni su ClasseViva
  *

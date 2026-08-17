@@ -6,6 +6,7 @@ use App\Core\Database\DatabaseFactory;
 use App\Core\ProviderNeutralMappingService;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupRepository;
+use App\Core\ProviderCapabilityResolver;
 use App\Core\UdaGroupRepository;
 use App\Integration\GoogleDriveAPI;
 use App\Utils\UdaMetadataHelper;
@@ -272,6 +273,7 @@ try {
         }
         $google = $integrationRepo->findForGroupProvider($gid, 'google_classroom');
         $github = $integrationRepo->findForGroupProvider($gid, 'github_classroom');
+        $hasCv = ProviderCapabilityResolver::supportsForGroup($dbAdapter, $userId, $gid, 'classeviva', 'publish_grade');
         $gruppi[] = [
             'id_gruppo' => $gid,
             'nome_gruppo' => (string)($group['nome_gruppo'] ?? ('Gruppo ' . $gid)),
@@ -279,6 +281,7 @@ try {
             'google_course_name' => $google !== null ? (string)($google['external_name'] ?? '') : '',
             'github_classroom_id' => $github !== null ? (string)($github['external_context_id'] ?? '') : '',
             'github_classroom_name' => $github !== null ? (string)($github['external_name'] ?? '') : '',
+            'has_cv' => $hasCv,
         ];
     }
 
@@ -625,6 +628,12 @@ try {
                                                 <a href="github_classroom_mapping.php?group_id=<?= urlencode($gruppo['id_gruppo']) ?>" class="btn btn-sm mt-2" style="background-color: #663399; color: white; border-color: #663399;">
                                                     <i class="bi bi-github"></i> Collega GitHub
                                                 </a>
+                                            <?php endif; ?>
+                                            <?php if ($gruppo['has_cv']): ?>
+                                                <div class="alert alert-info py-1 px-2 mb-2">
+                                                    <i class="bi bi-mortarboard"></i>
+                                                    ClasseViva collegato
+                                                </div>
                                             <?php endif; ?>
                                         </div>
                                     </div>

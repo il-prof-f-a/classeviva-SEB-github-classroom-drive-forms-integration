@@ -1,6 +1,5 @@
 <?php
 
-define('REQUIRES_CLASSEVIVA', true);
 /**
  * Cerca voti in qualsiasi materia
  */

@@ -1,6 +1,5 @@
 <?php
 
-define('REQUIRES_CLASSEVIVA', true);
 /**
  * Inserisce un voto di test e poi lo recupera per analisi
  */

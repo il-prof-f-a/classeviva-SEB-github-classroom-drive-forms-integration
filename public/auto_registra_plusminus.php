@@ -1,6 +1,5 @@
 <?php
 
-define('REQUIRES_CLASSEVIVA', true);
 /**
  * Auto-Registrazione Evidenze PiùOMeno su ClasseViva
  *

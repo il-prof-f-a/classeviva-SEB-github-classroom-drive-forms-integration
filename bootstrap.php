@@ -294,7 +294,7 @@ if (php_sapi_name() !== 'cli'
         // l'utente deve riautenticarsi. Il popup viene comunque renderizzato
         // esclusivamente dal bootstrap (mai dall'API ClasseViva).
         $requiresClasseViva = \App\Core\ClasseVivaCapability::requested();
-        if (!$skipClasseVivaTokenValidation && $hasAuthenticatedUser && $requiresClasseViva) {
+        if (!$skipClasseVivaTokenValidation && $hasAuthenticatedUser) {
             if ($classeVivaEnabled && $classeVivaToken === '') {
                 $config['classeviva']['token_error'] = 'Token ClasseViva mancante';
                 $classeVivaSessionStore->markReauthenticationRequired();

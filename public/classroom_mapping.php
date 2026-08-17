@@ -1,6 +1,5 @@
 <?php
 
-define('REQUIRES_CLASSEVIVA', true);
 /**
  * Mappatura ClasseViva <-> Google Classroom
  * Permette di associare materie di ClasseViva a corsi di Google Classroom

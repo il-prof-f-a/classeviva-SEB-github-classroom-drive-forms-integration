@@ -1,6 +1,5 @@
 <?php
 
-define('REQUIRES_CLASSEVIVA', true);
 /**
  * Laboratorio PiùOMeno - Vista Griglia Classe
  *
@@ -18,12 +17,14 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\ClasseVivaTokenGuard;
 use App\Core\Database\DatabaseFactory;
+use App\Core\ProviderCapabilityResolver;
 use App\Core\UDAManager;
 use App\Core\StudentiManager;
 use App\Integration\ClasseVivaAPI;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 $udaManager = new UDAManager($config);
+$userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
 
 // Inizializza ClasseViva API
 $classeVivaState = ClasseVivaTokenGuard::getTokenState($config);
@@ -65,6 +66,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
 
         if (!$udaId || !$idClasseCV || !$idMateriaCV || !$idStud) {
             echo json_encode(['ok' => false, 'error' => 'Parametri mancanti (udaId=' . ($udaId ?? 'null') . ', idClasseCV=' . ($idClasseCV ?? 'null') . ', idMateriaCV=' . ($idMateriaCV ?? 'null') . ', idStud=' . ($idStud ?? 'null') . ')']);
+            exit;
+        }
+        if (!ProviderCapabilityResolver::supportsCvForPair($dbAdapter, $userId, (string)$idClasseCV, (string)$idMateriaCV, 'publish_grade')) {
+            echo json_encode(['ok' => false, 'error' => 'La classe non è collegata a un gruppo con ClasseViva.']);
             exit;
         }
         if ($votoProposto === null) {

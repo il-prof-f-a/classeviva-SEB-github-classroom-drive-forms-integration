@@ -1,6 +1,5 @@
 <?php
 
-define('REQUIRES_CLASSEVIVA', true);
 /**
  * Valutazione Attività Laboratorio - Sistema PiùOMeno
  *
@@ -17,6 +16,7 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\ClasseVivaTokenGuard;
 use App\Core\Database\DatabaseFactory;
+use App\Core\ProviderCapabilityResolver;
 use App\Core\UDAManager;
 use App\Core\LaboratorioManager;
 use App\Core\StudentiManager;
@@ -24,6 +24,7 @@ use App\Integration\ClasseVivaAPI;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 $udaManager = new UDAManager($config);
+$userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
 $labManager = new LaboratorioManager($dbAdapter, $config);
 
 // Inizializza ClasseViva API
@@ -41,6 +42,9 @@ $udaId = $_GET['id_uda'] ?? $_POST['uda_id'] ?? null;
 $idClasseCV = $_GET['id_classe_cv'] ?? $_POST['id_classe_cv'] ?? null;
 $idMateriaCV = $_GET['id_materia_cv'] ?? $_POST['id_materia_cv'] ?? null;
 $idStudenteCV = $_GET['id_studente_cv'] ?? $_POST['id_studente_cv'] ?? null;
+if ($idClasseCV && $idMateriaCV && !ProviderCapabilityResolver::supportsCvForPair($dbAdapter, $userId, (string)$idClasseCV, (string)$idMateriaCV, 'list_grades')) {
+    $error = 'La classe non è collegata a un gruppo con ClasseViva.';
+}
 
 // Calcola timestamp 2 ore fa
 $duehOraFa = date('Y-m-d H:i:s', strtotime('-2 hours'));

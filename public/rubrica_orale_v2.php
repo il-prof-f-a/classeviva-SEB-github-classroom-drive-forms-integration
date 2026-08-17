@@ -1,6 +1,5 @@
 <?php
 
-define('REQUIRES_CLASSEVIVA', true);
 /**
  * Rubrica Valutazione Orale - Versione 2 (DATABASE-FIRST, NO SESSIONS)
  *

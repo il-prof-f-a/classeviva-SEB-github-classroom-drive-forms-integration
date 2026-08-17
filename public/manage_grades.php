@@ -1,6 +1,5 @@
 <?php
 
-define('REQUIRES_CLASSEVIVA', true);
 /**
  * Gestione Voti - Visualizza, inserisci e gestisci tutti i voti
  */
