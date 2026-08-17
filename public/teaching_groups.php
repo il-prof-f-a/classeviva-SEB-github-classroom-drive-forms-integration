@@ -288,8 +288,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         'tipo_risorsa' => $provider === 'classeviva' ? 'classe_materia' : ($provider === 'google_classroom' ? 'course' : 'roster'),
                     ]);
                 }
-                $redirectAfterAction('Gruppo didattico aggiornato.');
-                break;
+                $_SESSION['teaching_groups_flash'] = ['success' => 'Gruppo didattico aggiornato. Ora mappa gli studenti.'];
+                header('Location: teaching_groups.php?tab=students&id=' . urlencode($groupId) . '&return_to=' . urlencode($returnTo));
+                exit;
             case 'save_all_mappings':
                 $mappingsRaw = $_POST['mappings'] ?? [];
                 if (!is_array($mappingsRaw)) {
@@ -340,7 +341,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     $studentService->linkIdentities($groupId, $linkPayload);
                 }
                 $_SESSION['teaching_groups_flash'] = ['success' => 'Mappature studenti salvate.'];
-                header('Location: teaching_groups.php');
+                header('Location: teaching_groups.php?return_to=' . urlencode($returnTo));
                 exit;
             case 'link_provider':
                 $providerRaw = $_POST['provider'] ?? '';
@@ -874,7 +875,7 @@ $skipOnboardingBanner = true;
         <section class="card shadow-sm mb-4">
             <div class="card-body">
                 <h2 class="h5">Mappatura studenti<?= $selectedGroupName !== '' ? ' — ' . $escape($selectedGroupName) : '' ?></h2>
-                <p class="text-muted"><a href="teaching_groups.php">&larr; Torna ai gruppi didattici</a></p>
+                <p class="text-muted"><a href="teaching_groups.php?return_to=<?= urlencode($returnTo) ?>">&larr; Torna ai gruppi didattici</a></p>
                 <?php if ($studentMatrixError !== null): ?><div class="alert alert-danger" role="alert"><?= $escape($studentMatrixError) ?></div><?php endif; ?>
                 <?php foreach ($rosterErrors as $rosterError): ?><div class="alert alert-warning" role="alert"><?= $escape($rosterError) ?></div><?php endforeach; ?>
                 <?php if ($anchorProvider === null): ?>
@@ -964,7 +965,7 @@ $skipOnboardingBanner = true;
                             <?php endif; ?>
                         </div></div>
                     <?php endforeach; ?></div>
-                    <div class="mt-3 d-flex justify-content-between align-items-center"><button class="btn btn-primary" type="submit">Salva</button><a href="?tab=students&amp;id=<?= urlencode($groupId) ?>" class="btn btn-sm <?= $mapBtnClass ?>" style="<?= $mapBtnStyle ?>"><?= $unmappedCount ?> studenti da mappare</a></div>
+                    <div class="mt-3 d-flex justify-content-between align-items-center"><button class="btn btn-primary" type="submit">Salva</button><a href="?tab=students&amp;id=<?= urlencode($groupId) ?>&amp;return_to=<?= urlencode($returnTo) ?>" class="btn btn-sm <?= $mapBtnClass ?>" style="<?= $mapBtnStyle ?>"><?= $unmappedCount ?> studenti da mappare</a></div>
                 </form>
             </div></article></div>
         <?php endforeach; ?>
