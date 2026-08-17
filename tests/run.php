@@ -421,6 +421,7 @@ $architectureTests = [
     'ClasseViva student sync' => __DIR__ . '/integration/classeviva_student_sync.php',
     'provider-neutral E2E' => __DIR__ . '/e2e/new_uda_provider_neutral.php',
     'teaching groups editor E2E' => __DIR__ . '/e2e/teaching_groups_editor.php',
+    'group ownership capability E2E' => __DIR__ . '/e2e/group_ownership_capability.php',
     'GitHub student resources' => __DIR__ . '/integration/github_student_resources.php',
 ];
 foreach ($architectureTests as $label => $testFile) {
