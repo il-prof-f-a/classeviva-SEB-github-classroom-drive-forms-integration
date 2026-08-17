@@ -325,6 +325,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         $linkPayload[] = ['provider' => $anchorProvider, 'external_user_id' => $anchorExternal, 'matches' => $matches];
                     }
                 }
+                $seenTargetKeys = [];
+                foreach ($linkPayload as $linkEntry) {
+                    $linkAnchorKey = (string)($linkEntry['provider'] ?? '') . ':' . (string)($linkEntry['external_user_id'] ?? '');
+                    foreach ($linkEntry['matches'] as $matchEntry) {
+                        $matchKey = (string)($matchEntry['provider'] ?? '') . ':' . (string)($matchEntry['external_user_id'] ?? '');
+                        if (isset($seenTargetKeys[$matchKey]) && $seenTargetKeys[$matchKey] !== $linkAnchorKey) {
+                            throw new RuntimeException('Lo studente "' . (string)($matchEntry['external_user_id'] ?? '') . '" (' . (string)($matchEntry['provider'] ?? '') . ') è stato selezionato per più di una riga. Ogni studente può essere collegato a una sola riga della lista di origine.');
+                        }
+                        $seenTargetKeys[$matchKey] = $linkAnchorKey;
+                    }
+                }
                 if ($linkPayload !== []) {
                     $studentService->linkIdentities($groupId, $linkPayload);
                 }
@@ -787,6 +798,44 @@ if ($selectedGroupRecord !== null) {
         } catch (Throwable $ignored) {
             $existingMappings = [];
         }
+        $preselected = [];
+        foreach ($targetProviders as $targetProvider) {
+            $targetRoster = $targetRosters[$targetProvider] ?? [];
+            $preCandidates = [];
+            foreach ($anchorRoster as $anchorEntry) {
+                $preAnchorExternal = (string)($anchorEntry['external_user_id'] ?? '');
+                if ($preAnchorExternal === '') {
+                    continue;
+                }
+                if (isset($existingMappings[$preAnchorExternal][$targetProvider])) {
+                    $preCandidates[] = [$preAnchorExternal, (string)$existingMappings[$preAnchorExternal][$targetProvider], 2.0];
+                    continue;
+                }
+                $preAnchorName = (string)($anchorEntry['display_name'] ?? '');
+                $preBestScore = 0.0;
+                $preBestTarget = '';
+                foreach ($targetRoster as $targetEntry) {
+                    $targetEntryName = (string)($targetEntry['display_name'] ?? '');
+                    $targetEntryScore = $nameSimilarity($preAnchorName, $targetEntryName);
+                    if ($targetEntryScore > 0.75 && $targetEntryScore > $preBestScore) {
+                        $preBestScore = $targetEntryScore;
+                        $preBestTarget = (string)($targetEntry['external_user_id'] ?? '');
+                    }
+                }
+                if ($preBestTarget !== '') {
+                    $preCandidates[] = [$preAnchorExternal, $preBestTarget, $preBestScore];
+                }
+            }
+            usort($preCandidates, static fn(array $a, array $b): int => $b[2] <=> $a[2]);
+            $usedTargets = [];
+            foreach ($preCandidates as [$preAnchorExternal, $preTargetExternal]) {
+                if (isset($usedTargets[$preTargetExternal])) {
+                    continue;
+                }
+                $usedTargets[$preTargetExternal] = true;
+                $preselected[$targetProvider][$preAnchorExternal] = $preTargetExternal;
+            }
+        }
     }
 } elseif ($selectedGroupId !== '') {
     $studentMatrixError = 'Gruppo didattico non trovato.';
@@ -846,7 +895,7 @@ $skipOnboardingBanner = true;
                                         <td><strong><?= $anchorName !== '' ? $escape($anchorName) : '' ?></strong><?php if ($anchorName !== ''): ?> <code class="small text-muted"><?= $escape($anchorExternal) ?></code><?php else: ?><code><?= $escape($anchorExternal) ?></code><?php endif; ?></td>
                                         <input type="hidden" name="mappings[<?= $anchorIndex ?>][anchor_provider]" value="<?= $escape($anchorProvider) ?>">
                                         <input type="hidden" name="mappings[<?= $anchorIndex ?>][anchor_external_user_id]" value="<?= $escape($anchorExternal) ?>">
-                                        <?php foreach ($targetProviders as $targetProvider): $targetSelected = $existingMappings[$anchorExternal][$targetProvider] ?? ''; if ($targetSelected === '') { $targetBestScore = 0.0; foreach ($targetRosters[$targetProvider] ?? [] as $targetEntry) { $targetEntryName = (string)($targetEntry['display_name'] ?? ''); $targetEntryScore = $nameSimilarity($anchorName, $targetEntryName); if ($targetEntryScore > 0.75 && $targetEntryScore > $targetBestScore) { $targetBestScore = $targetEntryScore; $targetSelected = (string)($targetEntry['external_user_id'] ?? ''); } } } ?>
+                                        <?php foreach ($targetProviders as $targetProvider): $targetSelected = $preselected[$targetProvider][$anchorExternal] ?? ''; ?>
                                         <td><select class="form-select form-select-sm" name="mappings[<?= $anchorIndex ?>][matches][<?= $escape($targetProvider) ?>]"><option value="">Non mappare</option><?php foreach ($targetRosters[$targetProvider] ?? [] as $targetEntry): $targetExternal = (string)($targetEntry['external_user_id'] ?? ''); $targetName = (string)($targetEntry['display_name'] ?? ''); ?><option value="<?= $escape($targetExternal) ?>" <?= $targetSelected === $targetExternal ? 'selected' : '' ?>><?= $targetName !== '' ? $escape($targetName) . ' (' . $escape($targetExternal) . ')' : $escape($targetExternal) ?></option><?php endforeach; ?></select></td>
                                         <?php endforeach; ?>
                                     </tr>
