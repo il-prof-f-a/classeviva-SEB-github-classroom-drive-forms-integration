@@ -2,7 +2,7 @@
 
 // La pagina legacy resta disponibile anche quando ClasseViva non e\u0300 collegato:
 // i gruppi moderni possono essere gestiti tramite il catalogo provider-neutral.
-define('REQUIRES_CLASSEVIVA', false);
+define('REQUIRES_CLASSEVIVA', true);
 /**
  * Gestione Completa Associazioni ClasseViva ↔ Google Classroom
  *

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-define('REQUIRES_CLASSEVIVA', false);
+define('REQUIRES_CLASSEVIVA', true);
 require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
@@ -250,6 +250,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     'descrizione' => $postText('descrizione'),
                     'stato' => $postText('stato', 'attivo'),
                 ]);
+                $redirectAfterAction('Gruppo didattico aggiornato.');
+                break;
+            case 'save_group':
+                $groupService->updateGroup($groupId, [
+                    'nome_gruppo' => $postText('nome_gruppo'),
+                    'nome_classe' => $postText('nome_classe'),
+                    'nome_materia' => $postText('nome_materia'),
+                    'anno_scolastico' => $postText('anno_scolastico'),
+                    'descrizione' => $postText('descrizione'),
+                    'stato' => $postText('stato', 'attivo'),
+                ]);
+                foreach (array_keys($providerLabels) as $provider) {
+                    if (!($providerReady[$provider] ?? false)) {
+                        continue;
+                    }
+                    $selectedRaw = $_POST[$providerFields[$provider]] ?? '';
+                    $selected = is_scalar($selectedRaw) ? trim((string)$selectedRaw) : '';
+                    $option = null;
+                    foreach ($providerOptions[$provider] ?? [] as $candidate) {
+                        if ((string)($candidate['value'] ?? '') === $selected) {
+                            $option = $candidate;
+                            break;
+                        }
+                    }
+                    if ($option === null) {
+                        if ($integrationRepository->findForGroupProvider($groupId, $provider) !== null) {
+                            $groupService->unlinkProvider($groupId, $provider);
+                        }
+                        continue;
+                    }
+                    $groupService->linkProvider($groupId, [
+                        'provider' => $provider,
+                        'external_context_id' => (string)($option['context'] ?? ''),
+                        'external_subject_id' => (string)($option['subject'] ?? ''),
+                        'external_name' => (string)($option['label'] ?? ''),
+                        'tipo_risorsa' => $provider === 'classeviva' ? 'classe_materia' : ($provider === 'google_classroom' ? 'course' : 'roster'),
+                    ]);
+                }
                 $redirectAfterAction('Gruppo didattico aggiornato.');
                 break;
             case 'link_provider':
@@ -581,6 +619,105 @@ foreach ($studentRows as $studentRow) {
         }
     }
 }
+$providerDisplayNames = [];
+foreach ($configuredProviders as $provider) {
+    $providerLink = $selectedCatalog['providers'][$provider] ?? [];
+    $contextId = trim((string)($providerLink['external_context_id'] ?? ''));
+    if ($contextId === '') {
+        continue;
+    }
+    $providerDisplayNames[$provider] = [];
+    try {
+        if ($provider === 'classeviva') {
+            $rosterStudents = (new ClasseVivaAPI($config))->getStudents($contextId);
+            if (is_array($rosterStudents)) {
+                foreach ($rosterStudents as $rosterEntry) {
+                    if (!is_array($rosterEntry)) {
+                        continue;
+                    }
+                    $rosterExternal = trim((string)($rosterEntry['id'] ?? $rosterEntry['studentId'] ?? ''));
+                    if ($rosterExternal === '') {
+                        continue;
+                    }
+                    $rosterFirst = is_scalar($rosterEntry['nome'] ?? null) ? (string)$rosterEntry['nome'] : '';
+                    $rosterLast = is_scalar($rosterEntry['cognome'] ?? null) ? (string)$rosterEntry['cognome'] : '';
+                    $providerDisplayNames[$provider][$rosterExternal] = trim($rosterFirst . ' ' . $rosterLast);
+                }
+            }
+        } elseif ($provider === 'google_classroom') {
+            $rosterStudents = (new GoogleClassroomAPI($config))->getCourseStudents($contextId);
+            if (is_array($rosterStudents)) {
+                foreach ($rosterStudents as $rosterEntry) {
+                    if (!is_array($rosterEntry)) {
+                        continue;
+                    }
+                    $rosterExternal = trim((string)($rosterEntry['id'] ?? $rosterEntry['userId'] ?? ''));
+                    if ($rosterExternal === '') {
+                        continue;
+                    }
+                    $providerDisplayNames[$provider][$rosterExternal] = is_scalar($rosterEntry['name'] ?? null) ? (string)$rosterEntry['name'] : '';
+                }
+            }
+        } elseif (isset($github)) {
+            $githubAssignments = $github->listAssignments($contextId);
+            $githubAssignments = is_array($githubAssignments) && isset($githubAssignments['assignments']) && is_array($githubAssignments['assignments'])
+                ? $githubAssignments['assignments']
+                : (is_array($githubAssignments) ? $githubAssignments : []);
+            $githubSeen = [];
+            $githubNameCache = $_SESSION['github_display_names'] ?? [];
+            if (!is_array($githubNameCache)) {
+                $githubNameCache = [];
+            }
+            foreach ($githubAssignments as $githubAssignment) {
+                if (!is_array($githubAssignment)) {
+                    continue;
+                }
+                $githubAssignmentId = trim((string)($githubAssignment['id'] ?? $githubAssignment['assignment_id'] ?? ''));
+                if ($githubAssignmentId === '') {
+                    continue;
+                }
+                $githubAccepted = $github->listAcceptedAssignments($githubAssignmentId);
+                $githubAccepted = is_array($githubAccepted) && isset($githubAccepted['accepted_assignments']) && is_array($githubAccepted['accepted_assignments'])
+                    ? $githubAccepted['accepted_assignments']
+                    : (is_array($githubAccepted) ? $githubAccepted : []);
+                foreach ($githubAccepted as $githubEntry) {
+                    if (!is_array($githubEntry)) {
+                        continue;
+                    }
+                    $githubExternal = trim((string)($githubEntry['user_id'] ?? $githubEntry['github_username'] ?? $githubEntry['username'] ?? $githubEntry['roster_identifier'] ?? ''));
+                    if ($githubExternal === '' || isset($githubSeen[$githubExternal])) {
+                        continue;
+                    }
+                    $githubSeen[$githubExternal] = true;
+                    if (isset($githubNameCache[$githubExternal])) {
+                        $githubName = (string)$githubNameCache[$githubExternal];
+                    } else {
+                        $githubName = '';
+                        try {
+                            $githubProfile = $github->getUserByLogin($githubExternal);
+                            if (is_array($githubProfile)) {
+                                $githubName = is_scalar($githubProfile['name'] ?? null) ? (string)$githubProfile['name'] : '';
+                                if ($githubName === '' && is_scalar($githubProfile['login'] ?? null)) {
+                                    $githubName = (string)$githubProfile['login'];
+                                }
+                            }
+                        } catch (Throwable $ignored) {
+                            $githubName = '';
+                        }
+                        if ($githubName === '') {
+                            $githubName = $githubExternal;
+                        }
+                        $githubNameCache[$githubExternal] = $githubName;
+                    }
+                    $providerDisplayNames[$provider][$githubExternal] = $githubName;
+                }
+            }
+            $_SESSION['github_display_names'] = $githubNameCache;
+        }
+    } catch (Throwable $ignored) {
+        // Nomi non disponibili: restano visibili gli ID esterni.
+    }
+}
 ?>
 <!doctype html>
 <html lang="it">
@@ -637,7 +774,7 @@ foreach ($studentRows as $studentRow) {
                 <div class="table-responsive"><table class="table table-sm align-middle" aria-describedby="student-matrix-help"><caption id="student-matrix-help" class="text-muted">Gli identificativi esterni sono mostrati solo per il collegamento; nomi ed email non vengono salvati.</caption>
                     <thead><tr><th scope="col">ID interno</th><th scope="col">Stato</th><?php foreach ($configuredProviders as $provider): ?><th scope="col"><?= $escape($providerLabels[$provider]) ?></th><?php endforeach; ?><th scope="col">Mappatura</th><th scope="col">Azioni</th></tr></thead><tbody>
                     <?php foreach ($studentRows as $studentRow): $identities = is_array($studentRow['identities'] ?? null) ? $studentRow['identities'] : []; ?><tr><th scope="row"><code><?= $escape($studentRow['id_studente'] ?? '') ?></code></th><td><span class="badge <?= $studentRow['status'] === 'conflitti' ? 'text-bg-danger' : ($studentRow['status'] === 'mappati' ? 'text-bg-success' : 'text-bg-secondary') ?>"><?= $escape($studentStatusLabels[$studentRow['status']] ?? $studentRow['status']) ?></span></td>
-                        <?php foreach ($configuredProviders as $provider): ?><td><?php $providerIdentity = null; foreach ($identities as $identity) { if (($identity['provider'] ?? '') === $provider) { $providerIdentity = $identity; break; } } ?><?php if (is_array($providerIdentity)): ?><code><?= $escape($providerIdentity['external_user_id'] ?? '') ?></code><?php else: ?><span class="text-muted">Non mappato</span><?php endif; ?></td><?php endforeach; ?>
+                        <?php foreach ($configuredProviders as $provider): ?><td><?php $providerIdentity = null; foreach ($identities as $identity) { if (($identity['provider'] ?? '') === $provider) { $providerIdentity = $identity; break; } } ?><?php if (is_array($providerIdentity)): $providerIdShown = (string)($providerIdentity['external_user_id'] ?? ''); $providerNameShown = $providerDisplayNames[$provider][$providerIdShown] ?? ''; ?><?php if ($providerNameShown !== '' && $providerNameShown !== $providerIdShown): ?><span title="<?= $escape($providerIdShown) ?>"><?= $escape($providerNameShown) ?></span> <code class="small"><?= $escape($providerIdShown) ?></code><?php else: ?><code><?= $escape($providerIdShown) ?></code><?php endif; ?><?php else: ?><span class="text-muted">Non mappato</span><?php endif; ?></td><?php endforeach; ?>
                         <td><?php
                             $anchorIdentity = null;
                             foreach ($identities as $identity) {
@@ -682,7 +819,7 @@ foreach ($studentRows as $studentRow) {
                                     }
                                     $providerFieldId = 'student-' . preg_replace('/[^a-zA-Z0-9_-]+/', '-', (string)($studentRow['id_studente'] ?? '')) . '-match-' . preg_replace('/[^a-zA-Z0-9_-]+/', '-', $missingProvider);
                                 ?>
-                                    <div class="mb-2"><label class="form-label small" for="<?= $escape($providerFieldId) ?>"><?= $escape($providerLabels[$missingProvider] ?? $missingProvider) ?> da collegare</label><select id="<?= $escape($providerFieldId) ?>" class="form-select form-select-sm" name="matches[<?= $escape($missingProvider) ?>][]" multiple size="<?= $providerChoices === [] ? 1 : min(4, count($providerChoices)) ?>" aria-describedby="<?= $escape($providerFieldId) ?>-help" <?= $providerChoices === [] ? 'disabled' : '' ?>><?php foreach ($providerChoices as $choice): ?><option value="<?= $escape($choice['external_user_id']) ?>"><?= $escape($choice['external_user_id']) ?></option><?php endforeach; ?></select><?php if ($providerChoices === []): ?><span id="<?= $escape($providerFieldId) ?>-help" class="form-text text-warning">Nessuna identita disponibile nel roster.</span><?php else: ?><span id="<?= $escape($providerFieldId) ?>-help" class="form-text">Nessuna selezione lascia invariata questa riga.</span><?php endif; ?></div>
+                                    <div class="mb-2"><label class="form-label small" for="<?= $escape($providerFieldId) ?>"><?= $escape($providerLabels[$missingProvider] ?? $missingProvider) ?> da collegare</label><select id="<?= $escape($providerFieldId) ?>" class="form-select form-select-sm" name="matches[<?= $escape($missingProvider) ?>][]" multiple size="<?= $providerChoices === [] ? 1 : min(4, count($providerChoices)) ?>" aria-describedby="<?= $escape($providerFieldId) ?>-help" <?= $providerChoices === [] ? 'disabled' : '' ?>><?php foreach ($providerChoices as $choice): $choiceName = $providerDisplayNames[$missingProvider][$choice['external_user_id']] ?? ''; ?><option value="<?= $escape($choice['external_user_id']) ?>"><?= $choiceName !== '' && $choiceName !== $choice['external_user_id'] ? $escape($choiceName) . ' (' . $escape($choice['external_user_id']) . ')' : $escape($choice['external_user_id']) ?></option><?php endforeach; ?></select><?php if ($providerChoices === []): ?><span id="<?= $escape($providerFieldId) ?>-help" class="form-text text-warning">Nessuna identita disponibile nel roster.</span><?php else: ?><span id="<?= $escape($providerFieldId) ?>-help" class="form-text">Nessuna selezione lascia invariata questa riga.</span><?php endif; ?></div>
                                 <?php endforeach; ?>
                                 <button class="btn btn-sm btn-primary" type="submit">Collega</button>
                             </form>
@@ -718,48 +855,36 @@ foreach ($studentRows as $studentRow) {
         <?php foreach ($groups as $entry): $group = $entry['row']; $groupId = (string)$group['id_gruppo']; ?>
             <div class="col-12"><article class="card shadow-sm"><div class="card-body">
                 <div class="d-flex flex-wrap justify-content-between gap-2"><div><h2 class="h5 mb-1"><?= $escape($group['nome_gruppo'] ?? '') ?></h2><div class="small text-muted"><?= $escape(trim(($group['nome_classe'] ?? '') . ' · ' . ($group['nome_materia'] ?? '') . ' · ' . ($group['anno_scolastico'] ?? ''), ' ·')) ?></div></div><span class="badge <?= ($group['stato'] ?? 'attivo') === 'attivo' ? 'text-bg-success' : 'text-bg-secondary' ?>"><?= $escape($group['stato'] ?? 'attivo') ?></span></div>
-                <form method="post" class="row gy-2 gx-2 mt-2"><input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="update_group"><input type="hidden" name="id_gruppo" value="<?= $escape($groupId) ?>"><input type="hidden" name="return_to" value="<?= $escape($returnTo) ?>">
-                    <div class="col-md-3"><label class="form-label visually-hidden" for="group-<?= $escape($groupId) ?>-name">Nome gruppo</label><input id="group-<?= $escape($groupId) ?>-name" class="form-control" name="nome_gruppo" value="<?= $escape($group['nome_gruppo'] ?? '') ?>" required></div>
-                    <div class="col-md-2"><label class="form-label visually-hidden" for="group-<?= $escape($groupId) ?>-class">Classe</label><input id="group-<?= $escape($groupId) ?>-class" class="form-control" name="nome_classe" value="<?= $escape($group['nome_classe'] ?? '') ?>"></div>
-                    <div class="col-md-2"><label class="form-label visually-hidden" for="group-<?= $escape($groupId) ?>-subject">Materia</label><input id="group-<?= $escape($groupId) ?>-subject" class="form-control" name="nome_materia" value="<?= $escape($group['nome_materia'] ?? '') ?>"></div>
-                    <div class="col-md-2"><label class="form-label visually-hidden" for="group-<?= $escape($groupId) ?>-year">Anno scolastico</label><input id="group-<?= $escape($groupId) ?>-year" class="form-control" name="anno_scolastico" value="<?= $escape($group['anno_scolastico'] ?? '') ?>"></div>
-                    <div class="col-md-2"><label class="form-label visually-hidden" for="group-<?= $escape($groupId) ?>-status">Stato</label><select id="group-<?= $escape($groupId) ?>-status" class="form-select" name="stato"><option value="attivo" <?= ($group['stato'] ?? '') === 'attivo' ? 'selected' : '' ?>>Attivo</option><option value="disattivo" <?= ($group['stato'] ?? '') === 'disattivo' ? 'selected' : '' ?>>Disattivo</option></select></div><div class="col-md-1"><button class="btn btn-outline-primary w-100" type="submit">Salva</button></div>
-                    <div class="col-12"><label class="form-label small text-muted" for="group-<?= $escape($groupId) ?>-description">Descrizione</label><textarea id="group-<?= $escape($groupId) ?>-description" class="form-control form-control-sm" name="descrizione" rows="1"><?= $escape($group['descrizione'] ?? '') ?></textarea></div>
-                </form>
-                <div class="row g-2 mt-2">
-                <?php foreach ($providerLabels as $provider => $label): $linked = $entry['providers'][$provider] ?? null; ?>
-                    <div class="col-lg-4"><div class="border rounded p-2 h-100"><div class="d-flex justify-content-between"><strong><?= $escape($label) ?></strong><span class="small <?= $providerReady[$provider] ? 'text-success' : 'text-muted' ?>"><?= $providerReady[$provider] ? 'Autorizzato' : 'Autorizzazione richiesta' ?></span></div>
-                        <?php if ($providerErrors[$provider] !== null): ?><div class="small text-danger" role="alert"><?= $escape($providerErrors[$provider]) ?></div><?php endif; ?>
-                        <?php if (is_array($linked)): ?>
-                            <div class="small text-muted mb-2">Collegato: <?= $escape($linked['external_name'] ?: $linked['external_context_id']) ?></div>
-                            <form method="post">
-                                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
-                                <input type="hidden" name="action" value="unlink_provider">
-                                <input type="hidden" name="id_gruppo" value="<?= $escape($groupId) ?>">
-                                <input type="hidden" name="provider" value="<?= $escape($provider) ?>">
-                                <input type="hidden" name="return_to" value="<?= $escape($returnTo) ?>">
-                                <button class="btn btn-sm btn-outline-danger" type="submit">Scollega</button>
-                            </form>
-                        <?php elseif (!$providerReady[$provider]): ?>
-                            <p class="small text-muted mb-1">Autorizza il provider per caricare i contesti disponibili.</p>
-                            <a class="btn btn-sm btn-outline-secondary" href="<?= $escape($providerAuthLinks[$provider]) ?>">Apri autorizzazione</a>
-                        <?php else: ?>
-                            <form method="post" class="mt-2">
-                                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
-                                <input type="hidden" name="action" value="link_provider">
-                                <input type="hidden" name="id_gruppo" value="<?= $escape($groupId) ?>">
-                                <input type="hidden" name="provider" value="<?= $escape($provider) ?>">
-                                <input type="hidden" name="return_to" value="<?= $escape($returnTo) ?>">
+                <form method="post" class="mt-2"><input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="save_group"><input type="hidden" name="id_gruppo" value="<?= $escape($groupId) ?>"><input type="hidden" name="return_to" value="<?= $escape($returnTo) ?>">
+                    <div class="row gy-2 gx-2">
+                        <div class="col-md-3"><label class="form-label visually-hidden" for="group-<?= $escape($groupId) ?>-name">Nome gruppo</label><input id="group-<?= $escape($groupId) ?>-name" class="form-control" name="nome_gruppo" value="<?= $escape($group['nome_gruppo'] ?? '') ?>" required></div>
+                        <div class="col-md-2"><label class="form-label visually-hidden" for="group-<?= $escape($groupId) ?>-class">Classe</label><input id="group-<?= $escape($groupId) ?>-class" class="form-control" name="nome_classe" value="<?= $escape($group['nome_classe'] ?? '') ?>"></div>
+                        <div class="col-md-2"><label class="form-label visually-hidden" for="group-<?= $escape($groupId) ?>-subject">Materia</label><input id="group-<?= $escape($groupId) ?>-subject" class="form-control" name="nome_materia" value="<?= $escape($group['nome_materia'] ?? '') ?>"></div>
+                        <div class="col-md-2"><label class="form-label visually-hidden" for="group-<?= $escape($groupId) ?>-year">Anno scolastico</label><input id="group-<?= $escape($groupId) ?>-year" class="form-control" name="anno_scolastico" value="<?= $escape($group['anno_scolastico'] ?? '') ?>"></div>
+                        <div class="col-md-2"><label class="form-label visually-hidden" for="group-<?= $escape($groupId) ?>-status">Stato</label><select id="group-<?= $escape($groupId) ?>-status" class="form-select" name="stato"><option value="attivo" <?= ($group['stato'] ?? '') === 'attivo' ? 'selected' : '' ?>>Attivo</option><option value="disattivo" <?= ($group['stato'] ?? '') === 'disattivo' ? 'selected' : '' ?>>Disattivo</option></select></div>
+                        <div class="col-12"><label class="form-label small text-muted" for="group-<?= $escape($groupId) ?>-description">Descrizione</label><textarea id="group-<?= $escape($groupId) ?>-description" class="form-control form-control-sm" name="descrizione" rows="1"><?= $escape($group['descrizione'] ?? '') ?></textarea></div>
+                    </div>
+                    <div class="row g-2 mt-2">
+                    <?php foreach ($providerLabels as $provider => $label): $linked = $entry['providers'][$provider] ?? null; ?>
+                        <div class="col-lg-4"><div class="border rounded p-2 h-100"><div class="d-flex justify-content-between"><strong><?= $escape($label) ?></strong><span class="small <?= $providerReady[$provider] ? 'text-success' : 'text-muted' ?>"><?= $providerReady[$provider] ? 'Autorizzato' : 'Autorizzazione richiesta' ?></span></div>
+                            <?php if ($providerErrors[$provider] !== null): ?><div class="small text-danger" role="alert"><?= $escape($providerErrors[$provider]) ?></div><?php endif; ?>
+                            <?php if (!$providerReady[$provider] && !is_array($linked)): ?>
+                                <p class="small text-muted mb-1">Autorizza il provider per caricare i contesti disponibili.</p>
+                                <a class="btn btn-sm btn-outline-secondary" href="<?= $escape($providerAuthLinks[$provider]) ?>">Apri autorizzazione</a>
+                            <?php elseif (!$providerReady[$provider] && is_array($linked)): ?>
+                                <div class="small text-muted mb-1">Collegato: <?= $escape($linked['external_name'] ?: $linked['external_context_id']) ?> (autorizzazione richiesta per modificare).</div>
+                            <?php else: ?>
+                                <?php if (is_array($linked)): ?><div class="small text-muted mb-1">Collegato: <?= $escape($linked['external_name'] ?: $linked['external_context_id']) ?></div><?php endif; ?>
                                 <label class="form-label small" for="provider-<?= $escape($groupId . '-' . $provider) ?>">Contesto disponibile</label>
-                                <select id="provider-<?= $escape($groupId . '-' . $provider) ?>" class="form-select form-select-sm mb-1" name="<?= $escape($providerFields[$provider]) ?>" required>
-                                    <option value="">Seleziona…</option>
-                                    <?php foreach ($providerOptions[$provider] as $option): ?><option value="<?= $escape($option['value']) ?>"><?= $escape($option['label']) ?></option><?php endforeach; ?>
+                                <select id="provider-<?= $escape($groupId . '-' . $provider) ?>" class="form-select form-select-sm mb-1" name="<?= $escape($providerFields[$provider]) ?>">
+                                    <option value=""><?= is_array($linked) ? 'Scollega' : 'Seleziona…' ?></option>
+                                    <?php foreach ($providerOptions[$provider] as $option): $optionSelected = is_array($linked) && (string)($option['context'] ?? '') === (string)($linked['external_context_id'] ?? '') && (string)($option['subject'] ?? '') === (string)($linked['external_subject_id'] ?? ''); ?><option value="<?= $escape($option['value']) ?>" <?= $optionSelected ? 'selected' : '' ?>><?= $escape($option['label']) ?></option><?php endforeach; ?>
                                 </select>
-                                <button class="btn btn-sm btn-outline-primary" type="submit">Collega</button>
-                            </form>
-                        <?php endif; ?>
-                    </div></div>
-                <?php endforeach; ?></div>
+                            <?php endif; ?>
+                        </div></div>
+                    <?php endforeach; ?></div>
+                    <div class="mt-3"><button class="btn btn-primary" type="submit">Salva</button></div>
+                </form>
             </div></article></div>
         <?php endforeach; ?>
         <?php if ($groups === [] && $catalogError === null): ?><div class="col-12"><div class="alert alert-info">Nessun gruppo trovato. Puoi crearne uno senza collegare subito un provider.</div></div><?php endif; ?>

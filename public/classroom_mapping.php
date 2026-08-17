@@ -7,6 +7,7 @@
 
 error_reporting(E_ALL);
 
+define('REQUIRES_CLASSEVIVA', true);
 require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\ClasseVivaTokenGuard;

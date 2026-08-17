@@ -6,6 +6,7 @@
  * Usa l'endpoint di cancellazione voti di ClasseViva
  */
 
+define('REQUIRES_CLASSEVIVA', true);
 require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\ClasseVivaTokenGuard;

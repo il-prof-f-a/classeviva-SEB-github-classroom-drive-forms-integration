@@ -4,6 +4,7 @@
  * Gestione Voti - Visualizza, inserisci e gestisci tutti i voti
  */
 
+define('REQUIRES_CLASSEVIVA', true);
 require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\ClasseVivaTokenGuard;

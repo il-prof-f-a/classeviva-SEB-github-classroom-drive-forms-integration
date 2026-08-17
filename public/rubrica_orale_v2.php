@@ -19,6 +19,7 @@ use App\Core\RubricManager;
 use App\Integration\ClasseVivaAPI;
 use App\Integration\GoogleDriveAPI;
 
+define('REQUIRES_CLASSEVIVA', true);
 $config = require_once __DIR__ . '/../bootstrap.php';
 
 error_reporting(E_ALL);

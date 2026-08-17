@@ -4,6 +4,7 @@
  * Analisi Voti Classe - Cerca studenti con voti esistenti
  */
 
+define('REQUIRES_CLASSEVIVA', true);
 require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\ClasseVivaTokenGuard;

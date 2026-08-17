@@ -4,6 +4,7 @@
  * Cerca voti in qualsiasi materia
  */
 
+define('REQUIRES_CLASSEVIVA', true);
 require_once __DIR__ . '/../bootstrap.php';
 
 use App\Integration\ClasseVivaAPI;

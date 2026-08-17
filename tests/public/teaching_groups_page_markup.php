@@ -42,16 +42,15 @@ if (!str_contains($markup, 'ClasseVivaTokenGuard::getTokenState')
     || !str_contains($markup, 'token_valid')) {
     $failures[] = 'gating ClasseViva senza popup mancante';
 }
-if (!str_contains($markup, "define('REQUIRES_CLASSEVIVA', false)")
+if (!str_contains($markup, "define('REQUIRES_CLASSEVIVA', true)")
     || !str_contains($markup, 'catalogError')) {
-    $failures[] = 'pagina provider-neutral (senza gate globale) o stato errore catalogo mancante';
+    $failures[] = 'pagina di mapping (con gate ClasseViva) o stato errore catalogo mancante';
 }
 
 foreach ([
     'create_group',
-    'update_group',
-    'link_provider',
-    'unlink_provider',
+    'save_group',
+    'sync_students',
     'save_student_mapping',
 ] as $needle) {
     $actionPattern = "/<(?:input|button)\\b(?=[^>]*\\bname=[\"']action[\"'])(?=[^>]*\\bvalue=[\"']"

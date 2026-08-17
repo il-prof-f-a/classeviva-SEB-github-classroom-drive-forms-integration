@@ -7,6 +7,7 @@
  * Permette di eliminare i voti non più presenti su ClasseViva per sincronizzare lo stato.
  */
 
+define('REQUIRES_CLASSEVIVA', true);
 require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\ClasseVivaTokenGuard;

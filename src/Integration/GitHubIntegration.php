@@ -99,6 +99,16 @@ class GitHubIntegration
     }
 
     /**
+     * Profilo pubblico GitHub di un utente (login -> nome reale).
+     * Usato per mostrare il nome degli studenti senza persistirlo.
+     */
+    public function getUserByLogin(string $login)
+    {
+        $response = $this->apiRequest('GET', '/users/' . rawurlencode($login));
+        return is_array($response) ? $response : null;
+    }
+
+    /**
      * Lista tutti i GitHub Classrooms dell'utente
      */
     public function listClassrooms($page = 1, $perPage = 30)

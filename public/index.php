@@ -417,14 +417,8 @@ function sortLink(string $field, string $label, string $currentField, string $cu
                     </div>
                     <div class="card-body">
                         <div class="d-grid gap-2">
-                            <a href="map_classes.php" class="btn btn-outline-success btn-sm">
-                                <i class="bi bi-link-45deg"></i> Associazioni CV - GC
-                            </a>
-                            <a href="github_classroom_mapping.php" class="btn btn-outline-success btn-sm">
-                                <i class="bi bi-github"></i> Mappatura GitHub Classroom
-                                <?php if (!empty($_SESSION['github_access_token'])): ?>
-                                    <span class="badge bg-success float-end">V</span>
-                                <?php endif; ?>
+                            <a href="teaching_groups.php" class="btn btn-outline-success btn-sm">
+                                <i class="bi bi-people"></i> Gruppi didattici &amp; Mappature
                             </a>
                             <a href="github_assignments.php" class="btn btn-outline-success btn-sm">
                                 <i class="bi bi-github"></i> Gestione Assignment GitHub

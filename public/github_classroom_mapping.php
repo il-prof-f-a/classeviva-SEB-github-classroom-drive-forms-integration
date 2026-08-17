@@ -4,6 +4,7 @@
  * Collega Classe-Materia di ClasseViva a GitHub Classroom
  */
 
+define('REQUIRES_CLASSEVIVA', true);
 require_once '../bootstrap.php';
 
 use App\Integration\GitHubIntegration;

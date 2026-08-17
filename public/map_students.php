@@ -1,6 +1,6 @@
 <?php
 
-define('REQUIRES_CLASSEVIVA', false);
+define('REQUIRES_CLASSEVIVA', true);
 /**
  * Mappatura Studenti - GDPR Compliant
  *
