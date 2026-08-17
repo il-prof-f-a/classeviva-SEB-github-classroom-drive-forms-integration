@@ -73,6 +73,11 @@ if (!str_contains($markup, 'hash_equals') || !preg_match("/<label\\b[^>]*\\bfor=
 if (!str_contains($markup, 'tab=students')) {
     $failures[] = 'tab studenti senza link locale';
 }
+foreach (['studenti da mappare', 'unmapped_count', 'btn-success', 'btn-warning'] as $mapButtonNeedle) {
+    if (!str_contains($markup, $mapButtonNeedle)) {
+        $failures[] = "pulsante mappa studenti per gruppo mancante: {$mapButtonNeedle}";
+    }
+}
 if (str_contains($markup, 'elseif (false)')) {
     $failures[] = 'ramo legacy studenti disabilitato ancora presente';
 }
