@@ -186,9 +186,9 @@ try {
     $providerReady['github_classroom'] = $github->loadTokenFromSession() && $github->isAuthenticated();
     if ($providerReady['github_classroom']) {
         $classrooms = $github->listClassrooms();
-        $classrooms = is_array($classrooms) && isset($classrooms['classrooms']) && is_array($classrooms['classrooms'])
-            ? $classrooms['classrooms']
-            : (is_array($classrooms) ? $classrooms : throw new RuntimeException('Payload GitHub Classroom non valido.'));
+        $classrooms = is_array($classrooms)
+            ? ($classrooms['classrooms'] ?? ($classrooms['data'] ?? $classrooms))
+            : [];
         foreach ($classrooms as $classroom) {
             if (!is_array($classroom)) {
                 continue;
@@ -201,7 +201,7 @@ try {
     }
 } catch (Throwable $exception) {
     $providerReady['github_classroom'] = false;
-    $providerErrors['github_classroom'] = 'Servizio GitHub Classroom non disponibile.';
+    $providerErrors['github_classroom'] = 'Servizio GitHub Classroom non disponibile: ' . $exception->getMessage();
 }
 
 $redirectAfterAction = static function (string $message, array $flashData = []) use ($returnTo): never {
@@ -679,9 +679,9 @@ $fetchRoster = static function (string $provider, string $contextId) use ($confi
         }
     } elseif (isset($github)) {
         $githubAssignments = $github->listAssignments($contextId);
-        $githubAssignments = is_array($githubAssignments) && isset($githubAssignments['assignments']) && is_array($githubAssignments['assignments'])
-            ? $githubAssignments['assignments']
-            : (is_array($githubAssignments) ? $githubAssignments : []);
+        $githubAssignments = is_array($githubAssignments)
+            ? ($githubAssignments['assignments'] ?? ($githubAssignments['data'] ?? $githubAssignments))
+            : [];
         $githubSeen = [];
         $githubNameCache = $_SESSION['github_display_names'] ?? [];
         if (!is_array($githubNameCache)) {
@@ -771,8 +771,8 @@ if ($selectedGroupRecord !== null) {
                 $studentService->syncRoster($selectedGroupId, $provider, $contextId, $roster);
             }
             $rosters[$provider] = $roster;
-        } catch (Throwable $ignored) {
-            $rosterErrors[$provider] = 'Roster ' . ($providerLabels[$provider] ?? $provider) . ' non disponibile.';
+        } catch (Throwable $exception) {
+            $rosterErrors[$provider] = 'Roster ' . ($providerLabels[$provider] ?? $provider) . ' non disponibile: ' . $exception->getMessage();
             $rosters[$provider] = [];
         }
     }
