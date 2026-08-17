@@ -935,7 +935,7 @@ $skipOnboardingBanner = true;
         <div class="row g-3">
         <?php foreach ($groups as $entry): $group = $entry['row']; $groupId = (string)$group['id_gruppo']; $unmappedCount = (int)($entry['unmapped_count'] ?? 0); $mapBtnClass = $unmappedCount === 0 ? 'btn-success' : ($unmappedCount < 3 ? 'btn-warning' : ''); $mapBtnStyle = $unmappedCount >= 3 ? 'background-color:#fd7e14;border-color:#fd7e14;color:#fff' : ''; ?>
             <div class="col-12"><article class="card shadow-sm"><div class="card-body">
-                <div class="d-flex flex-wrap justify-content-between gap-2"><div><h2 class="h5 mb-1"><?= $escape($group['nome_gruppo'] ?? '') ?></h2><div class="small text-muted"><?= $escape(trim(($group['nome_classe'] ?? '') . ' · ' . ($group['nome_materia'] ?? '') . ' · ' . ($group['anno_scolastico'] ?? ''), ' ·')) ?></div></div><div class="d-flex align-items-center gap-2"><span class="badge <?= ($group['stato'] ?? 'attivo') === 'attivo' ? 'text-bg-success' : 'text-bg-secondary' ?>"><?= $escape($group['stato'] ?? 'attivo') ?></span><a href="?tab=students&amp;id=<?= urlencode($groupId) ?>" class="btn btn-sm <?= $mapBtnClass ?>" style="<?= $mapBtnStyle ?>"><?= $unmappedCount ?> studenti da mappare</a></div></div>
+                <div class="d-flex flex-wrap justify-content-between gap-2"><div><h2 class="h5 mb-1"><?= $escape($group['nome_gruppo'] ?? '') ?></h2><div class="small text-muted"><?= $escape(trim(($group['nome_classe'] ?? '') . ' · ' . ($group['nome_materia'] ?? '') . ' · ' . ($group['anno_scolastico'] ?? ''), ' ·')) ?></div></div><span class="badge <?= ($group['stato'] ?? 'attivo') === 'attivo' ? 'text-bg-success' : 'text-bg-secondary' ?>"><?= $escape($group['stato'] ?? 'attivo') ?></span></div>
                 <form method="post" class="mt-2"><input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="save_group"><input type="hidden" name="id_gruppo" value="<?= $escape($groupId) ?>"><input type="hidden" name="return_to" value="<?= $escape($returnTo) ?>">
                     <div class="row gy-2 gx-2">
                         <div class="col-md-3"><label class="form-label visually-hidden" for="group-<?= $escape($groupId) ?>-name">Nome gruppo</label><input id="group-<?= $escape($groupId) ?>-name" class="form-control" name="nome_gruppo" value="<?= $escape($group['nome_gruppo'] ?? '') ?>" required></div>
@@ -964,7 +964,7 @@ $skipOnboardingBanner = true;
                             <?php endif; ?>
                         </div></div>
                     <?php endforeach; ?></div>
-                    <div class="mt-3"><button class="btn btn-primary" type="submit">Salva</button></div>
+                    <div class="mt-3 d-flex justify-content-between align-items-center"><button class="btn btn-primary" type="submit">Salva</button><a href="?tab=students&amp;id=<?= urlencode($groupId) ?>" class="btn btn-sm <?= $mapBtnClass ?>" style="<?= $mapBtnStyle ?>"><?= $unmappedCount ?> studenti da mappare</a></div>
                 </form>
             </div></article></div>
         <?php endforeach; ?>
