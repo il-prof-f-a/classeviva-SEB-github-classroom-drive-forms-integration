@@ -457,7 +457,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                             if (!is_array($entry)) {
                                 continue;
                             }
-                            $externalRaw = $entry['user_id'] ?? $entry['github_username'] ?? $entry['username'] ?? $entry['roster_identifier'] ?? '';
+                            $entryStudents = is_array($entry['students'] ?? null) ? $entry['students'] : [];
+                            $entryFirstStudent = is_array($entryStudents[0] ?? null) ? $entryStudents[0] : [];
+                            $entrySingleStudent = is_array($entry['student'] ?? null) ? $entry['student'] : [];
+                            $externalRaw = $entryFirstStudent['login'] ?? $entrySingleStudent['login'] ?? $entry['github_username'] ?? $entry['user_id'] ?? $entry['username'] ?? '';
                             if (!is_scalar($externalRaw)) {
                                 continue;
                             }
@@ -695,12 +698,17 @@ $fetchRoster = static function (string $provider, string $contextId) use ($confi
             $githubAccepted = $github->listAcceptedAssignments($githubAssignmentId);
             $githubAccepted = is_array($githubAccepted) && isset($githubAccepted['accepted_assignments']) && is_array($githubAccepted['accepted_assignments'])
                 ? $githubAccepted['accepted_assignments']
-                : (is_array($githubAccepted) ? $githubAccepted : []);
+                : (is_array($githubAccepted) && isset($githubAccepted['data']) && is_array($githubAccepted['data'])
+                    ? $githubAccepted['data']
+                    : (is_array($githubAccepted) ? $githubAccepted : []));
             foreach ($githubAccepted as $githubEntry) {
                 if (!is_array($githubEntry)) {
                     continue;
                 }
-                $githubExternal = trim((string)($githubEntry['user_id'] ?? $githubEntry['github_username'] ?? $githubEntry['username'] ?? $githubEntry['roster_identifier'] ?? ''));
+                $githubStudents = is_array($githubEntry['students'] ?? null) ? $githubEntry['students'] : [];
+                $githubFirstStudent = is_array($githubStudents[0] ?? null) ? $githubStudents[0] : [];
+                $githubSingleStudent = is_array($githubEntry['student'] ?? null) ? $githubEntry['student'] : [];
+                $githubExternal = trim((string)($githubFirstStudent['login'] ?? $githubSingleStudent['login'] ?? $githubEntry['github_username'] ?? $githubEntry['user_id'] ?? $githubEntry['username'] ?? ''));
                 if ($githubExternal === '' || isset($githubSeen[$githubExternal])) {
                     continue;
                 }
