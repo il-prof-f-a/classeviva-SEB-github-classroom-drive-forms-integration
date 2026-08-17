@@ -18,7 +18,7 @@ foreach ([
         $failures[] = "wiring dominio mancante: {$wiring}";
     }
 }
-foreach (['syncRoster', 'matrix', 'linkIdentities', 'unlinkIdentity', 'save_student_mapping', 'sync_students', 'unlink_identity', 'filter_students', 'student_status', 'assertRosterIdentity', 'listAcceptedAssignments', 'syncedCount'] as $studentsNeedle) {
+foreach (['syncRoster', 'matrix', 'linkIdentities', 'unlinkIdentity', 'save_student_mapping', 'sync_students', 'unlink_identity', 'assertRosterIdentity', 'listAcceptedAssignments', 'syncedCount'] as $studentsNeedle) {
     if (!str_contains($markup, $studentsNeedle)) {
         $failures[] = "gestione studenti incompleta: {$studentsNeedle}";
     }
@@ -33,7 +33,7 @@ foreach (['githubRosterSeen', 'Nessuna selezione: mappatura invariata.', 'teachi
         $failures[] = "regressione studenti mancante: {$studentsRegressionNeedle}";
     }
 }
-foreach (['tutti', 'mappati', 'non_mappati', 'conflitti', 'external_user_id', 'provider_context', 'id_studente'] as $studentsField) {
+foreach (['external_user_id', 'provider_context', 'id_studente'] as $studentsField) {
     if (!str_contains($markup, $studentsField)) {
         $failures[] = "controllo studenti mancante: {$studentsField}";
     }
@@ -50,8 +50,7 @@ if (!str_contains($markup, "define('REQUIRES_CLASSEVIVA', true)")
 foreach ([
     'create_group',
     'save_group',
-    'sync_students',
-    'save_student_mapping',
+    'save_all_mappings',
 ] as $needle) {
     $actionPattern = "/<(?:input|button)\\b(?=[^>]*\\bname=[\"']action[\"'])(?=[^>]*\\bvalue=[\"']"
         . preg_quote($needle, '/') . "[\"'])[^>]*>/i";
@@ -81,13 +80,10 @@ foreach (['studenti da mappare', 'unmapped_count', 'btn-success', 'btn-warning']
 if (str_contains($markup, 'elseif (false)')) {
     $failures[] = 'ramo legacy studenti disabilitato ancora presente';
 }
-foreach (['matches[', 'student_id', 'save_student_mapping'] as $rowMappingNeedle) {
+foreach (['save_all_mappings', 'mappings[', 'anchor_provider', 'anchor_external_user_id'] as $rowMappingNeedle) {
     if (!str_contains($markup, $rowMappingNeedle)) {
-        $failures[] = "mappatura row-level mancante: {$rowMappingNeedle}";
+        $failures[] = "mappatura studenti mancante: {$rowMappingNeedle}";
     }
-}
-if (!preg_match('/<form\\b[^>]*aria-label=["\']Collega identita studente["\'][\\s\\S]*?name=["\']matches\\[/i', $markup)) {
-    $failures[] = 'form row-level senza selezioni matches';
 }
 if (!str_contains($markup, "\$_GET['id']") || !str_contains($markup, 'http_response_code(404)')) {
     $failures[] = 'deep-link studenti/ownership non hardenizzato';

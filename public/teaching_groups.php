@@ -290,6 +290,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 }
                 $redirectAfterAction('Gruppo didattico aggiornato.');
                 break;
+            case 'save_all_mappings':
+                $mappingsRaw = $_POST['mappings'] ?? [];
+                if (!is_array($mappingsRaw)) {
+                    throw new RuntimeException('Payload mappature non valido.');
+                }
+                $linkPayload = [];
+                foreach ($mappingsRaw as $mappingRow) {
+                    if (!is_array($mappingRow)) {
+                        continue;
+                    }
+                    $anchorProviderRaw = $mappingRow['anchor_provider'] ?? '';
+                    $anchorExternalRaw = $mappingRow['anchor_external_user_id'] ?? '';
+                    if (!is_scalar($anchorProviderRaw) || !is_scalar($anchorExternalRaw)) {
+                        continue;
+                    }
+                    $anchorProvider = strtolower(trim((string)$anchorProviderRaw));
+                    $anchorExternal = trim((string)$anchorExternalRaw);
+                    if ($anchorProvider === '' || $anchorExternal === '') {
+                        continue;
+                    }
+                    $matches = [];
+                    foreach (($mappingRow['matches'] ?? []) as $matchProvider => $matchExternal) {
+                        if (!is_string($matchProvider)) {
+                            continue;
+                        }
+                        $matchExternal = is_scalar($matchExternal) ? trim((string)$matchExternal) : '';
+                        if ($matchExternal === '') {
+                            continue;
+                        }
+                        $matches[] = ['provider' => strtolower(trim($matchProvider)), 'external_user_id' => $matchExternal];
+                    }
+                    if ($matches !== []) {
+                        $linkPayload[] = ['provider' => $anchorProvider, 'external_user_id' => $anchorExternal, 'matches' => $matches];
+                    }
+                }
+                if ($linkPayload !== []) {
+                    $studentService->linkIdentities($groupId, $linkPayload);
+                }
+                $_SESSION['teaching_groups_flash'] = ['success' => 'Mappature studenti salvate.'];
+                header('Location: teaching_groups.php');
+                exit;
             case 'link_provider':
                 $providerRaw = $_POST['provider'] ?? '';
                 $provider = is_scalar($providerRaw) ? trim((string)$providerRaw) : '';
@@ -577,25 +618,118 @@ foreach ($groupRepository->listAll() as $group) {
     $groups[] = ['row' => $group, 'providers' => $providers, 'unmapped_count' => $countUnmapped($groupId, $groupProviders)];
 }
 
-$studentRows = [];
-$studentMatrixError = null;
-$studentFilterRaw = $_GET['student_status'] ?? 'tutti';
-$studentFilter = is_scalar($studentFilterRaw) ? strtolower(trim((string)$studentFilterRaw)) : 'tutti';
-// filter_students uses only server-derived matrix rows; provider_context is
-// always read from the saved owner-scoped integration during sync_students.
-if (!in_array($studentFilter, ['tutti', 'mappati', 'non_mappati', 'conflitti'], true)) {
-    $studentFilter = 'tutti';
-}
-$studentReturnTo = 'teaching_groups.php?tab=students';
-if ($selectedGroupId !== '') {
-    $studentReturnTo .= '&id=' . urlencode($selectedGroupId);
-}
-if ($studentFilter !== 'tutti') {
-    $studentReturnTo .= '&student_status=' . urlencode($studentFilter);
-}
+$nameSimilarity = static function (string $a, string $b): float {
+    $a = strtolower(trim($a));
+    $b = strtolower(trim($b));
+    if ($a === $b) {
+        return 1.0;
+    }
+    if ($a === '' || $b === '') {
+        return 0.0;
+    }
+    $maxLength = max(strlen($a), strlen($b));
+    return 1 - (levenshtein($a, $b) / $maxLength);
+};
+$fetchRoster = static function (string $provider, string $contextId) use ($config, $github): array {
+    $roster = [];
+    if ($provider === 'classeviva') {
+        $students = (new ClasseVivaAPI($config))->getStudents($contextId);
+        if (is_array($students)) {
+            foreach ($students as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $externalId = trim((string)($entry['id'] ?? $entry['studentId'] ?? ''));
+                if ($externalId === '') {
+                    continue;
+                }
+                $firstName = is_scalar($entry['nome'] ?? null) ? (string)$entry['nome'] : '';
+                $lastName = is_scalar($entry['cognome'] ?? null) ? (string)$entry['cognome'] : '';
+                $roster[] = ['external_user_id' => $externalId, 'display_name' => trim($firstName . ' ' . $lastName)];
+            }
+        }
+    } elseif ($provider === 'google_classroom') {
+        $students = (new GoogleClassroomAPI($config))->getCourseStudents($contextId);
+        if (is_array($students)) {
+            foreach ($students as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $externalId = trim((string)($entry['id'] ?? $entry['userId'] ?? ''));
+                if ($externalId === '') {
+                    continue;
+                }
+                $roster[] = ['external_user_id' => $externalId, 'display_name' => is_scalar($entry['name'] ?? null) ? (string)$entry['name'] : ''];
+            }
+        }
+    } elseif (isset($github)) {
+        $githubAssignments = $github->listAssignments($contextId);
+        $githubAssignments = is_array($githubAssignments) && isset($githubAssignments['assignments']) && is_array($githubAssignments['assignments'])
+            ? $githubAssignments['assignments']
+            : (is_array($githubAssignments) ? $githubAssignments : []);
+        $githubSeen = [];
+        $githubNameCache = $_SESSION['github_display_names'] ?? [];
+        if (!is_array($githubNameCache)) {
+            $githubNameCache = [];
+        }
+        foreach ($githubAssignments as $githubAssignment) {
+            if (!is_array($githubAssignment)) {
+                continue;
+            }
+            $githubAssignmentId = trim((string)($githubAssignment['id'] ?? $githubAssignment['assignment_id'] ?? ''));
+            if ($githubAssignmentId === '') {
+                continue;
+            }
+            $githubAccepted = $github->listAcceptedAssignments($githubAssignmentId);
+            $githubAccepted = is_array($githubAccepted) && isset($githubAccepted['accepted_assignments']) && is_array($githubAccepted['accepted_assignments'])
+                ? $githubAccepted['accepted_assignments']
+                : (is_array($githubAccepted) ? $githubAccepted : []);
+            foreach ($githubAccepted as $githubEntry) {
+                if (!is_array($githubEntry)) {
+                    continue;
+                }
+                $githubExternal = trim((string)($githubEntry['user_id'] ?? $githubEntry['github_username'] ?? $githubEntry['username'] ?? $githubEntry['roster_identifier'] ?? ''));
+                if ($githubExternal === '' || isset($githubSeen[$githubExternal])) {
+                    continue;
+                }
+                $githubSeen[$githubExternal] = true;
+                if (!isset($githubNameCache[$githubExternal])) {
+                    $githubName = '';
+                    try {
+                        $githubProfile = $github->getUserByLogin($githubExternal);
+                        if (is_array($githubProfile)) {
+                            $githubName = is_scalar($githubProfile['name'] ?? null) ? (string)$githubProfile['name'] : '';
+                            if ($githubName === '' && is_scalar($githubProfile['login'] ?? null)) {
+                                $githubName = (string)$githubProfile['login'];
+                            }
+                        }
+                    } catch (Throwable $ignored) {
+                        $githubName = '';
+                    }
+                    if ($githubName === '') {
+                        $githubName = $githubExternal;
+                    }
+                    $githubNameCache[$githubExternal] = $githubName;
+                }
+                $roster[] = ['external_user_id' => $githubExternal, 'display_name' => (string)$githubNameCache[$githubExternal]];
+            }
+        }
+        $_SESSION['github_display_names'] = $githubNameCache;
+    }
+    return $roster;
+};
+
 $configuredProviders = [];
 $selectedGroupName = '';
 $selectedGroupRecord = $selectedGroupId !== '' ? $groupRepository->findById($selectedGroupId) : null;
+$studentMatrixError = null;
+$studentGroupOwned = true;
+$anchorProvider = null;
+$anchorRoster = [];
+$targetProviders = [];
+$targetRosters = [];
+$rosterErrors = [];
+$existingMappings = [];
 if ($selectedGroupRecord !== null) {
     $selectedGroupName = (string)($selectedGroupRecord['nome_gruppo'] ?? '');
     $selectedCatalog = $catalogRows[$selectedGroupId] ?? ['providers' => []];
@@ -604,34 +738,57 @@ if ($selectedGroupRecord !== null) {
             $configuredProviders[] = $provider;
         }
     }
-    try {
-        foreach ($studentService->matrix($selectedGroupId) as $row) {
-            $identities = is_array($row['identities'] ?? null) ? $row['identities'] : [];
-            $identityCount = count($identities);
-            $providerCounts = [];
-            foreach ($identities as $identity) {
-                $provider = (string)($identity['provider'] ?? '');
-                if ($provider !== '') {
-                    $providerCounts[$provider] = ($providerCounts[$provider] ?? 0) + 1;
+    $rosters = [];
+    foreach ($configuredProviders as $provider) {
+        $providerLink = $selectedCatalog['providers'][$provider] ?? [];
+        $contextId = trim((string)($providerLink['external_context_id'] ?? ''));
+        if ($contextId === '') {
+            continue;
+        }
+        try {
+            $roster = $fetchRoster($provider, $contextId);
+            if ($roster !== []) {
+                $studentService->syncRoster($selectedGroupId, $provider, $contextId, $roster);
+            }
+            $rosters[$provider] = $roster;
+        } catch (Throwable $ignored) {
+            $rosterErrors[$provider] = 'Roster ' . ($providerLabels[$provider] ?? $provider) . ' non disponibile.';
+            $rosters[$provider] = [];
+        }
+    }
+    $anchorProvider = $configuredProviders[0] ?? null;
+    if ($anchorProvider !== null) {
+        $anchorRoster = $rosters[$anchorProvider] ?? [];
+        $targetProviders = array_slice($configuredProviders, 1);
+        foreach ($targetProviders as $provider) {
+            $targetRosters[$provider] = $rosters[$provider] ?? [];
+        }
+        try {
+            foreach ($studentService->matrix($selectedGroupId) as $matrixRow) {
+                $anchorExternal = null;
+                foreach (($matrixRow['identities'] ?? []) as $matrixIdentity) {
+                    if (($matrixIdentity['provider'] ?? '') === $anchorProvider) {
+                        $anchorExternal = (string)($matrixIdentity['external_user_id'] ?? '');
+                        break;
+                    }
+                }
+                if ($anchorExternal === null || $anchorExternal === '') {
+                    continue;
+                }
+                foreach (($matrixRow['identities'] ?? []) as $matrixIdentity) {
+                    $matrixProvider = (string)($matrixIdentity['provider'] ?? '');
+                    $matrixExternal = (string)($matrixIdentity['external_user_id'] ?? '');
+                    if ($matrixProvider === $anchorProvider || $matrixExternal === '') {
+                        continue;
+                    }
+                    $existingMappings[$anchorExternal][$matrixProvider] = $matrixExternal;
                 }
             }
-            $hasConflict = count(array_filter($providerCounts, static fn(int $count): bool => $count > 1)) > 0;
-            $configuredIdentityCount = count(array_intersect(array_keys($providerCounts), $configuredProviders));
-            $isComplete = $configuredProviders === [] || $configuredIdentityCount >= count($configuredProviders);
-            $status = $hasConflict ? 'conflitti' : ($isComplete ? 'mappati' : 'non_mappati');
-            if ($studentFilter !== 'tutti' && $studentFilter !== $status) {
-                continue;
-            }
-            $row['status'] = $status;
-            $row['provider_counts'] = $providerCounts;
-            $studentRows[] = $row;
+        } catch (Throwable $ignored) {
+            $existingMappings = [];
         }
-    } catch (Throwable $exception) {
-        $studentMatrixError = 'Matrice studenti temporaneamente non disponibile.';
     }
 } elseif ($selectedGroupId !== '') {
-    // Repository e servizio sono entrambi user-scoped: non rivelare se un ID
-    // appartiene a un altro utente.
     $studentMatrixError = 'Gruppo didattico non trovato.';
     $studentGroupOwned = false;
     if ($tab === 'students') {
@@ -644,116 +801,6 @@ $pageSubtitle = 'Gestisci gruppi, collegamenti ai provider e roster studenti';
 $headerActions = '<a class="nav-link" href="index.php">Dashboard</a>';
 $pageActions = '<a class="btn btn-primary btn-sm" href="uda_create.php?integration_updated=1#2">Apri wizard UDA</a>';
 $skipOnboardingBanner = true;
-$studentIdentityChoices = [];
-$studentStatusLabels = ['mappati' => 'Mappata', 'non_mappati' => 'Riga incompleta', 'conflitti' => 'Conflitto'];
-foreach ($studentRows as $studentRow) {
-    foreach (($studentRow['identities'] ?? []) as $identity) {
-        $provider = (string)($identity['provider'] ?? '');
-        $externalId = (string)($identity['external_user_id'] ?? '');
-        if ($provider !== '' && $externalId !== '') {
-            $studentIdentityChoices[] = ['provider' => $provider, 'external_user_id' => $externalId, 'student_id' => (string)($studentRow['id_studente'] ?? '')];
-        }
-    }
-}
-$providerDisplayNames = [];
-foreach ($configuredProviders as $provider) {
-    $providerLink = $selectedCatalog['providers'][$provider] ?? [];
-    $contextId = trim((string)($providerLink['external_context_id'] ?? ''));
-    if ($contextId === '') {
-        continue;
-    }
-    $providerDisplayNames[$provider] = [];
-    try {
-        if ($provider === 'classeviva') {
-            $rosterStudents = (new ClasseVivaAPI($config))->getStudents($contextId);
-            if (is_array($rosterStudents)) {
-                foreach ($rosterStudents as $rosterEntry) {
-                    if (!is_array($rosterEntry)) {
-                        continue;
-                    }
-                    $rosterExternal = trim((string)($rosterEntry['id'] ?? $rosterEntry['studentId'] ?? ''));
-                    if ($rosterExternal === '') {
-                        continue;
-                    }
-                    $rosterFirst = is_scalar($rosterEntry['nome'] ?? null) ? (string)$rosterEntry['nome'] : '';
-                    $rosterLast = is_scalar($rosterEntry['cognome'] ?? null) ? (string)$rosterEntry['cognome'] : '';
-                    $providerDisplayNames[$provider][$rosterExternal] = trim($rosterFirst . ' ' . $rosterLast);
-                }
-            }
-        } elseif ($provider === 'google_classroom') {
-            $rosterStudents = (new GoogleClassroomAPI($config))->getCourseStudents($contextId);
-            if (is_array($rosterStudents)) {
-                foreach ($rosterStudents as $rosterEntry) {
-                    if (!is_array($rosterEntry)) {
-                        continue;
-                    }
-                    $rosterExternal = trim((string)($rosterEntry['id'] ?? $rosterEntry['userId'] ?? ''));
-                    if ($rosterExternal === '') {
-                        continue;
-                    }
-                    $providerDisplayNames[$provider][$rosterExternal] = is_scalar($rosterEntry['name'] ?? null) ? (string)$rosterEntry['name'] : '';
-                }
-            }
-        } elseif (isset($github)) {
-            $githubAssignments = $github->listAssignments($contextId);
-            $githubAssignments = is_array($githubAssignments) && isset($githubAssignments['assignments']) && is_array($githubAssignments['assignments'])
-                ? $githubAssignments['assignments']
-                : (is_array($githubAssignments) ? $githubAssignments : []);
-            $githubSeen = [];
-            $githubNameCache = $_SESSION['github_display_names'] ?? [];
-            if (!is_array($githubNameCache)) {
-                $githubNameCache = [];
-            }
-            foreach ($githubAssignments as $githubAssignment) {
-                if (!is_array($githubAssignment)) {
-                    continue;
-                }
-                $githubAssignmentId = trim((string)($githubAssignment['id'] ?? $githubAssignment['assignment_id'] ?? ''));
-                if ($githubAssignmentId === '') {
-                    continue;
-                }
-                $githubAccepted = $github->listAcceptedAssignments($githubAssignmentId);
-                $githubAccepted = is_array($githubAccepted) && isset($githubAccepted['accepted_assignments']) && is_array($githubAccepted['accepted_assignments'])
-                    ? $githubAccepted['accepted_assignments']
-                    : (is_array($githubAccepted) ? $githubAccepted : []);
-                foreach ($githubAccepted as $githubEntry) {
-                    if (!is_array($githubEntry)) {
-                        continue;
-                    }
-                    $githubExternal = trim((string)($githubEntry['user_id'] ?? $githubEntry['github_username'] ?? $githubEntry['username'] ?? $githubEntry['roster_identifier'] ?? ''));
-                    if ($githubExternal === '' || isset($githubSeen[$githubExternal])) {
-                        continue;
-                    }
-                    $githubSeen[$githubExternal] = true;
-                    if (isset($githubNameCache[$githubExternal])) {
-                        $githubName = (string)$githubNameCache[$githubExternal];
-                    } else {
-                        $githubName = '';
-                        try {
-                            $githubProfile = $github->getUserByLogin($githubExternal);
-                            if (is_array($githubProfile)) {
-                                $githubName = is_scalar($githubProfile['name'] ?? null) ? (string)$githubProfile['name'] : '';
-                                if ($githubName === '' && is_scalar($githubProfile['login'] ?? null)) {
-                                    $githubName = (string)$githubProfile['login'];
-                                }
-                            }
-                        } catch (Throwable $ignored) {
-                            $githubName = '';
-                        }
-                        if ($githubName === '') {
-                            $githubName = $githubExternal;
-                        }
-                        $githubNameCache[$githubExternal] = $githubName;
-                    }
-                    $providerDisplayNames[$provider][$githubExternal] = $githubName;
-                }
-            }
-            $_SESSION['github_display_names'] = $githubNameCache;
-        }
-    } catch (Throwable $ignored) {
-        // Nomi non disponibili: restano visibili gli ID esterni.
-    }
-}
 ?>
 <!doctype html>
 <html lang="it">
@@ -779,80 +826,41 @@ foreach ($configuredProviders as $provider) {
             <div class="card-body">
                 <h2 class="h5">Mappatura studenti<?= $selectedGroupName !== '' ? ' — ' . $escape($selectedGroupName) : '' ?></h2>
                 <p class="text-muted"><a href="teaching_groups.php">&larr; Torna ai gruppi didattici</a></p>
-                <?php if ($selectedGroupId !== '' && $studentMatrixError === null): ?>
-                    <?php if ($configuredProviders === []): ?><div class="alert alert-warning mt-3 mb-0" role="alert">Collega almeno un provider per sincronizzare gli studenti.</div><?php endif; ?>
-                    <?php foreach ($configuredProviders as $provider): $providerLink = $selectedCatalog['providers'][$provider] ?? []; ?>
-                        <div class="border rounded p-2 mt-3 d-flex flex-wrap align-items-center justify-content-between gap-2"><span><strong><?= $escape($providerLabels[$provider]) ?></strong><span class="small text-muted ms-2">Contesto: <?= $escape($providerLink['external_name'] ?? $providerLink['external_context_id'] ?? '') ?></span></span>
-                            <form method="post" class="m-0"><input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="sync_students"><input type="hidden" name="id_gruppo" value="<?= $escape($selectedGroupId) ?>"><input type="hidden" name="provider" value="<?= $escape($provider) ?>"><input type="hidden" name="return_to" value="<?= $escape($studentReturnTo) ?>"><button class="btn btn-sm btn-outline-primary" type="submit">Sincronizza studenti</button></form>
+                <?php if ($studentMatrixError !== null): ?><div class="alert alert-danger" role="alert"><?= $escape($studentMatrixError) ?></div><?php endif; ?>
+                <?php foreach ($rosterErrors as $rosterError): ?><div class="alert alert-warning" role="alert"><?= $escape($rosterError) ?></div><?php endforeach; ?>
+                <?php if ($anchorProvider === null): ?>
+                    <div class="alert alert-warning mt-3 mb-0" role="alert">Collega almeno un provider al gruppo per mappare gli studenti.</div>
+                <?php elseif ($anchorRoster === []): ?>
+                    <div class="alert alert-info mt-3 mb-0" role="alert">Nessuno studente trovato nel roster di <?= $escape($providerLabels[$anchorProvider] ?? $anchorProvider) ?>.</div>
+                <?php else: ?>
+                    <form method="post" id="mapping-form">
+                        <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                        <input type="hidden" name="action" value="save_all_mappings">
+                        <input type="hidden" name="id_gruppo" value="<?= $escape($selectedGroupId) ?>">
+                        <div class="table-responsive mt-3">
+                            <table class="table table-sm align-middle">
+                                <thead><tr><th scope="col"><?= $escape($providerLabels[$anchorProvider] ?? $anchorProvider) ?></th><?php foreach ($targetProviders as $targetProvider): ?><th scope="col"><?= $escape($providerLabels[$targetProvider] ?? $targetProvider) ?></th><?php endforeach; ?></tr></thead>
+                                <tbody>
+                                <?php foreach ($anchorRoster as $anchorIndex => $anchorEntry): $anchorExternal = (string)($anchorEntry['external_user_id'] ?? ''); $anchorName = (string)($anchorEntry['display_name'] ?? ''); ?>
+                                    <tr>
+                                        <td><strong><?= $anchorName !== '' ? $escape($anchorName) : '' ?></strong><?php if ($anchorName !== ''): ?> <code class="small text-muted"><?= $escape($anchorExternal) ?></code><?php else: ?><code><?= $escape($anchorExternal) ?></code><?php endif; ?></td>
+                                        <input type="hidden" name="mappings[<?= $anchorIndex ?>][anchor_provider]" value="<?= $escape($anchorProvider) ?>">
+                                        <input type="hidden" name="mappings[<?= $anchorIndex ?>][anchor_external_user_id]" value="<?= $escape($anchorExternal) ?>">
+                                        <?php foreach ($targetProviders as $targetProvider): $targetSelected = $existingMappings[$anchorExternal][$targetProvider] ?? ''; if ($targetSelected === '') { $targetBestScore = 0.0; foreach ($targetRosters[$targetProvider] ?? [] as $targetEntry) { $targetEntryName = (string)($targetEntry['display_name'] ?? ''); $targetEntryScore = $nameSimilarity($anchorName, $targetEntryName); if ($targetEntryScore > 0.75 && $targetEntryScore > $targetBestScore) { $targetBestScore = $targetEntryScore; $targetSelected = (string)($targetEntry['external_user_id'] ?? ''); } } } ?>
+                                        <td><select class="form-select form-select-sm" name="mappings[<?= $anchorIndex ?>][matches][<?= $escape($targetProvider) ?>]"><option value="">Non mappare</option><?php foreach ($targetRosters[$targetProvider] ?? [] as $targetEntry): $targetExternal = (string)($targetEntry['external_user_id'] ?? ''); $targetName = (string)($targetEntry['display_name'] ?? ''); ?><option value="<?= $escape($targetExternal) ?>" <?= $targetSelected === $targetExternal ? 'selected' : '' ?>><?= $targetName !== '' ? $escape($targetName) . ' (' . $escape($targetExternal) . ')' : $escape($targetExternal) ?></option><?php endforeach; ?></select></td>
+                                        <?php endforeach; ?>
+                                    </tr>
+                                <?php endforeach; ?>
+                                </tbody>
+                            </table>
                         </div>
-                    <?php endforeach; ?>
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-3">
+                            <button type="submit" class="btn btn-success">Salva mappature</button>
+                        </div>
+                    </form>
                 <?php endif; ?>
             </div>
         </section>
-        <?php if ($selectedGroupId !== ''): ?>
-            <?php if ($studentMatrixError !== null): ?><div class="alert alert-danger" role="alert"><?= $escape($studentMatrixError) ?></div><?php endif; ?>
-            <?php if ($studentMatrixError === null && $configuredProviders !== []): ?>
-                <nav class="d-flex flex-wrap gap-2 mb-3" aria-label="Filtri studenti">
-                    <?php foreach (['tutti' => 'Tutti', 'mappati' => 'Mappati', 'non_mappati' => 'Non mappati', 'conflitti' => 'Conflitti'] as $filterKey => $filterLabel): ?><a class="btn btn-sm <?= $studentFilter === $filterKey ? 'btn-primary' : 'btn-outline-secondary' ?>" href="?tab=students&amp;id_gruppo=<?= urlencode($selectedGroupId) ?>&amp;student_status=<?= urlencode($filterKey) ?>&amp;return_to=<?= urlencode($returnTo) ?>" aria-current="<?= $studentFilter === $filterKey ? 'page' : 'false' ?>"><?= $escape($filterLabel) ?></a><?php endforeach; ?>
-                </nav>
-                <div class="table-responsive"><table class="table table-sm align-middle" aria-describedby="student-matrix-help"><caption id="student-matrix-help" class="text-muted">Gli identificativi esterni sono mostrati solo per il collegamento; nomi ed email non vengono salvati.</caption>
-                    <thead><tr><th scope="col">ID interno</th><th scope="col">Stato</th><?php foreach ($configuredProviders as $provider): ?><th scope="col"><?= $escape($providerLabels[$provider]) ?></th><?php endforeach; ?><th scope="col">Mappatura</th><th scope="col">Azioni</th></tr></thead><tbody>
-                    <?php foreach ($studentRows as $studentRow): $identities = is_array($studentRow['identities'] ?? null) ? $studentRow['identities'] : []; ?><tr><th scope="row"><code><?= $escape($studentRow['id_studente'] ?? '') ?></code></th><td><span class="badge <?= $studentRow['status'] === 'conflitti' ? 'text-bg-danger' : ($studentRow['status'] === 'mappati' ? 'text-bg-success' : 'text-bg-secondary') ?>"><?= $escape($studentStatusLabels[$studentRow['status']] ?? $studentRow['status']) ?></span></td>
-                        <?php foreach ($configuredProviders as $provider): ?><td><?php $providerIdentity = null; foreach ($identities as $identity) { if (($identity['provider'] ?? '') === $provider) { $providerIdentity = $identity; break; } } ?><?php if (is_array($providerIdentity)): $providerIdShown = (string)($providerIdentity['external_user_id'] ?? ''); $providerNameShown = $providerDisplayNames[$provider][$providerIdShown] ?? ''; ?><?php if ($providerNameShown !== '' && $providerNameShown !== $providerIdShown): ?><span title="<?= $escape($providerIdShown) ?>"><?= $escape($providerNameShown) ?></span> <code class="small"><?= $escape($providerIdShown) ?></code><?php else: ?><code><?= $escape($providerIdShown) ?></code><?php endif; ?><?php else: ?><span class="text-muted">Non mappato</span><?php endif; ?></td><?php endforeach; ?>
-                        <td><?php
-                            $anchorIdentity = null;
-                            foreach ($identities as $identity) {
-                                $identityProvider = trim((string)($identity['provider'] ?? ''));
-                                $identityExternalId = trim((string)($identity['external_user_id'] ?? ''));
-                                if ($identityProvider !== '' && $identityExternalId !== '') {
-                                    $anchorIdentity = ['provider' => $identityProvider, 'external_user_id' => $identityExternalId];
-                                    break;
-                                }
-                            }
-                            $missingProviders = [];
-                            foreach ($configuredProviders as $provider) {
-                                $hasProviderIdentity = false;
-                                foreach ($identities as $identity) {
-                                    if ((string)($identity['provider'] ?? '') === $provider
-                                        && trim((string)($identity['external_user_id'] ?? '')) !== '') {
-                                        $hasProviderIdentity = true;
-                                        break;
-                                    }
-                                }
-                                if (!$hasProviderIdentity) {
-                                    $missingProviders[] = $provider;
-                                }
-                            }
-                        ?><?php if ($anchorIdentity !== null && $missingProviders !== []): ?>
-                            <form method="post" class="p-2 border rounded" aria-label="Collega identita studente">
-                                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="save_student_mapping"><input type="hidden" name="id_gruppo" value="<?= $escape($selectedGroupId) ?>"><input type="hidden" name="student_id" value="<?= $escape($studentRow['id_studente'] ?? '') ?>"><input type="hidden" name="anchor_provider" value="<?= $escape($anchorIdentity['provider']) ?>"><input type="hidden" name="anchor_external_user_id" value="<?= $escape($anchorIdentity['external_user_id']) ?>"><input type="hidden" name="return_to" value="<?= $escape($studentReturnTo) ?>">
-                                <div class="small text-muted mb-2">Seleziona le identita del roster da collegare; puoi lasciare tutti i campi vuoti.</div>
-                                <?php foreach ($missingProviders as $missingProvider):
-                                    $providerChoices = [];
-                                    $seenChoices = [];
-                                    foreach ($studentIdentityChoices as $choice) {
-                                        if ((string)($choice['provider'] ?? '') !== $missingProvider) {
-                                            continue;
-                                        }
-                                        $choiceExternalId = trim((string)($choice['external_user_id'] ?? ''));
-                                        if ($choiceExternalId === '' || isset($seenChoices[$choiceExternalId])) {
-                                            continue;
-                                        }
-                                        $seenChoices[$choiceExternalId] = true;
-                                        $providerChoices[] = $choice;
-                                    }
-                                    $providerFieldId = 'student-' . preg_replace('/[^a-zA-Z0-9_-]+/', '-', (string)($studentRow['id_studente'] ?? '')) . '-match-' . preg_replace('/[^a-zA-Z0-9_-]+/', '-', $missingProvider);
-                                ?>
-                                    <div class="mb-2"><label class="form-label small" for="<?= $escape($providerFieldId) ?>"><?= $escape($providerLabels[$missingProvider] ?? $missingProvider) ?> da collegare</label><select id="<?= $escape($providerFieldId) ?>" class="form-select form-select-sm" name="matches[<?= $escape($missingProvider) ?>][]" multiple size="<?= $providerChoices === [] ? 1 : min(4, count($providerChoices)) ?>" aria-describedby="<?= $escape($providerFieldId) ?>-help" <?= $providerChoices === [] ? 'disabled' : '' ?>><?php foreach ($providerChoices as $choice): $choiceName = $providerDisplayNames[$missingProvider][$choice['external_user_id']] ?? ''; ?><option value="<?= $escape($choice['external_user_id']) ?>"><?= $choiceName !== '' && $choiceName !== $choice['external_user_id'] ? $escape($choiceName) . ' (' . $escape($choice['external_user_id']) . ')' : $escape($choice['external_user_id']) ?></option><?php endforeach; ?></select><?php if ($providerChoices === []): ?><span id="<?= $escape($providerFieldId) ?>-help" class="form-text text-warning">Nessuna identita disponibile nel roster.</span><?php else: ?><span id="<?= $escape($providerFieldId) ?>-help" class="form-text">Nessuna selezione lascia invariata questa riga.</span><?php endif; ?></div>
-                                <?php endforeach; ?>
-                                <button class="btn btn-sm btn-primary" type="submit">Collega</button>
-                            </form>
-                        <?php endif; ?></td>
-                        <td><?php foreach ($identities as $identity): ?><form method="post" class="d-inline-block me-1 mb-1"><input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="unlink_identity"><input type="hidden" name="id_gruppo" value="<?= $escape($selectedGroupId) ?>"><input type="hidden" name="student_id" value="<?= $escape($studentRow['id_studente'] ?? '') ?>"><input type="hidden" name="provider" value="<?= $escape($identity['provider'] ?? '') ?>"><input type="hidden" name="external_user_id" value="<?= $escape($identity['external_user_id'] ?? '') ?>"><input type="hidden" name="return_to" value="<?= $escape($studentReturnTo) ?>"><button class="btn btn-sm btn-outline-danger" type="submit" aria-label="Scollega identità">Scollega</button></form><?php endforeach; ?></td></tr><?php endforeach; ?>
-                    <?php if ($studentRows === []): ?><tr><td colspan="<?= count($configuredProviders) + 4 ?>" class="text-muted">Nessuna riga per questo filtro.</td></tr><?php endif; ?></tbody></table></div>
-                <?php if (count($studentIdentityChoices) >= 2): $anchorChoice = $studentIdentityChoices[0]; $candidateChoice = $studentIdentityChoices[1]; ?><section class="card border-primary mt-3" aria-labelledby="student-link-heading"><div class="card-body"><h3 id="student-link-heading" class="h6">Suggerimenti di collegamento</h3><p class="small text-muted">Seleziona solo identità già presenti nel roster. Il server verifica gruppo, provider e ID tecnico.</p><form method="post" class="row gy-2 gx-2 align-items-end"><input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="save_student_mapping"><input type="hidden" name="id_gruppo" value="<?= $escape($selectedGroupId) ?>"><input type="hidden" name="student_id" value="<?= $escape($anchorChoice['student_id'] ?? '') ?>"><input type="hidden" name="return_to" value="<?= $escape($studentReturnTo) ?>"><div class="col-md-4"><label class="form-label" for="anchor-provider">Identità ancora</label><input id="anchor-provider" class="form-control" name="anchor_provider" value="<?= $escape($anchorChoice['provider']) ?>" readonly></div><div class="col-md-4"><label class="form-label" for="anchor-id">ID esterno ancora</label><input id="anchor-id" class="form-control" name="anchor_external_user_id" value="<?= $escape($anchorChoice['external_user_id']) ?>" readonly></div><div class="col-md-4"><label class="form-label" for="match-id">Identità da collegare</label><input id="match-id" class="form-control" name="matches[<?= $escape($candidateChoice['provider']) ?>][]" value="<?= $escape($candidateChoice['external_user_id']) ?>" readonly></div><div class="col-12"><button class="btn btn-sm btn-primary" type="submit">Collega identità suggerite</button></div></form></div></section><?php endif; ?>
-            <?php endif; ?>
-        <?php endif; ?>
     <?php else: ?>
         <section class="card shadow-sm mb-4">
             <div class="card-body">
