@@ -270,6 +270,55 @@ final class TeachingGroupStudentService
         return $count;
     }
 
+    /**
+     * Assign target identities to their anchor student (star model) by
+     * reassigning the identity rows. Unlike linkIdentities (merge-based),
+     * this handles re-mapping and swaps without creating cycles: each target
+     * identity is simply moved onto the anchor student of the first list.
+     *
+     * @param list<array<string,mixed>> $matches
+     */
+    public function assignMappings(string $groupId, array $matches): int
+    {
+        $groupId = trim($groupId);
+        $this->requireGroup($groupId);
+        $count = 0;
+        $this->transaction(function () use ($groupId, $matches, &$count): void {
+            foreach ($matches as $match) {
+                if (!is_array($match)) {
+                    throw new RuntimeException('match identità non valido');
+                }
+                $anchor = $this->identityFromInput($match);
+                $anchorIdentity = $this->identities->findByExternal($anchor['provider'], $anchor['external_user_id']);
+                if ($anchorIdentity === null) {
+                    throw new RuntimeException('identità ancora non trovata');
+                }
+                $anchorStudentId = (string)$anchorIdentity['id_studente'];
+                foreach (($match['matches'] ?? []) as $candidate) {
+                    if (!is_array($candidate)) {
+                        throw new RuntimeException('identità candidata non valida');
+                    }
+                    $source = $this->identityFromInput($candidate);
+                    $sourceIdentity = $this->identities->findByExternal($source['provider'], $source['external_user_id']);
+                    if ($sourceIdentity === null) {
+                        throw new RuntimeException('identità candidata non trovata');
+                    }
+                    $sourceStudentId = (string)$sourceIdentity['id_studente'];
+                    if ($sourceStudentId !== $anchorStudentId) {
+                        if (!$this->identities->reassign((string)$sourceIdentity['id_identita'], $anchorStudentId)) {
+                            throw new RuntimeException('impossibile riassegnare la identita candidata');
+                        }
+                        $count++;
+                        if ($this->identities->listForStudent($sourceStudentId) === []) {
+                            $this->students->delete($sourceStudentId);
+                        }
+                    }
+                }
+            }
+        });
+        return $count;
+    }
+
     public function unlinkIdentity(string $studentId, string $provider, string $externalUserId): bool
     {
         $studentId = trim($studentId);
