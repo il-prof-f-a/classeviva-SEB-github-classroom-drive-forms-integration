@@ -18,6 +18,15 @@ final class GitHubAssignmentCatalog
             ?? $assignment['invitation_url']
             ?? ''));
         $teacherUrl = trim((string)($assignment['html_url'] ?? $assignment['url'] ?? $assignment['teacher_url'] ?? ''));
+        if ($teacherUrl === '' && $slug !== '') {
+            // L'API Classroom non espone sempre html_url: ricostruisci l'URL docente
+            // dal classroom.url + /assignments/{slug} (lista repo studenti accettati).
+            $classroom = is_array($assignment['classroom'] ?? null) ? $assignment['classroom'] : [];
+            $classroomUrl = trim((string)($classroom['url'] ?? ''));
+            if ($classroomUrl !== '') {
+                $teacherUrl = rtrim($classroomUrl, '/') . '/assignments/' . $slug;
+            }
+        }
         $resolvedClassroomId = trim((string)($assignment['classroom_id'] ?? $classroomId ?? ''));
         if ($resolvedClassroomId === '') {
             $resolvedClassroomId = self::classroomIdFromUrl($teacherUrl);

@@ -16,16 +16,7 @@
             listContainer: catalogList,
             statusContainer: catalogStatus,
             emptyMessage: 'Nessun Google Form corrisponde alla ricerca.',
-            renderItem: form => {
-                const count = form.response_count === null || form.response_count === undefined
-                    ? 'risposte n/d'
-                    : `${form.response_count} risposte`;
-                return {
-                    title: form.title || 'Google Form senza titolo',
-                    metadata: `${form.published_in_classroom ? 'Pubblicato in Classroom · ' : ''}${count} · ${form.author || 'Autore n/d'} · ${formatDate(form.created_at)}`,
-                    highlight: !!form.published_in_classroom
-                };
-            },
+            renderItem: window.GoogleFormsCatalogHelper.renderItem,
             onSelect: form => {
                 if (formsUrlInput) {
                     formsUrlInput.value = form.teacher_url || `https://docs.google.com/forms/d/${form.id}/edit`;
@@ -39,12 +30,6 @@
         catalogStatus.className = `alert alert-${type || 'info'} mt-3 mb-2`;
         catalogStatus.textContent = message || '';
         catalogStatus.classList.toggle('d-none', !message);
-    }
-
-    function formatDate(value) {
-        if (!value) return 'Data non disponibile';
-        const date = new Date(value);
-        return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('it-IT', { dateStyle: 'medium' }).format(date);
     }
 
     function renderCatalog() {
@@ -76,13 +61,13 @@
                 button.classList.add('active');
             });
 
+            const rendered = window.GoogleFormsCatalogHelper.renderItem(form);
             const title = document.createElement('div');
             title.className = 'fw-semibold';
-            title.textContent = form.title || 'Google Form senza titolo';
+            title.textContent = rendered.title;
             const metadata = document.createElement('small');
             metadata.className = 'text-muted d-block';
-            const count = form.response_count === null || form.response_count === undefined ? 'risposte n/d' : `${form.response_count} risposte`;
-            metadata.textContent = `${form.published_in_classroom ? 'Pubblicato in Classroom · ' : ''}${count} · ${form.author || 'Autore n/d'} · ${formatDate(form.created_at)}`;
+            metadata.textContent = rendered.metadata;
             button.append(title, metadata);
             catalogList.appendChild(button);
         });
@@ -109,7 +94,7 @@
             }
             forms = Array.isArray(data.forms) ? data.forms : [];
             // I form già pubblicati nella Classroom associata vanno in cima (senza duplicati).
-            forms.sort((a, b) => (b.published_in_classroom ? 1 : 0) - (a.published_in_classroom ? 1 : 0));
+            forms = window.GoogleFormsCatalogHelper.sortPublishedFirst(forms);
             // Mostra la legenda solo se c'è almeno un form pubblicato nella Classroom associata.
             const hasPublished = forms.some(form => !!form.published_in_classroom);
             document.getElementById('formsClassroomLegend')?.classList.toggle('d-none', !hasPublished);

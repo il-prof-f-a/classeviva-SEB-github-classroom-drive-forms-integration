@@ -16,11 +16,19 @@ foreach ([
     'const loadClassroom = async',          // carica compiti del corso mappato
     'const loadGithub = async',             // carica assignment della classroom mappata
     'id_gruppo: [...selectedGroupIds]',     // query per id_gruppo (non più class_ids CV)
-    'published_in_classroom',               // evidenziazione form già pubblicati
+    'GoogleFormsCatalogHelper',            // evidenziazione form già pubblicati (helper condiviso)
     'teaching_groups.php?return_to=uda_create.php#6', // link ai mapping
 ] as $needle) {
     if (!str_contains($source, $needle)) {
         $failures[] = $needle;
+    }
+}
+
+// L'evidenziazione dei form pubblicati vive nell'helper condiviso.
+$helper = file_get_contents($root . '/public/assets/js/google-forms-catalog.js') ?: '';
+foreach (['published_in_classroom', 'highlight'] as $needle) {
+    if (!str_contains($helper, $needle)) {
+        $failures[] = "google-forms-catalog.js: {$needle} assente";
     }
 }
 

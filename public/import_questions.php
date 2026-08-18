@@ -2262,7 +2262,7 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
     <title>Importa Domande - <?= htmlspecialchars($uda->titolo) ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="assets/css/question-card.css">
+    <link rel="stylesheet" href="assets/css/question-card.css?v=<?= @filemtime(__DIR__ . '/assets/css/question-card.css') ?>">
     <style>
         .modalita-card {
             cursor: pointer;
@@ -2292,7 +2292,7 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
         }
         /* Evidenziazione tenue (azzurrino trasparente) per i form già pubblicati in Classroom. */
         #formsCatalogList .list-group-item-info {
-            background-color: rgba(13, 110, 253, 0.07);
+            background-color: rgba(13, 110, 253, 0.14);
             color: inherit;
         }
         .form-legend-swatch {
@@ -2300,7 +2300,7 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
             width: 0.8em;
             height: 0.8em;
             border-radius: 3px;
-            background-color: rgba(13, 110, 253, 0.07);
+            background-color: rgba(13, 110, 253, 0.14);
             border: 1px solid rgba(13, 110, 253, 0.30);
             vertical-align: -0.05em;
         }
@@ -2758,11 +2758,12 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="assets/js/uda-editor-utils.js"></script>
-    <script src="assets/js/question-card.js"></script>
-    <script src="assets/js/question-editor.js"></script>
-    <script src="assets/js/catalog-picker.js"></script>
-    <script src="assets/js/import-questions.js"></script>
+    <script src="assets/js/uda-editor-utils.js?v=<?= @filemtime(__DIR__ . '/assets/js/uda-editor-utils.js') ?>"></script>
+    <script src="assets/js/question-card.js?v=<?= @filemtime(__DIR__ . '/assets/js/question-card.js') ?>"></script>
+    <script src="assets/js/question-editor.js?v=<?= @filemtime(__DIR__ . '/assets/js/question-editor.js') ?>"></script>
+    <script src="assets/js/catalog-picker.js?v=<?= @filemtime(__DIR__ . '/assets/js/catalog-picker.js') ?>"></script>
+    <script src="assets/js/google-forms-catalog.js?v=<?= @filemtime(__DIR__ . '/assets/js/google-forms-catalog.js') ?>"></script>
+    <script src="assets/js/import-questions.js?v=<?= @filemtime(__DIR__ . '/assets/js/import-questions.js') ?>"></script>
     <script>
         const templateLinks = {
             json: 'download_template_domande.php?format=json',

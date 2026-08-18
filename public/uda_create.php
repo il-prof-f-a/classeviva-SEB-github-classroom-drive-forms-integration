@@ -385,7 +385,7 @@ try {
     <title>Crea Nuova UDA - Sistema Gestione UDA</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="assets/css/question-card.css">
+    <link rel="stylesheet" href="assets/css/question-card.css?v=<?= @filemtime(__DIR__ . '/assets/css/question-card.css') ?>">
     <style>
         .step {
             display: none;
@@ -464,8 +464,12 @@ try {
             color: #000;
         }
         /* Evidenziazione tenue per i form già pubblicati in Classroom (step 6 test). */
+        .test-forms-list {
+            max-height: 320px;
+            overflow-y: auto;
+        }
         .test-forms-list .list-group-item-info {
-            background-color: rgba(13, 110, 253, 0.07);
+            background-color: rgba(13, 110, 253, 0.14);
             color: inherit;
         }
     </style>
@@ -948,10 +952,11 @@ try {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://apis.google.com/js/api.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script src="assets/js/uda-editor-utils.js"></script>
-    <script src="assets/js/question-editor.js"></script>
-    <script src="assets/js/question-card.js"></script>
-    <script src="assets/js/catalog-picker.js"></script>
+    <script src="assets/js/uda-editor-utils.js?v=<?= @filemtime(__DIR__ . '/assets/js/uda-editor-utils.js') ?>"></script>
+    <script src="assets/js/question-editor.js?v=<?= @filemtime(__DIR__ . '/assets/js/question-editor.js') ?>"></script>
+    <script src="assets/js/question-card.js?v=<?= @filemtime(__DIR__ . '/assets/js/question-card.js') ?>"></script>
+    <script src="assets/js/google-forms-catalog.js?v=<?= @filemtime(__DIR__ . '/assets/js/google-forms-catalog.js') ?>"></script>
+    <script src="assets/js/catalog-picker.js?v=<?= @filemtime(__DIR__ . '/assets/js/catalog-picker.js') ?>"></script>
     <script>
         const academicPeriodOptions = <?= json_encode($periodOptionsByYear, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
         let currentStep = 1;
@@ -1692,11 +1697,7 @@ try {
                 ? new window.CatalogPicker({
                     searchInput: wrapper.querySelector('.test-forms-search'),
                     listContainer: wrapper.querySelector('.test-forms-list'),
-                    renderItem: form => ({
-                        title: form.title || 'Google Form senza titolo',
-                        metadata: `${form.published_in_classroom ? 'Pubblicato in Classroom · ' : ''}${form.response_count ?? 'n/d'} risposte · ${form.author || 'Autore n/d'} · ${form.created_at || 'Data n/d'}`,
-                        highlight: !!form.published_in_classroom
-                    }),
+                    renderItem: window.GoogleFormsCatalogHelper.renderItem,
                 })
                 : null;
             const classroomPicker = window.CatalogPicker && classroomBox
@@ -1737,7 +1738,7 @@ try {
                     const ctx = wizardMappedProviderContext();
                     const data = await fetchWizardCatalog('ajax_list_google_forms.php', ctx.googleCourseId ? { course_id: ctx.googleCourseId } : {});
                     const forms = Array.isArray(data.forms) ? data.forms : [];
-                    forms.sort((a, b) => (b.published_in_classroom ? 1 : 0) - (a.published_in_classroom ? 1 : 0));
+                    forms = window.GoogleFormsCatalogHelper.sortPublishedFirst(forms);
                     formsPicker?.setItems(forms);
                     setWizardCatalogStatus(wrapper, forms.length + ' Google Forms disponibili.', 'success');
                 } catch (error) {
