@@ -246,7 +246,7 @@ final class TeachingGroupStudentService
         // change the target of a later merge in the same request.
         foreach ($operations as $sourceId => $targetId) {
             if (isset($operations[$targetId])) {
-                $chainSource = '';
+                    throw new RuntimeException('incrocio di collegamenti (ciclo): lo studente "' . $chainTarget . '" è sia origine che destinazione (collegato a "' . $chainSource . '"). Correggi le selezioni: ogni studente della colonna target va su una sola riga.');
                 $chainTarget = '';
                 foreach ($this->identities->listForStudent((string)$sourceId) as $chainId) {
                     $chainSource = (string)($chainId['provider'] ?? '') . ':' . (string)($chainId['external_user_id'] ?? '');
