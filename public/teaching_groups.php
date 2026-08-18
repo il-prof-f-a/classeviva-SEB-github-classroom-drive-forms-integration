@@ -687,10 +687,22 @@ $fetchRoster = static function (string $provider, string $contextId) use ($confi
             }
         }
     } elseif (isset($github)) {
-        $githubAssignments = $github->listAssignments($contextId);
-        $githubAssignments = is_array($githubAssignments)
-            ? ($githubAssignments['assignments'] ?? ($githubAssignments['data'] ?? $githubAssignments))
-            : [];
+        $githubAssignments = [];
+        $githubPage = 1;
+        while ($githubPage <= 10) {
+            $githubPageAssignments = $github->listAssignments($contextId, $githubPage, 100);
+            $githubPageAssignments = is_array($githubPageAssignments)
+                ? ($githubPageAssignments['assignments'] ?? ($githubPageAssignments['data'] ?? $githubPageAssignments))
+                : [];
+            if (!is_array($githubPageAssignments) || $githubPageAssignments === []) {
+                break;
+            }
+            $githubAssignments = array_merge($githubAssignments, $githubPageAssignments);
+            if (count($githubPageAssignments) < 100) {
+                break;
+            }
+            $githubPage++;
+        }
         $githubSeen = [];
         $githubNameCache = $_SESSION['github_display_names'] ?? [];
         if (!is_array($githubNameCache)) {
@@ -783,6 +795,9 @@ if ($selectedGroupRecord !== null) {
         } catch (Throwable $exception) {
             $rosterErrors[$provider] = 'Roster ' . ($providerLabels[$provider] ?? $provider) . ' non disponibile: ' . $exception->getMessage();
             $rosters[$provider] = [];
+        }
+        if ($provider === 'github_classroom' && ($rosters[$provider] ?? []) === [] && !isset($rosterErrors[$provider])) {
+            $rosterErrors[$provider] = 'Roster GitHub Classroom vuoto per "' . ($providerLink['external_name'] ?? $contextId) . '" (ID ' . $contextId . '): nessun assignment trovato o nessuno studente ha accettato.';
         }
     }
     $anchorProvider = $configuredProviders[0] ?? null;
