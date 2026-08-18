@@ -235,7 +235,7 @@ final class TeachingGroupStudentService
                     continue;
                 }
                 if (isset($seenSources[$sourceId]) && $seenSources[$sourceId] !== $targetId) {
-                    throw new RuntimeException('conflitto tra target di identità esterne');
+                    throw new RuntimeException('conflitto tra target di identità esterne: lo studente "' . $source['external_user_id'] . '" (' . $source['provider'] . ') è già collegato a un altro studente della lista di origine.');
                 }
                 $seenSources[$sourceId] = $targetId;
                 $operations[$sourceId] = $targetId;
