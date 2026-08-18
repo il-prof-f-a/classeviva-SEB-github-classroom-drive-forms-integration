@@ -297,9 +297,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         'tipo_risorsa' => $provider === 'classeviva' ? 'classe_materia' : ($provider === 'google_classroom' ? 'course' : 'roster'),
                     ]);
                 }
-                $_SESSION['teaching_groups_flash'] = ['success' => 'Gruppo didattico aggiornato. Ora mappa gli studenti.'];
-                header('Location: teaching_groups.php?tab=students&id=' . urlencode($groupId) . '&return_to=' . urlencode($returnTo));
-                exit;
+                $activeProviderCount = 0;
+                $seenSavedProviders = [];
+                foreach ($integrationRepository->listForGroup($groupId) as $integrationRow) {
+                    $integrationProvider = (string)($integrationRow['provider'] ?? '');
+                    if ($integrationProvider === '' || ($integrationRow['stato'] ?? 'attivo') === 'disattivo') {
+                        continue;
+                    }
+                    if (!isset($seenSavedProviders[$integrationProvider])) {
+                        $seenSavedProviders[$integrationProvider] = true;
+                        $activeProviderCount++;
+                    }
+                }
+                if ($activeProviderCount >= 2) {
+                    $_SESSION['teaching_groups_flash'] = ['success' => 'Gruppo didattico aggiornato. Ora mappa gli studenti.'];
+                    header('Location: teaching_groups.php?tab=students&id=' . urlencode($groupId) . '&return_to=' . urlencode($returnTo));
+                    exit;
+                }
+                $redirectAfterAction('Gruppo didattico aggiornato.');
+                break;
             case 'save_all_mappings':
                 $mappingsRaw = $_POST['mappings'] ?? [];
                 if (!is_array($mappingsRaw)) {
