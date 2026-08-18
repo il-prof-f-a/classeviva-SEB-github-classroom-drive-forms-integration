@@ -22,7 +22,8 @@
                     : `${form.response_count} risposte`;
                 return {
                     title: form.title || 'Google Form senza titolo',
-                    metadata: `${count} · ${form.author || 'Autore n/d'} · ${formatDate(form.created_at)}`
+                    metadata: `${form.published_in_classroom ? 'Pubblicato in Classroom · ' : ''}${count} · ${form.author || 'Autore n/d'} · ${formatDate(form.created_at)}`,
+                    highlight: !!form.published_in_classroom
                 };
             },
             onSelect: form => {
@@ -67,6 +68,7 @@
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'list-group-item list-group-item-action';
+            if (form.published_in_classroom) button.classList.add('list-group-item-info');
             button.setAttribute('role', 'option');
             button.addEventListener('click', () => {
                 if (formsUrlInput) formsUrlInput.value = form.teacher_url || `https://docs.google.com/forms/d/${form.id}/edit`;
@@ -80,7 +82,7 @@
             const metadata = document.createElement('small');
             metadata.className = 'text-muted d-block';
             const count = form.response_count === null || form.response_count === undefined ? 'risposte n/d' : `${form.response_count} risposte`;
-            metadata.textContent = `${count} · ${form.author || 'Autore n/d'} · ${formatDate(form.created_at)}`;
+            metadata.textContent = `${form.published_in_classroom ? 'Pubblicato in Classroom · ' : ''}${count} · ${form.author || 'Autore n/d'} · ${formatDate(form.created_at)}`;
             button.append(title, metadata);
             catalogList.appendChild(button);
         });
@@ -92,7 +94,11 @@
         authorizationNotice?.classList.add('d-none');
         setStatus('Caricamento dei Google Forms disponibili nel Drive…', 'info');
         try {
-            const response = await fetch('ajax_list_google_forms.php', { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+            const courseId = String(catalog.dataset.courseId || '').trim();
+            const url = courseId
+                ? `ajax_list_google_forms.php?course_id=${encodeURIComponent(courseId)}`
+                : 'ajax_list_google_forms.php';
+            const response = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
             const data = await response.json();
             if (!response.ok || !data.success) {
                 if (data.error_code === 'token_missing' || data.error_code === 'token_expired' || data.error_code === 'scope_missing') {
@@ -102,6 +108,11 @@
                 return;
             }
             forms = Array.isArray(data.forms) ? data.forms : [];
+            // I form già pubblicati nella Classroom associata vanno in cima (senza duplicati).
+            forms.sort((a, b) => (b.published_in_classroom ? 1 : 0) - (a.published_in_classroom ? 1 : 0));
+            // Mostra la legenda solo se c'è almeno un form pubblicato nella Classroom associata.
+            const hasPublished = forms.some(form => !!form.published_in_classroom);
+            document.getElementById('formsClassroomLegend')?.classList.toggle('d-none', !hasPublished);
             catalogLoaded = true;
             setStatus(forms.length ? `${forms.length} Google Forms disponibili.` : 'Nessun Google Form trovato nel Drive.', forms.length ? 'success' : 'info');
             renderCatalog();

@@ -7,7 +7,6 @@ use App\Core\GoogleTokenProvider;
 use App\Core\UserIntegrationManager;
 use Google\Client;
 use Google\Service\Drive;
-use Google\Service\Forms;
 use RuntimeException;
 
 final class GoogleFormsCatalog
@@ -145,7 +144,6 @@ final class GoogleFormsCatalog
         }
 
         $drive = new Drive($client);
-        $forms = new Forms($client);
         $files = [];
         $pageToken = null;
         do {
@@ -153,57 +151,22 @@ final class GoogleFormsCatalog
                 'q' => "trashed = false and mimeType = '" . self::FORM_MIME_TYPE . "'",
                 'pageSize' => 100,
                 'orderBy' => 'createdTime desc',
-                'fields' => 'nextPageToken,files(id,name,createdTime,webViewLink,owners(displayName,emailAddress))',
+                'fields' => 'nextPageToken,files(id,name,createdTime,webViewLink,description,owners(displayName,emailAddress))',
             ];
             if ($pageToken) {
                 $params['pageToken'] = $pageToken;
             }
             $response = $drive->files->listFiles($params);
             foreach ($response->getFiles() as $file) {
-                $responseCount = null;
-                $metadata = [];
-                try {
-                    $formId = (string)$file->getId();
-                    $form = $forms->forms->get($formId);
-                    $metadata = [
-                        'responder_uri' => method_exists($form, 'getResponderUri')
-                            ? (string)($form->getResponderUri() ?? '')
-                            : '',
-                        'description' => method_exists($form, 'getInfo') && $form->getInfo()
-                            ? (string)($form->getInfo()->getDescription() ?? '')
-                            : '',
-                    ];
-                } catch (\Throwable) {
-                    // Un form può essere visibile in Drive ma non leggibile da Forms API.
-                    // Il catalogo resta utilizzabile con i metadati di Drive e i fallback URL.
-                }
-                try {
-                    $responseCount = self::countResponses($forms, (string)$file->getId());
-                } catch (\Throwable) {
-                    $responseCount = null;
-                }
-                $files[] = self::normalizeFile($file, $responseCount, $metadata);
+                // Catalogo veloce: usiamo solo i metadati Drive, senza chiamate Forms API
+                // per singolo form (con centinaia di form erano il collo di bottiglia).
+                // Il responder URL è derivato dall'ID e response_count resta null.
+                $files[] = self::normalizeFile($file, null, []);
             }
             $pageToken = $response->getNextPageToken();
         } while ($pageToken);
 
         return $files;
-    }
-
-    private static function countResponses(Forms $forms, string $formId): int
-    {
-        $count = 0;
-        $pageToken = null;
-        do {
-            $params = ['pageSize' => 500];
-            if ($pageToken) {
-                $params['pageToken'] = $pageToken;
-            }
-            $response = $forms->forms_responses->listFormsResponses($formId, $params);
-            $count += count($response->getResponses() ?? []);
-            $pageToken = $response->getNextPageToken();
-        } while ($pageToken);
-        return $count;
     }
 
     private static function saveToken(array &$config, array $token): void

@@ -449,6 +449,8 @@ $editorTests = [
     'catalog normalizers' => __DIR__ . '/uda_editor/test_catalog_normalizers.php',
     'wizard catalog markup' => __DIR__ . '/uda_editor/test_wizard_catalog_markup.php',
     'wizard classroom preload' => __DIR__ . '/uda_editor/test_wizard_classroom_preload.php',
+    'wizard imported questions' => __DIR__ . '/uda_editor/test_wizard_imported_questions.php',
+    'wizard step6 provider links' => __DIR__ . '/uda_editor/test_wizard_step6_provider_links.php',
     'wizard mapping markup' => __DIR__ . '/uda_editor/test_wizard_mapping_markup.php',
     'wizard group selector' => __DIR__ . '/uda_editor/test_wizard_group_selector.php',
     'wizard optional assignments' => __DIR__ . '/uda_editor/test_wizard_optional_assignments.php',
@@ -465,6 +467,7 @@ $editorTests = [
     'import preview full markup' => __DIR__ . '/import_questions/test_import_preview_full.php',
     'template download endpoint' => __DIR__ . '/import_questions/test_template_download.php',
     'import selection controls' => __DIR__ . '/import_questions/test_import_selection.php',
+    'forms classroom highlight' => __DIR__ . '/import_questions/test_forms_classroom_highlight.php',
 ];
 foreach ($editorTests as $label => $testFile) {
     exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($testFile) . ' 2>&1', $editorOutput, $editorExitCode);

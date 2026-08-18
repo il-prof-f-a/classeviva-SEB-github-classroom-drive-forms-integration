@@ -110,6 +110,7 @@
                 const rendered = typeof this.options.renderItem === 'function'
                     ? this.options.renderItem(item)
                     : { title: item?.title || item?.name || 'Elemento', metadata: '' };
+                if (rendered?.highlight) button.classList.add('list-group-item-info');
                 const title = document.createElement('div');
                 title.className = 'fw-semibold';
                 title.textContent = text(rendered?.title);

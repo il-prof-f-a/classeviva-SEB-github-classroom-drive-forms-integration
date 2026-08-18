@@ -418,6 +418,81 @@ class GoogleClassroomAPI
     }
 
     /**
+     * Elenca gli ID dei Google Form collegati come materiale (form o link) di un
+     * corso Classroom. Usato per evidenziare nel catalogo Drive i form già
+     * pubblicati nella Classroom associata.
+     *
+     * @return list<string> ID univoci dei form
+     */
+    public function listFormIdsInCourse(string $courseId): array
+    {
+        $formIds = [];
+
+        $extract = static function (string $url) use (&$formIds): void {
+            $url = trim($url);
+            if ($url === '' || !preg_match('#/forms/d/(?:e/)?([a-zA-Z0-9_-]+)#i', $url, $m)) {
+                return;
+            }
+            $id = (string)($m[1] ?? '');
+            if ($id !== '') {
+                $formIds[$id] = true;
+            }
+        };
+
+        $collect = static function (iterable $materials) use ($extract): void {
+            foreach ($materials as $material) {
+                if (!is_object($material)) {
+                    continue;
+                }
+                // Form allegato come materiale "Form" (formUrl).
+                $form = method_exists($material, 'getForm') ? $material->getForm() : null;
+                if ($form && method_exists($form, 'getFormUrl')) {
+                    $extract((string)($form->getFormUrl() ?? ''));
+                }
+                // Link che punta a un modulo.
+                $link = method_exists($material, 'getLink') ? $material->getLink() : null;
+                if ($link && method_exists($link, 'getUrl')) {
+                    $extract((string)($link->getUrl() ?? ''));
+                }
+                // File Drive: un Google Form è anche un file Drive (alternateLink).
+                $sharedDriveFile = method_exists($material, 'getDriveFile') ? $material->getDriveFile() : null;
+                $driveFile = ($sharedDriveFile && method_exists($sharedDriveFile, 'getDriveFile'))
+                    ? $sharedDriveFile->getDriveFile()
+                    : null;
+                if ($driveFile && method_exists($driveFile, 'getAlternateLink')) {
+                    $extract((string)($driveFile->getAlternateLink() ?? ''));
+                }
+            }
+        };
+
+        $pageToken = null;
+        do {
+            $response = $this->service->courses_courseWork->listCoursesCourseWork($courseId, [
+                'pageToken' => $pageToken,
+                'courseWorkStates' => ['PUBLISHED', 'DRAFT'],
+            ]);
+            foreach ($response->getCourseWork() ?? [] as $courseWork) {
+                $collect($courseWork->getMaterials() ?? []);
+            }
+            $pageToken = $response->getNextPageToken();
+        } while ($pageToken);
+
+        $pageToken = null;
+        do {
+            $response = $this->service->courses_courseWorkMaterials->listCoursesCourseWorkMaterials($courseId, [
+                'pageToken' => $pageToken,
+                'courseWorkMaterialStates' => ['PUBLISHED', 'DRAFT'],
+            ]);
+            foreach ($response->getCourseWorkMaterial() ?? [] as $courseWorkMaterial) {
+                $collect($courseWorkMaterial->getMaterials() ?? []);
+            }
+            $pageToken = $response->getNextPageToken();
+        } while ($pageToken);
+
+        return array_keys($formIds);
+    }
+
+    /**
      * Recupera metadati di un corso specifico
      */
     public function getCourse(string $courseId): array

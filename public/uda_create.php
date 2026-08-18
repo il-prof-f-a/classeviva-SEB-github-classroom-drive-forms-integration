@@ -463,6 +463,11 @@ try {
             border-color: #ffc720;
             color: #000;
         }
+        /* Evidenziazione tenue per i form già pubblicati in Classroom (step 6 test). */
+        .test-forms-list .list-group-item-info {
+            background-color: rgba(13, 110, 253, 0.07);
+            color: inherit;
+        }
     </style>
 </head>
 <body class="bg-light">
@@ -822,9 +827,19 @@ try {
                             <button type="button" class="btn btn-sm" style="background-color: #d63384; color: white; border-color: #d63384;" onclick="addDomanda()">
                                 <i class="bi bi-plus-circle"></i> Aggiungi Domanda
                             </button>
-                            <a class="btn btn-sm btn-outline-primary" href="import_questions.php?id=<?= urlencode($tempUdaId) ?>&wizard=1&return_to=uda_create.php" target="_blank">
+                            <a id="wizard-import-questions-link" class="btn btn-sm btn-outline-primary" href="import_questions.php?id=<?= urlencode($tempUdaId) ?>&wizard=1&return_to=uda_create.php" target="_blank">
                                 <i class="bi bi-cloud-upload"></i> Importa Domande (CSV/Excel/JSON)
                             </a>
+                        </div>
+
+                        <div id="imported-questions-section" class="mb-3 d-none">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0"><i class="bi bi-cloud-check"></i> Domande importate <span id="imported-questions-count" class="badge bg-secondary"></span></h6>
+                                <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none" onclick="refreshImportedQuestions()">
+                                    <i class="bi bi-arrow-clockwise"></i> Aggiorna
+                                </button>
+                            </div>
+                            <div id="imported-questions-list" class="list-group"></div>
                         </div>
 
                         <div class="d-flex justify-content-between">
@@ -991,6 +1006,7 @@ try {
                 renderWizardIntegrationSummary();
                 syncWizardDiscipline();
                 saveWizardDraft();
+                updateImportQuestionsLink();
                 if (currentStep === 3) {
                     wizardClassroomLoadedSignature = '';
                     loadWizardClassroomCourses(true);
@@ -1113,6 +1129,10 @@ try {
 
             if (stepNumber === 3) {
                 loadWizardClassroomCourses();
+            }
+
+            if (stepNumber === 5) {
+                refreshImportedQuestions();
             }
 
             // Scroll to top
@@ -1462,22 +1482,34 @@ try {
                                 <a class="small d-none test-google-auth-link" href="user_integrations.php#google-section">Autorizza Google Drive e Forms nelle integrazioni</a>
                             </div>
                             <div class="test-classroom-catalog d-none">
-                                <label class="form-label">Corso Google Classroom associato</label>
-                                <select class="form-select test-classroom-course mb-2">
-                                    <option value="">Caricamento corsi...</option>
-                                </select>
-                                <label class="form-label">Cerca compito</label>
-                                <input type="search" class="form-control test-classroom-search mb-2" placeholder="Cerca per titolo, stato o scadenza..." autocomplete="off">
-                                <div class="list-group test-classroom-list" role="listbox"></div>
+                                <div class="test-classroom-mapped">
+                                    <label class="form-label">Corso Google Classroom associato</label>
+                                    <select class="form-select test-classroom-course mb-2">
+                                        <option value="">Caricamento corso...</option>
+                                    </select>
+                                    <label class="form-label">Cerca compito</label>
+                                    <input type="search" class="form-control test-classroom-search mb-2" placeholder="Cerca per titolo, stato o scadenza..." autocomplete="off">
+                                    <div class="list-group test-classroom-list" role="listbox"></div>
+                                </div>
+                                <div class="test-classroom-nomap d-none">
+                                    <div class="alert alert-warning py-2 mb-2">Nessun corso Google Classroom mappato alla classe-materia selezionata.</div>
+                                    <a class="btn btn-sm btn-outline-primary" href="teaching_groups.php?return_to=uda_create.php#6">Vai ai mapping</a>
+                                </div>
                             </div>
                             <div class="test-github-catalog d-none">
-                                <label class="form-label">GitHub Classroom associata</label>
-                                <select class="form-select test-github-classroom mb-2">
-                                    <option value="">Caricamento classroom...</option>
-                                </select>
-                                <label class="form-label">Cerca assignment</label>
-                                <input type="search" class="form-control test-github-search mb-2" placeholder="Cerca per titolo o slug..." autocomplete="off">
-                                <div class="list-group test-github-list" role="listbox"></div>
+                                <div class="test-github-mapped">
+                                    <label class="form-label">GitHub Classroom associata</label>
+                                    <select class="form-select test-github-classroom mb-2">
+                                        <option value="">Caricamento classroom...</option>
+                                    </select>
+                                    <label class="form-label">Cerca assignment</label>
+                                    <input type="search" class="form-control test-github-search mb-2" placeholder="Cerca per titolo o slug..." autocomplete="off">
+                                    <div class="list-group test-github-list" role="listbox"></div>
+                                </div>
+                                <div class="test-github-nomap d-none">
+                                    <div class="alert alert-warning py-2 mb-2">Nessuna GitHub Classroom mappata alla classe-materia selezionata.</div>
+                                    <a class="btn btn-sm btn-outline-primary" href="teaching_groups.php?return_to=uda_create.php#6">Crea la mappatura</a>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1524,6 +1556,30 @@ try {
                 group_ids: [...selectedGroupIds],
                 classIds: [...new Set(classIds)],
                 subjectIds: [...new Set(subjectIds)]
+            };
+        }
+
+        function wizardMappedProviderContext() {
+            const googleCourses = new Map();
+            const githubClassrooms = new Map();
+            selectedGroupIds.forEach(groupId => {
+                const group = teachingGroupCatalogIndex[groupId] || {};
+                const gc = group.providers?.google_classroom || null;
+                if (gc?.external_context_id) {
+                    const id = String(gc.external_context_id).trim();
+                    if (id) googleCourses.set(id, String(gc.external_name || id).trim() || id);
+                }
+                const gh = group.providers?.github_classroom || null;
+                if (gh?.external_context_id) {
+                    const id = String(gh.external_context_id).trim();
+                    if (id) githubClassrooms.set(id, String(gh.external_name || id).trim() || id);
+                }
+            });
+            return {
+                googleCourseId: googleCourses.size === 1 ? [...googleCourses.keys()][0] : '',
+                googleCourseName: googleCourses.size === 1 ? googleCourses.values().next().value : '',
+                githubClassroomId: githubClassrooms.size === 1 ? [...githubClassrooms.keys()][0] : '',
+                githubClassroomName: githubClassrooms.size === 1 ? githubClassrooms.values().next().value : '',
             };
         }
 
@@ -1638,9 +1694,9 @@ try {
                     listContainer: wrapper.querySelector('.test-forms-list'),
                     renderItem: form => ({
                         title: form.title || 'Google Form senza titolo',
-                        metadata: `${form.response_count ?? 'n/d'} risposte · ${form.author || 'Autore n/d'} · ${form.created_at || 'Data n/d'}`
+                        metadata: `${form.published_in_classroom ? 'Pubblicato in Classroom · ' : ''}${form.response_count ?? 'n/d'} risposte · ${form.author || 'Autore n/d'} · ${form.created_at || 'Data n/d'}`,
+                        highlight: !!form.published_in_classroom
                     }),
-                    onSelect: form => fillWizardTestFromCatalog(wrapper, form, 'google-forms')
                 })
                 : null;
             const classroomPicker = window.CatalogPicker && classroomBox
@@ -1678,75 +1734,75 @@ try {
             const loadForms = async () => {
                 showOnly(formsBox, 'Seleziona un modulo già presente nel Drive autorizzato.');
                 try {
-                    const data = await fetchWizardCatalog('ajax_list_google_forms.php', {});
-                    formsPicker?.setItems(data.forms || []);
-                    setWizardCatalogStatus(wrapper, `${(data.forms || []).length} Google Forms disponibili.`, 'success');
+                    const ctx = wizardMappedProviderContext();
+                    const data = await fetchWizardCatalog('ajax_list_google_forms.php', ctx.googleCourseId ? { course_id: ctx.googleCourseId } : {});
+                    const forms = Array.isArray(data.forms) ? data.forms : [];
+                    forms.sort((a, b) => (b.published_in_classroom ? 1 : 0) - (a.published_in_classroom ? 1 : 0));
+                    formsPicker?.setItems(forms);
+                    setWizardCatalogStatus(wrapper, forms.length + ' Google Forms disponibili.', 'success');
                 } catch (error) {
                     setWizardCatalogStatus(wrapper, error.message, 'warning');
                     wrapper.querySelector('.test-google-auth-link')?.classList.remove('d-none');
                 }
             };
 
-            const loadClassroomCourses = async () => {
-                showOnly(classroomBox, 'Sono mostrati solo i corsi associati alle classi selezionate.');
-                const query = wizardClassSubjectQuery();
-                try {
-                    const data = await fetchWizardCatalog('ajax_get_wizard_classroom_catalog.php', query);
-                    const select = wrapper.querySelector('.test-classroom-course');
-                    setWizardCatalogOptions(select, data.courses || [], 'Seleziona corso...');
-                    setWizardCatalogStatus(wrapper, 'Scegli un corso per caricare i compiti disponibili.', 'info');
-                } catch (error) {
-                    setWizardCatalogStatus(wrapper, error.message, 'warning');
-                }
-            };
-
-            const loadClassroomAssignments = async courseId => {
+            const loadClassroom = async () => {
+                const ctx = wizardMappedProviderContext();
+                const courseId = ctx.googleCourseId;
+                const mappedBox = wrapper.querySelector('.test-classroom-mapped');
+                const nomapBox = wrapper.querySelector('.test-classroom-nomap');
                 if (!courseId) {
-                    classroomPicker?.setItems([]);
+                    showOnly(classroomBox, '');
+                    mappedBox?.classList.add('d-none');
+                    nomapBox?.classList.remove('d-none');
+                    setWizardCatalogStatus(wrapper, '', 'info');
                     return;
                 }
-                const query = wizardClassSubjectQuery();
-                query.course_id = courseId;
+                showOnly(classroomBox, 'Compiti del corso Google Classroom mappato alla classe-materia.');
+                nomapBox?.classList.add('d-none');
+                mappedBox?.classList.remove('d-none');
+                const select = wrapper.querySelector('.test-classroom-course');
+                setWizardCatalogOptions(select, [{ id: courseId, name: ctx.googleCourseName || courseId }], 'Corso mappato');
+                if (select) select.disabled = true;
+                const courseInput = wizardTestField(wrapper, 'input[name="test_classroom_course_id[]"]');
+                if (courseInput) courseInput.value = courseId;
                 try {
-                    const data = await fetchWizardCatalog('ajax_get_wizard_classroom_catalog.php', query);
+                    const data = await fetchWizardCatalog('ajax_get_wizard_classroom_catalog.php', { id_gruppo: [...selectedGroupIds], course_id: courseId });
                     classroomPicker?.setItems(data.assignments || []);
-                    setWizardCatalogStatus(wrapper, `${(data.assignments || []).length} compiti disponibili.`, 'success');
+                    setWizardCatalogStatus(wrapper, (data.assignments || []).length + ' compiti disponibili.', 'success');
                 } catch (error) {
                     setWizardCatalogStatus(wrapper, error.message, 'warning');
                 }
             };
 
             const loadGithub = async () => {
-                showOnly(githubBox, 'Sono mostrati solo gli assignment della GitHub Classroom associata.');
-                const query = wizardClassSubjectQuery();
+                const ctx = wizardMappedProviderContext();
+                const classroomId = ctx.githubClassroomId;
+                const mappedBox = wrapper.querySelector('.test-github-mapped');
+                const nomapBox = wrapper.querySelector('.test-github-nomap');
+                if (!classroomId) {
+                    showOnly(githubBox, '');
+                    mappedBox?.classList.add('d-none');
+                    nomapBox?.classList.remove('d-none');
+                    setWizardCatalogStatus(wrapper, '', 'info');
+                    return;
+                }
+                showOnly(githubBox, 'Assignment della GitHub Classroom mappata.');
+                nomapBox?.classList.add('d-none');
+                mappedBox?.classList.remove('d-none');
+                const select = wrapper.querySelector('.test-github-classroom');
+                setWizardCatalogOptions(select, [{ id: classroomId, name: ctx.githubClassroomName || classroomId }], 'Classroom mappata');
+                if (select) select.disabled = true;
+                const classroomInput = wizardTestField(wrapper, 'input[name="test_github_classroom_id[]"]');
+                if (classroomInput) classroomInput.value = classroomId;
                 try {
-                    const data = await fetchWizardCatalog('ajax_get_wizard_github_catalog.php', query);
-                    const select = wrapper.querySelector('.test-github-classroom');
-                    setWizardCatalogOptions(select, data.classrooms || [], 'Seleziona classroom...');
-                    setWizardCatalogStatus(wrapper, 'Scegli una classroom per caricare gli assignment.', 'info');
+                    const data = await fetchWizardCatalog('ajax_get_wizard_github_catalog.php', { id_gruppo: [...selectedGroupIds], classroom_id: classroomId });
+                    githubPicker?.setItems(data.assignments || []);
+                    setWizardCatalogStatus(wrapper, (data.assignments || []).length + ' assignment disponibili.', 'success');
                 } catch (error) {
                     setWizardCatalogStatus(wrapper, error.message, 'warning');
                 }
             };
-
-            wrapper.querySelector('.test-classroom-course')?.addEventListener('change', event => {
-                const courseInput = wizardTestField(wrapper, 'input[name="test_classroom_course_id[]"]');
-                if (courseInput) courseInput.value = event.target.value || '';
-                loadClassroomAssignments(event.target.value || '');
-            });
-            wrapper.querySelector('.test-github-classroom')?.addEventListener('change', async event => {
-                const classroomId = event.target.value || '';
-                if (!classroomId) return;
-                const query = wizardClassSubjectQuery();
-                query.classroom_id = classroomId;
-                try {
-                    const data = await fetchWizardCatalog('ajax_get_wizard_github_catalog.php', query);
-                    githubPicker?.setItems(data.assignments || []);
-                    setWizardCatalogStatus(wrapper, `${(data.assignments || []).length} assignment disponibili.`, 'success');
-                } catch (error) {
-                    setWizardCatalogStatus(wrapper, error.message, 'warning');
-                }
-            });
 
             platformSelect.addEventListener('change', () => {
                 const platform = platformSelect.value;
@@ -1756,7 +1812,7 @@ try {
                 githubBox.classList.add('d-none');
                 clearWizardTestExternalFields(wrapper);
                 if (platform === 'google-forms') loadForms();
-                else if (platform === 'google-classroom') loadClassroomCourses();
+                else if (platform === 'google-classroom') loadClassroom();
                 else if (platform === 'github') loadGithub();
             });
 
@@ -1958,6 +2014,7 @@ try {
             renderTeachingGroupProviderSummary();
             renderWizardIntegrationSummary();
             syncWizardDiscipline();
+            updateImportQuestionsLink();
         }
 
         function normalizeAssignedClassTarget(names) {
@@ -2040,6 +2097,21 @@ try {
                 .filter(Boolean);
             const unique = [...new Set(subjects)];
             if (unique.length === 1) input.value = unique[0];
+        }
+
+        function updateImportQuestionsLink() {
+            const link = document.getElementById('wizard-import-questions-link');
+            if (!link) return;
+            const courseIds = new Set();
+            selectedGroupIds.forEach(groupId => {
+                const gc = teachingGroupCatalogIndex[groupId]?.providers?.google_classroom || null;
+                const courseId = String(gc?.external_context_id || '').trim();
+                if (courseId) courseIds.add(courseId);
+            });
+            const base = `import_questions.php?id=${encodeURIComponent(tempUdaId)}&wizard=1&return_to=uda_create.php`;
+            link.href = courseIds.size === 1
+                ? `${base}&course_id=${encodeURIComponent([...courseIds][0])}`
+                : base;
         }
 
         // --- Google Drive Picker (GIS) ---
@@ -2791,10 +2863,70 @@ try {
             return domandeTempCount;
         }
 
+        async function refreshImportedQuestions() {
+            if (!tempUdaId) return;
+            const section = document.getElementById('imported-questions-section');
+            const list = document.getElementById('imported-questions-list');
+            const countBadge = document.getElementById('imported-questions-count');
+            if (!section || !list || !countBadge) return;
+            try {
+                const res = await fetch(`ajax_get_temp_questions.php?id=${encodeURIComponent(tempUdaId)}`);
+                const data = await res.json().catch(() => null);
+                if (!data || !data.success) {
+                    throw new Error((data && data.error) ? data.error : 'Errore caricamento domande importate');
+                }
+                const questions = Array.isArray(data.questions) ? data.questions : [];
+                domandeTempCount = (typeof data.count === 'number') ? data.count : questions.length;
+                list.innerHTML = '';
+                if (questions.length === 0) {
+                    section.classList.add('d-none');
+                    return;
+                }
+                questions.forEach((q) => {
+                    const item = document.createElement('div');
+                    item.className = 'list-group-item py-2';
+                    const tipo = (q.tipo_domanda === 'multipla') ? 'Risposta multipla' : 'Risposta aperta';
+                    const difficolta = Number(q.difficolta || 0);
+                    const stelle = (difficolta > 0) ? '★'.repeat(Math.min(Math.max(difficolta, 1), 5)) : '';
+                    const argomento = String(q.argomento || '').trim() || 'Senza argomento';
+                    item.innerHTML = `
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                            <div class="min-w-0">
+                                <div class="fw-semibold text-break">${escapeWizardHtml(q.domanda || '(domanda vuota)')}</div>
+                                <div class="small text-muted">${escapeWizardHtml(argomento)} · ${escapeWizardHtml(tipo)}${stelle ? ' · ' + escapeWizardHtml(stelle) : ''}</div>
+                            </div>
+                            <span class="badge bg-info text-dark small text-nowrap">importata</span>
+                        </div>`;
+                    list.appendChild(item);
+                });
+                countBadge.textContent = String(questions.length);
+                section.classList.remove('d-none');
+            } catch (e) {
+                console.warn('Impossibile aggiornare le domande importate', e);
+            }
+        }
+
         window.addEventListener('focus', () => {
             refreshTempQuestionsCount().then(() => {
                 if (currentStep === 7) generateRiepilogo();
             });
+            refreshImportedQuestions();
+        });
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                refreshTempQuestionsCount().then(() => {
+                    if (currentStep === 7) generateRiepilogo();
+                });
+                refreshImportedQuestions();
+            }
+        });
+
+        window.addEventListener('uda-questions-imported', () => {
+            refreshTempQuestionsCount().then(() => {
+                if (currentStep === 7) generateRiepilogo();
+            });
+            refreshImportedQuestions();
         });
 
         initWizardQuestionEditor();

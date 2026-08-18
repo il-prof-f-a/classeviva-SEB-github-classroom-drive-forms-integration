@@ -65,6 +65,7 @@ $returnTo = LocalReturnUrl::sanitize(
     'uda_questions.php?id=' . rawurlencode((string)$udaId)
 );
 $importReturnUrl = app_url('public/import_questions.php?id=' . rawurlencode((string)$udaId));
+$classroomCourseId = trim((string)($_GET['course_id'] ?? ''));
 $googleIntegrationUrl = 'user_integrations.php?return_to=' . rawurlencode($importReturnUrl) . '#google-section';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -2289,6 +2290,20 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
             max-height: 320px;
             overflow-y: auto;
         }
+        /* Evidenziazione tenue (azzurrino trasparente) per i form già pubblicati in Classroom. */
+        #formsCatalogList .list-group-item-info {
+            background-color: rgba(13, 110, 253, 0.07);
+            color: inherit;
+        }
+        .form-legend-swatch {
+            display: inline-block;
+            width: 0.8em;
+            height: 0.8em;
+            border-radius: 3px;
+            background-color: rgba(13, 110, 253, 0.07);
+            border: 1px solid rgba(13, 110, 253, 0.30);
+            vertical-align: -0.05em;
+        }
     </style>
 </head>
 <body>
@@ -2305,7 +2320,7 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
                 <div>
                     <i class="bi bi-info-circle"></i> Import su UDA temporanea. Le domande saranno riassegnate al termine del wizard.
                 </div>
-                <button class="btn btn-outline-success btn-sm" onclick="window.close();">
+                <button class="btn btn-outline-success btn-sm" onclick="if (window.opener && !window.opener.closed) { try { window.opener.dispatchEvent(new Event('uda-questions-imported')); } catch (e) {} } window.close();">
                     Chiudi e torna al wizard
                 </button>
             </div>
@@ -2418,8 +2433,13 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
                                 <i class="bi bi-box-arrow-in-right"></i> Vai alle Integrazioni Google
                             </a>
                         </div>
-                        <div id="googleFormsCatalog" class="mt-3 d-none">
-                            <label for="formsCatalogSearch" class="form-label">Forms disponibili nel Drive</label>
+                        <div id="googleFormsCatalog" class="mt-3 d-none" data-course-id="<?= htmlspecialchars($classroomCourseId) ?>">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <label for="formsCatalogSearch" class="form-label mb-0">Forms disponibili nel Drive</label>
+                                <span id="formsClassroomLegend" class="small text-muted d-none">
+                                    <span class="form-legend-swatch me-1"></span>Pubblicato nella Classroom
+                                </span>
+                            </div>
                             <input type="search" id="formsCatalogSearch" class="form-control mb-2" placeholder="Cerca per titolo, autore o data..." autocomplete="off">
                             <div id="formsCatalogList" class="list-group" role="listbox" aria-label="Google Forms disponibili"></div>
                         </div>
