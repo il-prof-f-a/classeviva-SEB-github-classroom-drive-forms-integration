@@ -246,7 +246,17 @@ final class TeachingGroupStudentService
         // change the target of a later merge in the same request.
         foreach ($operations as $sourceId => $targetId) {
             if (isset($operations[$targetId])) {
-                throw new RuntimeException('conflitto tra target di identità esterne');
+                $chainSource = '';
+                $chainTarget = '';
+                foreach ($this->identities->listForStudent((string)$sourceId) as $chainId) {
+                    $chainSource = (string)($chainId['provider'] ?? '') . ':' . (string)($chainId['external_user_id'] ?? '');
+                    break;
+                }
+                foreach ($this->identities->listForStudent((string)$targetId) as $chainId) {
+                    $chainTarget = (string)($chainId['provider'] ?? '') . ':' . (string)($chainId['external_user_id'] ?? '');
+                    break;
+                }
+                throw new RuntimeException('conflitto tra target di identità esterne (catena): lo studente "' . $chainTarget . '" è sia origine che destinazione di un collegamento (origina da "' . $chainSource . '").');
             }
         }
 
