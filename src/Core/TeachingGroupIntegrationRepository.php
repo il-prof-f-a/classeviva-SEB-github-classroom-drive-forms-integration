@@ -55,16 +55,26 @@ final class TeachingGroupIntegrationRepository
         }
 
         // Un contesto esterno non può appartenere a due gruppi dello stesso utente.
+        // Per ClasseViva l'unicità è sulla coppia (classe, materia): la stessa
+        // classe può essere collegata a più gruppi con materie diverse.
         $contextRows = $this->db->findWhere('GRUPPI_INTEGRAZIONI', [
             'id_utente' => $this->userId,
             'provider' => $provider,
             'external_context_id' => $context,
         ]);
+        $newSubject = trim((string)($data['external_subject_id'] ?? ''));
         foreach ($contextRows as $row) {
-            if (($row['stato'] ?? 'attivo') !== 'disattivo'
-                && (string)($row['id_gruppo'] ?? '') !== $groupId) {
-                throw new RuntimeException('external ID gia collegato a un altro gruppo');
+            if (($row['stato'] ?? 'attivo') === 'disattivo') {
+                continue;
             }
+            if ((string)($row['id_gruppo'] ?? '') === $groupId) {
+                continue;
+            }
+            $rowSubject = trim((string)($row['external_subject_id'] ?? ''));
+            if ($newSubject !== '' && $rowSubject !== '' && $rowSubject !== $newSubject) {
+                continue;
+            }
+            throw new RuntimeException('external ID gia collegato a un altro gruppo');
         }
         $reusable = null;
         foreach ($contextRows as $row) {
