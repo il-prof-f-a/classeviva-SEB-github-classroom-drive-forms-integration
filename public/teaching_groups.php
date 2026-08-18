@@ -654,7 +654,8 @@ $nameSimilarity = static function (string $a, string $b): float {
     $maxLength = max(strlen($a), strlen($b));
     return 1 - (levenshtein($a, $b) / $maxLength);
 };
-$fetchRoster = static function (string $provider, string $contextId) use ($config, $github): array {
+$githubFetchDebug = ['assignments' => 0, 'accepted' => 0, 'first_keys' => []];
+$fetchRoster = static function (string $provider, string $contextId) use ($config, $github, &$githubFetchDebug): array {
     $roster = [];
     if ($provider === 'classeviva') {
         $students = (new ClasseVivaAPI($config))->getStudents($contextId);
@@ -703,6 +704,9 @@ $fetchRoster = static function (string $provider, string $contextId) use ($confi
             }
             $githubPage++;
         }
+        $githubFetchDebug['assignments'] = count($githubAssignments);
+        $githubSample = $githubAssignments !== [] ? reset($githubAssignments) : null;
+        $githubFetchDebug['first_keys'] = is_array($githubSample) ? array_keys($githubSample) : [];
         $githubSeen = [];
         $githubNameCache = $_SESSION['github_display_names'] ?? [];
         if (!is_array($githubNameCache)) {
@@ -722,6 +726,7 @@ $fetchRoster = static function (string $provider, string $contextId) use ($confi
                 : (is_array($githubAccepted) && isset($githubAccepted['data']) && is_array($githubAccepted['data'])
                     ? $githubAccepted['data']
                     : (is_array($githubAccepted) ? $githubAccepted : []));
+            $githubFetchDebug['accepted'] += count($githubAccepted);
             foreach ($githubAccepted as $githubEntry) {
                 if (!is_array($githubEntry)) {
                     continue;
@@ -797,7 +802,7 @@ if ($selectedGroupRecord !== null) {
             $rosters[$provider] = [];
         }
         if ($provider === 'github_classroom' && ($rosters[$provider] ?? []) === [] && !isset($rosterErrors[$provider])) {
-            $rosterErrors[$provider] = 'Roster GitHub Classroom vuoto per "' . ($providerLink['external_name'] ?? $contextId) . '" (ID ' . $contextId . '): nessun assignment trovato o nessuno studente ha accettato.';
+            $rosterErrors[$provider] = 'Roster GitHub Classroom vuoto per "' . ($providerLink['external_name'] ?? $contextId) . '" (ID ' . $contextId . '): ' . $githubFetchDebug['assignments'] . ' assignment, ' . $githubFetchDebug['accepted'] . ' accepted. Campi primo assignment: ' . implode(', ', $githubFetchDebug['first_keys']) . '.';
         }
     }
     $anchorProvider = $configuredProviders[0] ?? null;
