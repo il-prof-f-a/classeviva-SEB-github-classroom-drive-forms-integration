@@ -710,8 +710,8 @@ try {
                         <div class="border rounded p-3 mb-3 bg-white">
                             <div class="d-flex justify-content-between align-items-center mb-2">
                                 <h6 class="mb-0"><i class="bi bi-google"></i> Risorse Google Classroom mappate</h6>
-                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="loadWizardClassroomCourses()">
-                                    <i class="bi bi-arrow-clockwise"></i> Carica risorse
+                                <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none" onclick="loadWizardClassroomCourses(true)">
+                                    <i class="bi bi-arrow-clockwise"></i> Ricarica
                                 </button>
                             </div>
                             <div id="wizardClassroomImportMsg" class="alert d-none" role="alert"></div>
@@ -719,8 +719,9 @@ try {
                                 <div class="col-md-6">
                                     <label for="wizardClassroomCourseSelect" class="form-label small">Corso</label>
                                     <select id="wizardClassroomCourseSelect" class="form-select" onchange="loadWizardClassroomResources()">
-                                        <option value="">Seleziona un corso mappato...</option>
+                                        <option value="">Seleziona un corso...</option>
                                     </select>
+                                    <div id="wizardClassroomCourseHelp" class="form-text"></div>
                                 </div>
                                 <div class="col-md-6">
                                     <label for="wizardClassroomTopicSelect" class="form-label small">Argomento</label>
@@ -734,11 +735,11 @@ try {
                             </div>
                             <div class="table-responsive border rounded" style="max-height: 300px;">
                                 <table class="table table-sm align-middle mb-0">
-                                    <thead class="table-light"><tr><th>Importa</th><th>Risorsa</th><th>Destinazione</th><th>Tipo</th></tr></thead>
+                                    <thead class="table-light"><tr><th style="width: 36px;"><input type="checkbox" id="wizardClassroomSelectAll" class="form-check-input" onchange="toggleWizardClassroomSelectAll(this)" aria-label="Seleziona tutte le risorse"></th><th>Risorsa</th><th>Destinazione</th><th>Tipo</th></tr></thead>
                                     <tbody id="wizardClassroomResourcesBody"></tbody>
                                 </table>
                             </div>
-                            <div id="wizardClassroomResourcesEmpty" class="alert alert-light border mt-2 mb-0">Carica un corso mappato per visualizzare le risorse.</div>
+                            <div id="wizardClassroomResourcesEmpty" class="alert alert-light border mt-2 mb-0">Le risorse vengono caricate automaticamente all'apertura dello step.</div>
                             <button type="button" class="btn btn-sm btn-primary mt-2" onclick="applyWizardClassroomImport()">
                                 <i class="bi bi-download"></i> Importa selezionati
                             </button>
@@ -966,6 +967,7 @@ try {
         const classroomImportIntegrationUrl = 'user_integrations.php#google-section';
         let wizardClassroomResources = [];
         let wizardClassroomCourses = [];
+        let wizardClassroomLoadedSignature = '';
 
         document.addEventListener('DOMContentLoaded', () => {
             const discipline = document.querySelector('input[name="disciplina"]');
@@ -989,6 +991,10 @@ try {
                 renderWizardIntegrationSummary();
                 syncWizardDiscipline();
                 saveWizardDraft();
+                if (currentStep === 3) {
+                    wizardClassroomLoadedSignature = '';
+                    loadWizardClassroomCourses(true);
+                }
             });
             restoreWizardDraft();
             const hashStep = Number.parseInt(window.location.hash.replace('#', ''), 10);
@@ -1104,6 +1110,10 @@ try {
 
             updateWizardHash(stepNumber);
             renderWizardIntegrationSummary();
+
+            if (stepNumber === 3) {
+                loadWizardClassroomCourses();
+            }
 
             // Scroll to top
             window.scrollTo(0, 0);
@@ -2212,6 +2222,12 @@ try {
             loading.classList.toggle('d-none', !isLoading);
         }
 
+        function setWizardClassroomCourseHelp(message) {
+            const help = document.getElementById('wizardClassroomCourseHelp');
+            if (!help) return;
+            help.textContent = message || '';
+        }
+
         function toggleWizardClassroomSelectAll(masterCheckbox) {
             const checked = masterCheckbox ? !!masterCheckbox.checked : false;
             document.querySelectorAll('.wizard-classroom-check').forEach(input => {
@@ -2337,28 +2353,55 @@ try {
             });
         }
 
-        async function loadWizardClassroomCourses() {
+        async function loadWizardClassroomCourses(force = false) {
             const courseSelect = document.getElementById('wizardClassroomCourseSelect');
             if (!courseSelect) return false;
 
-            setWizardClassroomLoading(true);
-            setWizardClassroomMessage('info', 'Caricamento classroom...');
-            try {
-                const subjectQuery = wizardClassSubjectQuery();
-                const params = new URLSearchParams();
-                subjectQuery.classIds.forEach(id => params.append('class_ids[]', id));
-                subjectQuery.subjectIds.forEach(id => params.append('subject_ids[]', id));
-                const response = await fetch(`ajax_get_wizard_classroom_catalog.php?${params.toString()}`, { credentials: 'same-origin' });
-                const raw = await response.text();
-                let result = null;
-                try {
-                    result = JSON.parse(raw);
-                } catch (e) {
-                    result = null;
-                }
+            const signature = [...selectedGroupIds].sort().join('|');
+            if (!force && signature === wizardClassroomLoadedSignature && wizardClassroomCourses.length > 0) {
+                return true;
+            }
 
+            // Determina il corso Classroom già mappato sui gruppi selezionati
+            // (dati già disponibili lato client in teachingGroupCatalogIndex).
+            const mappedMap = new Map();
+            selectedGroupIds.forEach(groupId => {
+                const group = teachingGroupCatalogIndex[groupId] || {};
+                const gc = group.providers?.google_classroom || null;
+                const courseId = String(gc?.external_context_id || '').trim();
+                const courseName = String(gc?.external_name || '').trim();
+                if (courseId && !mappedMap.has(courseId)) {
+                    mappedMap.set(courseId, { id: courseId, name: courseName || courseId });
+                }
+            });
+            const mappedCourses = [...mappedMap.values()];
+
+            if (mappedCourses.length === 1) {
+                // Corso mappato: mostralo come non modificabile e precarica le risorse.
+                wizardClassroomCourses = mappedCourses;
+                courseSelect.innerHTML = '';
+                const option = document.createElement('option');
+                option.value = mappedCourses[0].id;
+                option.textContent = mappedCourses[0].name;
+                option.selected = true;
+                courseSelect.appendChild(option);
+                courseSelect.disabled = true;
+                setWizardClassroomCourseHelp('Corso mappato al gruppo selezionato: non modificabile.');
+                setWizardClassroomMessage('', '');
+                wizardClassroomLoadedSignature = signature;
+                await loadWizardClassroomResources(mappedCourses[0].id);
+                return true;
+            }
+
+            // Nessun corso mappato (o più di uno): mostra l'elenco completo dei corsi.
+            courseSelect.disabled = false;
+            setWizardClassroomCourseHelp('Nessun corso mappato: scegli un corso per importarne le risorse.');
+            setWizardClassroomLoading(true);
+            try {
+                const response = await fetch('ajax_get_classroom_courses.php', { credentials: 'same-origin' });
+                const result = await response.json().catch(() => null);
                 if (!response.ok || !result || !result.success) {
-                    throw new Error((result && result.error) ? result.error : 'Impossibile caricare le classroom.');
+                    throw new Error((result && result.error) ? result.error : 'Impossibile caricare i corsi.');
                 }
 
                 const courses = Array.isArray(result.courses) ? result.courses : [];
@@ -2367,33 +2410,42 @@ try {
                 if (courses.length === 0) {
                     const option = document.createElement('option');
                     option.value = '';
-                    option.textContent = 'Nessuna classroom disponibile';
+                    option.textContent = 'Nessun corso disponibile';
                     courseSelect.appendChild(option);
-                    setWizardClassroomMessage('warning', 'Nessun corso Classroom è associato alle classi selezionate.', true);
+                    courseSelect.disabled = true;
+                    setWizardClassroomMessage('warning', 'Nessun corso Google Classroom disponibile per questo account.', true);
+                    wizardClassroomResources = [];
+                    renderWizardClassroomResources();
                     return false;
                 }
 
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = 'Seleziona un corso...';
+                courseSelect.appendChild(placeholder);
                 courses.forEach((course, idx) => {
                     const option = document.createElement('option');
                     option.value = course.id || '';
-                    option.textContent = course.name || `Classroom ${idx + 1}`;
-                    if (idx === 0) option.selected = true;
+                    option.textContent = course.name || `Corso ${idx + 1}`;
                     courseSelect.appendChild(option);
                 });
+                courseSelect.value = '';
+                wizardClassroomResources = [];
+                renderWizardClassroomResources();
                 setWizardClassroomMessage('', '');
+                wizardClassroomLoadedSignature = signature;
                 return true;
             } catch (error) {
-                setWizardClassroomMessage('warning', error.message || 'Impossibile caricare le classroom.', true);
+                setWizardClassroomMessage('warning', error.message || 'Impossibile caricare i corsi.', true);
                 return false;
             } finally {
                 setWizardClassroomLoading(false);
             }
         }
 
-        async function loadWizardClassroomResources() {
+        async function loadWizardClassroomResources(explicitCourseId = '') {
             const courseSelect = document.getElementById('wizardClassroomCourseSelect');
-            if (!courseSelect) return;
-            const courseId = String(courseSelect.value || '').trim();
+            const courseId = String(explicitCourseId || '').trim() || (courseSelect ? String(courseSelect.value || '').trim() : '');
             if (!courseId) {
                 wizardClassroomResources = [];
                 renderWizardClassroomResources();
@@ -2433,27 +2485,6 @@ try {
                 setWizardClassroomMessage('danger', error.message || 'Impossibile caricare le risorse Classroom.');
             } finally {
                 setWizardClassroomLoading(false);
-            }
-        }
-
-        async function openWizardClassroomImportModal() {
-            const modalElement = document.getElementById('classroomTopicImportModal');
-            if (!modalElement || typeof bootstrap === 'undefined') return;
-
-            const modal = bootstrap.Modal.getInstance(modalElement) || new bootstrap.Modal(modalElement);
-            modal.show();
-
-            const hasCourses = await loadWizardClassroomCourses();
-            if (hasCourses) {
-                await loadWizardClassroomResources();
-            } else {
-                const body = document.getElementById('wizardClassroomResourcesBody');
-                const emptyBox = document.getElementById('wizardClassroomResourcesEmpty');
-                if (body) body.innerHTML = '';
-                if (emptyBox) {
-                    emptyBox.classList.remove('d-none');
-                    emptyBox.textContent = 'Collega Google Classroom dalle integrazioni per usare questo import.';
-                }
             }
         }
 

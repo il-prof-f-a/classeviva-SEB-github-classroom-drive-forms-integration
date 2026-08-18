@@ -448,6 +448,7 @@ $editorTests = [
     'wizard question payload' => __DIR__ . '/uda_editor/test_wizard_question_payload.php',
     'catalog normalizers' => __DIR__ . '/uda_editor/test_catalog_normalizers.php',
     'wizard catalog markup' => __DIR__ . '/uda_editor/test_wizard_catalog_markup.php',
+    'wizard classroom preload' => __DIR__ . '/uda_editor/test_wizard_classroom_preload.php',
     'wizard mapping markup' => __DIR__ . '/uda_editor/test_wizard_mapping_markup.php',
     'wizard group selector' => __DIR__ . '/uda_editor/test_wizard_group_selector.php',
     'wizard optional assignments' => __DIR__ . '/uda_editor/test_wizard_optional_assignments.php',
