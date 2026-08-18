@@ -602,19 +602,21 @@ $countUnmapped = static function (string $groupId, array $providers) use ($stude
         return 0;
     }
     $unmapped = 0;
+    $anchorProvider = $providers[0];
     try {
         foreach ($studentService->matrix($groupId) as $matrixRow) {
             $matrixIdentities = is_array($matrixRow['identities'] ?? null) ? $matrixRow['identities'] : [];
-            $matrixCounts = [];
+            $hasAnchor = false;
+            $hasTarget = false;
             foreach ($matrixIdentities as $matrixIdentity) {
                 $matrixProvider = (string)($matrixIdentity['provider'] ?? '');
-                if ($matrixProvider !== '') {
-                    $matrixCounts[$matrixProvider] = ($matrixCounts[$matrixProvider] ?? 0) + 1;
+                if ($matrixProvider === $anchorProvider) {
+                    $hasAnchor = true;
+                } elseif (in_array($matrixProvider, $providers, true)) {
+                    $hasTarget = true;
                 }
             }
-            $matrixConflict = count(array_filter($matrixCounts, static fn(int $count): bool => $count > 1)) > 0;
-            $matrixCovered = count(array_intersect(array_keys($matrixCounts), $providers));
-            if (!$matrixConflict && $matrixCovered < count($providers)) {
+            if ($hasAnchor && !$hasTarget) {
                 $unmapped++;
             }
         }
