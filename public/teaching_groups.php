@@ -722,6 +722,35 @@ $fetchRoster = static function (string $provider, string $contextId) use ($confi
             if ($githubAssignmentId === '') {
                 continue;
             }
+            $githubGrades = $github->getAssignmentGrades($githubAssignmentId);
+            $githubGrades = is_array($githubGrades)
+                ? ($githubGrades['grades'] ?? ($githubGrades['data'] ?? $githubGrades))
+                : [];
+            foreach ($githubGrades as $githubGrade) {
+                if (!is_array($githubGrade)) {
+                    continue;
+                }
+                $githubExternal = trim((string)($githubGrade['github_username'] ?? $githubGrade['username'] ?? ''));
+                if ($githubExternal === '' || isset($githubSeen[$githubExternal])) {
+                    continue;
+                }
+                $githubSeen[$githubExternal] = true;
+                $githubName = trim((string)($githubGrade['roster_identifier'] ?? ''));
+                if ($githubName === '') {
+                    if (!isset($githubNameCache[$githubExternal])) {
+                        $githubNameCache[$githubExternal] = $githubExternal;
+                        try {
+                            $githubProfile = $github->getUserByLogin($githubExternal);
+                            if (is_array($githubProfile) && is_scalar($githubProfile['name'] ?? null) && (string)$githubProfile['name'] !== '') {
+                                $githubNameCache[$githubExternal] = (string)$githubProfile['name'];
+                            }
+                        } catch (Throwable $ignored) {
+                        }
+                    }
+                    $githubName = (string)$githubNameCache[$githubExternal];
+                }
+                $roster[] = ['external_user_id' => $githubExternal, 'display_name' => $githubName];
+            }
             $githubAcceptedRaw = $github->listAcceptedAssignments($githubAssignmentId);
             if ($githubFetchDebug['accepted_raw'] === '') {
                 $githubFetchDebug['accepted_raw'] = json_encode($githubAcceptedRaw);
