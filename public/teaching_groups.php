@@ -654,7 +654,7 @@ $nameSimilarity = static function (string $a, string $b): float {
     $maxLength = max(strlen($a), strlen($b));
     return 1 - (levenshtein($a, $b) / $maxLength);
 };
-$githubFetchDebug = ['assignments' => 0, 'accepted' => 0, 'first_keys' => []];
+$githubFetchDebug = ['assignments' => 0, 'accepted' => 0, 'first_keys' => [], 'assignment_accepted' => -1, 'assignment_submissions' => -1, 'accepted_raw' => ''];
 $fetchRoster = static function (string $provider, string $contextId) use ($config, $github, &$githubFetchDebug): array {
     $roster = [];
     if ($provider === 'classeviva') {
@@ -707,6 +707,8 @@ $fetchRoster = static function (string $provider, string $contextId) use ($confi
         $githubFetchDebug['assignments'] = count($githubAssignments);
         $githubSample = $githubAssignments !== [] ? reset($githubAssignments) : null;
         $githubFetchDebug['first_keys'] = is_array($githubSample) ? array_keys($githubSample) : [];
+        $githubFetchDebug['assignment_accepted'] = is_array($githubSample) ? (int)($githubSample['accepted'] ?? -1) : -1;
+        $githubFetchDebug['assignment_submissions'] = is_array($githubSample) ? (int)($githubSample['submissions'] ?? -1) : -1;
         $githubSeen = [];
         $githubNameCache = $_SESSION['github_display_names'] ?? [];
         if (!is_array($githubNameCache)) {
@@ -720,7 +722,14 @@ $fetchRoster = static function (string $provider, string $contextId) use ($confi
             if ($githubAssignmentId === '') {
                 continue;
             }
-            $githubAccepted = $github->listAcceptedAssignments($githubAssignmentId);
+            $githubAcceptedRaw = $github->listAcceptedAssignments($githubAssignmentId);
+            if ($githubFetchDebug['accepted_raw'] === '') {
+                $githubFetchDebug['accepted_raw'] = json_encode($githubAcceptedRaw);
+                if (strlen($githubFetchDebug['accepted_raw']) > 400) {
+                    $githubFetchDebug['accepted_raw'] = substr($githubFetchDebug['accepted_raw'], 0, 400) . '…';
+                }
+            }
+            $githubAccepted = $githubAcceptedRaw;
             $githubAccepted = is_array($githubAccepted) && isset($githubAccepted['accepted_assignments']) && is_array($githubAccepted['accepted_assignments'])
                 ? $githubAccepted['accepted_assignments']
                 : (is_array($githubAccepted) && isset($githubAccepted['data']) && is_array($githubAccepted['data'])
@@ -802,7 +811,7 @@ if ($selectedGroupRecord !== null) {
             $rosters[$provider] = [];
         }
         if ($provider === 'github_classroom' && ($rosters[$provider] ?? []) === [] && !isset($rosterErrors[$provider])) {
-            $rosterErrors[$provider] = 'Roster GitHub Classroom vuoto per "' . ($providerLink['external_name'] ?? $contextId) . '" (ID ' . $contextId . '): ' . $githubFetchDebug['assignments'] . ' assignment, ' . $githubFetchDebug['accepted'] . ' accepted. Campi primo assignment: ' . implode(', ', $githubFetchDebug['first_keys']) . '.';
+            $rosterErrors[$provider] = 'Roster GitHub Classroom vuoto per "' . ($providerLink['external_name'] ?? $contextId) . '" (ID ' . $contextId . '): ' . $githubFetchDebug['assignments'] . ' assignment, accepted-field=' . $githubFetchDebug['assignment_accepted'] . ', submissions=' . $githubFetchDebug['assignment_submissions'] . ', listAcceptedAssignments=' . $githubFetchDebug['accepted'] . ' righe. Raw accepted: ' . $githubFetchDebug['accepted_raw'];
         }
     }
     $anchorProvider = $configuredProviders[0] ?? null;
