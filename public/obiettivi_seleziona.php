@@ -22,7 +22,8 @@ $db = DatabaseFactory::createWithInitialization($config, true);
 $udaManager = new UDAManager($config);
 $obiettiviManager = new ObiettiviManager($db, $config);
 
-$message = null;
+$message = $_SESSION['flash_obiettivi'] ?? null;
+unset($_SESSION['flash_obiettivi']);
 $error = null;
 
 // Gestione azioni
@@ -41,7 +42,10 @@ try {
 
         $count = $obiettiviManager->associaObiettiviAUDA($obiettiviIds, $udaId);
 
-        $message = "$count obiettivi associati alla UDA con successo!";
+        // PRG: torna alla pagina con l'UDA in querystring (refresh-safe)
+        $_SESSION['flash_obiettivi'] = "$count obiettivi associati alla UDA con successo!";
+        header('Location: obiettivi_seleziona.php?id_uda=' . urlencode($udaId));
+        exit;
     }
 
     // Applica filtri
@@ -78,6 +82,31 @@ try {
 
     // Recupera obiettivi con filtri
     $obiettivi = $obiettiviManager->getObiettiviMaster($filtri);
+
+    // Determina quali master sono già associati all'UDA preselezionata.
+    $fingerprint = static function (Obiettivo $o): string {
+        return mb_strtolower(trim((string)$o->tipo_obiettivo))
+            . '|' . mb_strtolower(trim((string)$o->codice))
+            . '|' . mb_strtolower(trim((string)$o->descrizione))
+            . '|' . mb_strtolower(trim((string)$o->competenza));
+    };
+    $associatiMap = [];
+    if (!empty($preselectedUdaId)) {
+        $fpAssociati = [];
+        foreach ($obiettiviManager->getObiettiviPerUDA($preselectedUdaId) as $objUda) {
+            $fpAssociati[$fingerprint($objUda)] = true;
+        }
+        foreach ($obiettivi as $obiettivo) {
+            $associatiMap[(string)$obiettivo->id_obiettivo] = isset($fpAssociati[$fingerprint($obiettivo)]);
+        }
+    }
+
+    // Gli obiettivi già associati vanno in cima (ordinamento stabile).
+    usort($obiettivi, static function (Obiettivo $a, Obiettivo $b) use ($associatiMap): int {
+        $aAssoc = !empty($associatiMap[(string)$a->id_obiettivo]) ? 1 : 0;
+        $bAssoc = !empty($associatiMap[(string)$b->id_obiettivo]) ? 1 : 0;
+        return $bAssoc <=> $aAssoc;
+    });
 
     // Recupera valori unici per i filtri
     $aree = $obiettiviManager->getAreeDisciplinari();
@@ -226,7 +255,7 @@ try {
                                 <button type="submit" class="btn btn-primary flex-fill">
                                     <i class="bi bi-search"></i> Applica
                                 </button>
-                                <a href="obiettivi_seleziona.php" class="btn btn-outline-secondary flex-fill">
+                                <a href="obiettivi_seleziona.php<?php echo $preselectedUdaId ? '?id_uda=' . urlencode($preselectedUdaId) : ''; ?>" class="btn btn-outline-secondary flex-fill">
                                     <i class="bi bi-x-circle"></i> Reset
                                 </a>
                             </div>
@@ -268,7 +297,7 @@ try {
                         <input type="hidden" name="action" value="associa">
                         <div class="row align-items-center">
                             <div class="col-md-6">
-                                <select name="uda_id" class="form-select" required>
+                                <select name="uda_id" class="form-select" required onchange="changeUda()">
                                     <option value="">-- Seleziona UDA --</option>
                                     <?php foreach ($udas as $uda): ?>
                                         <option value="<?php echo htmlspecialchars($uda->id_uda); ?>"
@@ -293,7 +322,7 @@ try {
                         <div class="alert alert-info">
                             <i class="bi bi-info-circle"></i> Nessun obiettivo trovato con i filtri attuali.
                             <?php if (!empty(array_filter($filtri))): ?>
-                                <a href="obiettivi_seleziona.php">Rimuovi i filtri</a>
+                                <a href="obiettivi_seleziona.php<?php echo $preselectedUdaId ? '?id_uda=' . urlencode($preselectedUdaId) : ''; ?>">Rimuovi i filtri</a>
                             <?php endif; ?>
                         </div>
                     <?php else: ?>
@@ -306,7 +335,8 @@ try {
                                                    name="obiettivi[]"
                                                    value="<?php echo htmlspecialchars($obiettivo->id_obiettivo); ?>"
                                                    form="associaForm"
-                                                   style="width: 24px; height: 24px;">
+                                                   style="width: 24px; height: 24px;"
+                                                   <?php echo !empty($associatiMap[(string)$obiettivo->id_obiettivo]) ? 'checked' : ''; ?>>
                                         </div>
                                         <div class="col">
                                             <div class="d-flex justify-content-between align-items-start mb-2">
@@ -314,6 +344,9 @@ try {
                                                     <span class="badge bg-primary badge-tipo">
                                                         <?php echo htmlspecialchars($obiettivo->getTipoObiettivoDescrizione()); ?>
                                                     </span>
+                                                    <?php if (!empty($associatiMap[(string)$obiettivo->id_obiettivo])): ?>
+                                                        <span class="badge bg-success">Associato</span>
+                                                    <?php endif; ?>
                                                     <?php if ($obiettivo->codice): ?>
                                                         <span class="badge bg-secondary"><?php echo htmlspecialchars($obiettivo->codice); ?></span>
                                                     <?php endif; ?>
@@ -361,6 +394,21 @@ try {
         checkboxes.forEach(checkbox => {
             checkbox.addEventListener('change', updateSelection);
         });
+
+        function changeUda() {
+            const select = document.querySelector('select[name="uda_id"]');
+            if (!select) return;
+            const url = new URL(window.location.href);
+            if (select.value) {
+                url.searchParams.set('id_uda', select.value);
+            } else {
+                url.searchParams.delete('id_uda');
+            }
+            window.location.href = url.toString();
+        }
+
+        // Inizializza conteggio ed evidenziazione in base ai checkbox preselezionati
+        updateSelection();
 
         function updateSelection() {
             const selected = document.querySelectorAll('.obiettivo-checkbox:checked');
