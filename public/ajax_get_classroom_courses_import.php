@@ -89,7 +89,7 @@ try {
             $course['associated'] = true;
             $course['group_name'] = $assoc['group_name'];
             $course['order'] = (int)$assoc['order'];
-            $course['label'] = trim((string)($course['name'] ?? '')) . ' (' . $assoc['group_name'] . ') [v]';
+            $course['label'] = trim((string)($course['name'] ?? '')) . ' (associata a ' . $assoc['group_name'] . ')';
             $associatedCourses[] = $course;
         } else {
             $course['associated'] = false;
