@@ -619,11 +619,8 @@ if ($action === 'repo_loc') {
         }
 
         [$owner, $repo] = explode('/', $repoFull, 2);
-        // Preferisci il token GitHub Classroom (PAT) configurato nelle integrazioni (più affidabile per Classroom),
-        // poi fallback al token OAuth in sessione.
-        $token = $config['github']['classroom_token']
-            ?? ($config['github']['pat'] ?? ($config['github']['token'] ?? null))
-            ?? ($_SESSION['github_access_token'] ?? null);
+        // L'autenticazione GitHub usa esclusivamente il token OAuth di sessione.
+        $token = $_SESSION['github_access_token'] ?? null;
         if (!$token) {
             throw new Exception('Token GitHub non disponibile (configurazione o sessione)');
         }

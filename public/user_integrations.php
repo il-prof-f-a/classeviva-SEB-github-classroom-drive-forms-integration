@@ -283,16 +283,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['section'])) {
             $githubConfig = [
                 'client_id' => trim($_POST['github_client_id'] ?? ''),
                 'client_secret' => trim($_POST['github_client_secret'] ?? ''),
-                'classroom_token' => trim($_POST['github_classroom_token'] ?? ''),
             ];
             $hasGithubOauth = !empty($githubConfig['client_id']) && !empty($githubConfig['client_secret']);
-            $hasGithubToken = !empty($githubConfig['classroom_token']);
-            $integrationManager->saveConfig('github', $githubConfig, $hasGithubOauth || $hasGithubToken);
+            $integrationManager->saveConfig('github', $githubConfig, $hasGithubOauth);
 
             if ($action === 'test') {
                 // Il test qui è limitato: verifichiamo solo che i campi siano impostati
-                if (empty($githubConfig['classroom_token']) && (empty($githubConfig['client_id']) || empty($githubConfig['client_secret']))) {
-                    throw new Exception("Compila Client ID e Client Secret oppure inserisci un token GitHub Classroom prima di eseguire il test.");
+                if (empty($githubConfig['client_id']) || empty($githubConfig['client_secret'])) {
+                    throw new Exception("Compila Client ID e Client Secret prima di eseguire il test.");
                 }
                 // Prova a creare l'URL di autorizzazione
                 $config['github'] = array_merge($config['github'] ?? [], $githubConfig);
@@ -300,17 +298,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['section'])) {
                     session_start();
                 }
                 $github = new GitHubIntegration($config);
-                if (!empty($githubConfig['classroom_token'])) {
-                    $github->setAccessToken($githubConfig['classroom_token']);
-                    $user = $github->getUser();
-                    $successMessage = "Token GitHub Classroom valido. Utente: " . ($user['login'] ?? 'N/D');
-                } else {
-                    $authUrl = $github->getAuthorizationUrl(null, $_SERVER['REQUEST_URI'] ?? null);
-                    if (empty($authUrl)) {
-                        throw new Exception("Impossibile generare URL di autorizzazione GitHub.");
-                    }
-                    $successMessage = "Configurazione GitHub OAuth valida. URL di autorizzazione generato correttamente.";
+                $authUrl = $github->getAuthorizationUrl(null, $_SERVER['REQUEST_URI'] ?? null);
+                if (empty($authUrl)) {
+                    throw new Exception("Impossibile generare URL di autorizzazione GitHub.");
                 }
+                $successMessage = "Configurazione GitHub OAuth valida. URL di autorizzazione generato correttamente.";
             } else {
                 $successMessage = 'Configurazione GitHub salvata.';
             }
@@ -1405,16 +1397,6 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
                             <input type="password" name="github_client_secret" class="form-control"
                                    value="<?= htmlspecialchars($githubConfig['client_secret'] ?? '') ?>">
                         </div>
-                        <div class="mb-3">
-                            <label class="form-label">Token GitHub Classroom (Fine-grained PAT) (opzionale)</label>
-                            <input type="password" name="github_classroom_token" class="form-control"
-                                   value="<?= htmlspecialchars($githubConfig['classroom_token'] ?? '') ?>"
-                                   placeholder="github_pat_...">
-                            <div class="form-text">
-                                Se le API GitHub Classroom restituiscono <code>GitHub API error: Not Found</code> pur essendo autenticato, inserisci qui un fine-grained PAT (consigliato).
-                            </div>
-                        </div>
-
                         <div class="d-flex gap-2">
                             <button type="submit" name="action" value="save" class="btn btn-primary">
                                 <i class="bi bi-save"></i> Salva GitHub

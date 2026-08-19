@@ -13,7 +13,6 @@ class GitHubIntegration
     private $clientSecret;
     private $redirectUri;
     private $accessToken;
-    private $configToken;
 
     public function __construct($config)
     {
@@ -22,11 +21,6 @@ class GitHubIntegration
         $this->clientId = $config['github']['client_id'] ?? ($_ENV['GITHUB_CLIENT_ID'] ?? null);
         $this->clientSecret = $config['github']['client_secret'] ?? ($_ENV['GITHUB_CLIENT_SECRET'] ?? null);
         $this->redirectUri = app_url('public/github_callback.php');
-
-        // Token alternativo (fine-grained PAT / GitHub App user token) per GitHub Classroom API:
-        // alcuni endpoint Classroom possono rispondere 404 con token OAuth App.
-        $this->configToken = $config['github']['classroom_token']
-            ?? ($config['github']['pat'] ?? ($config['github']['token'] ?? null));
     }
 
     /**
@@ -347,12 +341,9 @@ class GitHubIntegration
      */
     public function loadTokenFromSession()
     {
-        // Se configurato un token "strong" (PAT/GitHub App), usalo con prioritÃ .
-        if (!empty($this->configToken)) {
-            $this->setAccessToken($this->configToken);
-            return true;
-        }
-
+        // L'autenticazione GitHub usa esclusivamente il token OAuth di sessione
+        // (l'app "UDA system" approvata dall'organizzazione copre anche le API
+        // Classroom e le repository).
         if (isset($_SESSION['github_access_token'])) {
             $this->setAccessToken($_SESSION['github_access_token']);
             return true;

@@ -515,7 +515,7 @@ HTML;
             if (!isset($config['github'])) {
                 $config['github'] = [];
             }
-            foreach (['client_id', 'client_secret', 'classroom_token'] as $key) {
+            foreach (['client_id', 'client_secret'] as $key) {
                 if (!empty($githubCfg[$key])) {
                     $config['github'][$key] = $githubCfg[$key];
                 }
