@@ -63,7 +63,7 @@ class LaboratorioManager
      */
     public function getCategoria(string $id): ?array
     {
-        return $this->db->findById('CATEGORIE_COMPETENZE', $id, 'id_categoria');
+        return $this->db->findOne('CATEGORIE_COMPETENZE', 'id_categoria', $id);
     }
 
     // ========== INDICATORI ==========
@@ -101,7 +101,7 @@ class LaboratorioManager
      */
     public function getIndicatore(string $id): ?array
     {
-        return $this->db->findById('INDICATORI_LABORATORIO', $id, 'id_indicatore');
+        return $this->db->findOne('INDICATORI_LABORATORIO', 'id_indicatore', $id);
     }
 
     /**

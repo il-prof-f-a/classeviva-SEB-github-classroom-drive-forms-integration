@@ -392,7 +392,7 @@ class ObiettiviManager
      */
     public function getObiettivoMaster(string $id): ?Obiettivo
     {
-        $row = $this->db->findById('OBIETTIVI_MASTER', $id, 'id_obiettivo');
+        $row = $this->db->findOne('OBIETTIVI_MASTER', 'id_obiettivo', $id);
 
         if (!$row) {
             return null;
