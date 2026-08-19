@@ -90,15 +90,30 @@ class GoogleFormsBuilder
         $cbmTemplateId = trim($this->config['google']['forms']['template_id_cbm'] ?? '');
         $templateId = $cbmEnabled && $cbmTemplateId !== '' ? $cbmTemplateId : $defaultTemplateId;
         $forceRequired = !($cbmEnabled && $templateId !== '');
+        $templateCopyError = null;
+
         if ($templateId !== '') {
-            try {
-                $copyMeta = new Drive\DriveFile();
-                $copyMeta->setName($normalizedTitle);
-                $copied = $driveService->files->copy($templateId, $copyMeta);
-                $formId = $copied->getId();
-            } catch (\Throwable $e) {
-                // fallback: crea nuovo se copia fallisce
+            // files.copy su un form non creato dall'app richiede lo scope Drive
+            // completo (drive, non drive.file). Verifica proattivamente lo scope
+            // per dare un messaggio chiaro invece di un 403 opaco.
+            if (!$this->tokenHasFullDriveScope()) {
+                $templateCopyError = 'Il token Google non include lo scope Drive completo '
+                    . '(https://www.googleapis.com/auth/drive). Riautorizza Google dalla '
+                    . 'pagina Integrazioni e riprova per usare il template del form.';
                 $formId = null;
+            } else {
+                try {
+                    $copyMeta = new Drive\DriveFile();
+                    $copyMeta->setName($normalizedTitle);
+                    $copied = $driveService->files->copy($templateId, $copyMeta);
+                    $formId = $copied->getId();
+                } catch (\Throwable $e) {
+                    // Non silenzioso: logga e riporta l'errore al chiamante,
+                    // così il fallback a "form da zero" resta visibile all'utente.
+                    error_log('[GoogleFormsBuilder] Copia template Forms fallita (template_id=' . $templateId . '): ' . $e->getMessage());
+                    $templateCopyError = 'Copia del template fallita: ' . $e->getMessage();
+                    $formId = null;
+                }
             }
         }
 
@@ -173,6 +188,12 @@ class GoogleFormsBuilder
             'editUrl' => "https://docs.google.com/forms/d/{$formId}/edit",
             'responderUrl' => "https://docs.google.com/forms/d/{$formId}/viewform",
         ];
+        if ($templateCopyError !== null) {
+            $result['templateCopyError'] = $templateCopyError;
+            $result['usedTemplate'] = false;
+        } elseif ($templateId !== '') {
+            $result['usedTemplate'] = true;
+        }
 
         // Se CBM, ricava mapping dalle replies
         if ($cbmEnabled && !empty($requests)) {
@@ -269,6 +290,32 @@ class GoogleFormsBuilder
 
         $client->setAccessToken($tokenData);
         return $client;
+    }
+
+    /**
+     * Verifica che il token OAuth corrente includa lo scope Drive completo
+     * (https://www.googleapis.com/auth/drive), necessario per files.copy su
+     * file non creati dall'app (es. i template Forms configurati).
+     */
+    private function tokenHasFullDriveScope(): bool
+    {
+        $token = $this->config['google']['oauth_token'] ?? null;
+        if (!is_array($token)) {
+            $token = GoogleTokenProvider::getToken($this->config);
+        }
+        if (!is_array($token)) {
+            return false;
+        }
+
+        $scope = $token['scope'] ?? '';
+        if (is_array($scope)) {
+            return in_array('https://www.googleapis.com/auth/drive', $scope, true);
+        }
+        if (!is_string($scope) || trim($scope) === '') {
+            return false;
+        }
+        $parts = preg_split('/\s+/', trim($scope));
+        return is_array($parts) && in_array('https://www.googleapis.com/auth/drive', $parts, true);
     }
 
     private function normalizeDisplayedText(?string $text): string

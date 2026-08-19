@@ -356,7 +356,9 @@ function runFormsTest($config, $test) {
                 'resourceId' => $formId,
                 'resourceName' => $titolo,
                 'verifyUrl' => $editUrl ?: "https://docs.google.com/forms/d/{$formId}/edit",
-                'responderUrl' => $responderUrl
+                'responderUrl' => $responderUrl,
+                'templateCopyError' => $result['templateCopyError'] ?? null,
+                'usedTemplate' => $result['usedTemplate'] ?? false,
             ]);
             break;
 

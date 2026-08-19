@@ -56,6 +56,7 @@ $action = $_POST['action'] ?? null;
 $successMessage = null;
 $errorMessage = null;
 $infoMessage = null;
+$templateWarning = null;
 
 /**
  * Utility: carica tutte le domande di una UDA ordinate.
@@ -626,6 +627,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action) {
                 $formId = $result['formId'];
                 $formEditUrl = $result['editUrl'];
                 $formViewUrl = $result['responderUrl'];
+                if (!empty($result['templateCopyError'])) {
+                    $templateWarning = 'Il form è stato creato SENZA usare il template: ' . $result['templateCopyError'];
+                }
 
                 // Upsert test
                 $existingTestId = $wizardState['test_id'] ?? null;
@@ -901,6 +905,12 @@ try {
         <?php if ($errorMessage): ?>
             <div class="alert alert-danger alert-dismissible fade show">
                 <i class="bi bi-exclamation-triangle"></i> <?= htmlspecialchars($errorMessage) ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        <?php endif; ?>
+        <?php if ($templateWarning): ?>
+            <div class="alert alert-warning alert-dismissible fade show">
+                <i class="bi bi-exclamation-triangle"></i> <?= htmlspecialchars($templateWarning) ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
         <?php endif; ?>

@@ -403,6 +403,20 @@ if (isset($_GET['success'])) {
                                 <strong>Token attivo!</strong> Le API Google sono pronte per l'uso.
                             </div>
 
+                            <div class="alert alert-warning mb-3">
+                                <i class="bi bi-exclamation-triangle"></i>
+                                <strong>Serve un permesso nuovo?</strong> Se un'attività fallisce per
+                                scope mancante (es. i template Forms richiedono l'accesso Drive
+                                completo), riautorizza per rinnovare il consenso con gli scope correnti.
+                            </div>
+                            <?php if ($authUrl): ?>
+                            <div class="d-grid mb-3">
+                                <a href="<?= htmlspecialchars($authUrl) ?>" class="btn btn-warning">
+                                    <i class="bi bi-arrow-clockwise"></i> Riautorizza (aggiorna scope)
+                                </a>
+                            </div>
+                            <?php endif; ?>
+
                             <div class="d-grid">
                                 <a href="system_status.php" class="btn btn-outline-primary mb-2">
                                     <i class="bi bi-speedometer2"></i> Verifica Stato Sistema

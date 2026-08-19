@@ -56,6 +56,7 @@ foreach ($domande as $domanda) {
 $successMessage = null;
 $errorMessage = null;
 $mappingWarning = null;
+$templateWarning = null;
 $generatedFormUrl = null;
 $googleIntegrationsUrl = app_url('public/user_integrations.php#google-section');
 
@@ -327,6 +328,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'generate_form' || $ac
         $formId = $result['formId'];
         $generatedFormUrl = $result['editUrl'];
 
+        if (!empty($result['templateCopyError'])) {
+            $templateWarning = 'Il form è stato creato SENZA usare il template: ' . $result['templateCopyError'];
+        }
+
         // Salva il form nel database TEST
         $cbmConfig = $result['cbm_config'] ?? [];
         $testData = [
@@ -485,6 +490,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'generate_form' || $ac
         <?php if ($mappingWarning): ?>
             <div class="alert alert-warning alert-dismissible fade show">
                 <i class="bi bi-info-circle"></i> <?= htmlspecialchars($mappingWarning) ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($templateWarning): ?>
+            <div class="alert alert-warning alert-dismissible fade show">
+                <i class="bi bi-exclamation-triangle"></i> <?= htmlspecialchars($templateWarning) ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
         <?php endif; ?>
