@@ -2315,7 +2315,7 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
     ?>
 
     <div class="container mt-4" data-preview-mode="<?= !empty($previewQuestions) ? 'true' : 'false' ?>" data-import-completed="<?= $importCompleted ? 'true' : 'false' ?>">
-        <?php if ($isTempUda): ?>
+        <?php if ($isTempUda && $importCompleted): ?>
             <div class="alert alert-success d-flex justify-content-between align-items-center">
                 <div>
                     <i class="bi bi-info-circle"></i> Import su UDA temporanea. Le domande saranno riassegnate al termine del wizard.
@@ -2324,7 +2324,7 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
                     Chiudi e torna al wizard
                 </button>
             </div>
-        <?php else: ?>
+        <?php elseif (!$isTempUda): ?>
             <div class="alert alert-info">
                 <i class="bi bi-info-circle"></i>
                 <strong>UDA:</strong> <?= htmlspecialchars($uda->titolo) ?>
@@ -2353,11 +2353,13 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
                         <?php endif; ?>
                     </ul>
 
+                    <?php if (!$isTempUda): ?>
                     <div class="mt-3">
                         <a href="<?= htmlspecialchars($returnTo) ?>" class="btn btn-primary">
                             <i class="bi bi-list-ul"></i> Vai alle Domande
                         </a>
                     </div>
+                    <?php endif; ?>
                 <?php endif; ?>
             </div>
         <?php endif; ?>
