@@ -1216,7 +1216,10 @@ if (!empty($selectedUdaId)) {
             setMaterialiClassroomLoading(true);
             setMaterialiClassroomMessage('info', 'Caricamento classroom...');
             try {
-                const response = await fetch('ajax_get_classroom_courses_import.php', { credentials: 'same-origin' });
+                const udaSelect = document.getElementById('classroomImportUda');
+                const udaId = (udaSelect && udaSelect.value) ? String(udaSelect.value).trim() : (selectedUdaId || '');
+                const url = udaId ? `ajax_get_classroom_courses_import.php?id_uda=${encodeURIComponent(udaId)}` : 'ajax_get_classroom_courses_import.php';
+                const response = await fetch(url, { credentials: 'same-origin' });
                 const raw = await response.text();
                 let result = null;
                 try {
@@ -1243,7 +1246,7 @@ if (!empty($selectedUdaId)) {
                 courses.forEach((course, idx) => {
                     const option = document.createElement('option');
                     option.value = course.id || '';
-                    option.textContent = course.name || `Classroom ${idx + 1}`;
+                    option.textContent = course.label || course.name || `Classroom ${idx + 1}`;
                     if (idx === 0) option.selected = true;
                     select.appendChild(option);
                 });
