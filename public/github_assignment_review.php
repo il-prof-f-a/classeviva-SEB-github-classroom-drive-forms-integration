@@ -190,9 +190,7 @@ if ($action === 'rubric_load') {
 
         $rubricId = (string)$testId;
         $rubricaRows = $dbAdapter->findWhere('RUBRICA', ['id_rubrica' => $rubricId]);
-        if (empty($rubricaRows)) {
-            $rubricaRows = ghDefaultGitRubricDefinition();
-        }
+        $hasRubric = !empty($rubricaRows);
 
         usort($rubricaRows, function ($a, $b) {
             return (int)($a['ordine'] ?? 0) <=> (int)($b['ordine'] ?? 0);
@@ -222,6 +220,7 @@ if ($action === 'rubric_load') {
             'ok' => true,
             'rubric_id' => $rubricId,
             'id_uda' => $idUda,
+            'has_rubric' => $hasRubric,
             'rubric_rows' => $rubricaRows,
             'saved' => $savedRow,
             'saved_json' => $savedJson
@@ -1453,6 +1452,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                 $commitCountTotal = $acceptedItem ? ($acceptedItem['commit_count'] ?? null) : null;
                                 $defaultBranch = $acceptedItem ? (string)($acceptedItem['repository']['default_branch'] ?? ($acceptedItem['default_branch'] ?? '')) : null;
                                 $studentId = $row['id_studente'] ?? '';
+                                // Nome visualizzato: preferenza roster (ClasseViva/Classroom/GitHub Classroom)
+                                // come già valorizzato da getAssignmentGrades; fallback sul login GitHub.
+                                $studentName = $rid !== '' ? $rid : $uname;
                                 $lastCommit = $commitInfo[$lowerUser]['last_commit'] ?? null;
                                 $recentCount = $commitInfo[$lowerUser]['recent_count'] ?? null;
                                 $prefill = [];
@@ -1588,6 +1590,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                         <input type="hidden" name="id_studente[<?= $idx ?>]" value="<?= htmlspecialchars($studentId) ?>">
                                         <?php if ($studentId): ?>
                                             <span class="badge bg-success">Associato</span>
+                                            <?php if ($studentName !== ''): ?><strong class="d-block"><?= htmlspecialchars($studentName) ?></strong><?php endif; ?>
                                             <small class="text-muted d-block">ID: <?= htmlspecialchars($studentId) ?></small>
                                         <?php else: ?>
                                             <span class="badge bg-warning text-dark">Non associato</span>
@@ -1611,6 +1614,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                                                <button type="button"
 	                                                        class="btn btn-sm btn-outline-primary rubric-open-btn"
 	                                                        data-student-id="<?= htmlspecialchars($studentId) ?>"
+	                                                        data-student-name="<?= htmlspecialchars($studentName) ?>"
 	                                                        data-github-username="<?= htmlspecialchars($uname) ?>"
 	                                                        data-repo-url="<?= htmlspecialchars($repoUrl) ?>"
 	                                                        data-repo-full="<?= htmlspecialchars($repoFullRow) ?>"
@@ -2266,6 +2270,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 		            if (!rubricPanelEl) return;
 	            const studentId = btn.dataset.studentId || '';
 	            const githubUsername = btn.dataset.githubUsername || '';
+	            const studentName = btn.dataset.studentName || '';
 	            const repoUrl = btn.dataset.repoUrl || '';
 	            const repoFull = btn.dataset.repoFull || '';
 	            const ref = btn.dataset.ref || '';
@@ -2284,7 +2289,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                repo_full: repoFull,
 	                ref: ref,
 	                voteSelect: voteSelect,
-	                nome_studente: '',
+	                nome_studente: studentName,
 	                metrics: {
 	                    repo_url: repoUrl,
 	                    repo_full: repoFull,
@@ -2296,7 +2301,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            };
 
 	            if (rubricEditLink) rubricEditLink.href = RUBRIC_CTX.rubric_editor_url;
-	            if (rubricSubtitleEl) rubricSubtitleEl.textContent = `Studente: ${studentId} · GitHub: ${githubUsername}`;
+	            if (rubricSubtitleEl) rubricSubtitleEl.textContent = `Studente: ${studentName || studentId} · GitHub: ${githubUsername}`;
 
 	            if (rubricMetrics) {
 	                rubricMetrics.innerHTML =
@@ -2316,8 +2321,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            url.searchParams.set('action', 'rubric_load');
 	            url.searchParams.set('student_id', studentId);
 	            url.searchParams.set('id_gruppo', RUBRIC_CTX.id_gruppo || '');
+
+	            const res = await fetch(url.toString(), {headers: {'Accept': 'application/json'}});
+	            const data = await res.json();
+
 	            if (!data.ok) {
 	                if (rubricHost) rubricHost.innerHTML = '<div class="text-danger">Errore: ' + escapeHtml(data.error || 'Errore') + '</div>';
+	                return;
+	            }
+
+	            if (!data.has_rubric) {
+	                if (rubricHost) {
+	                    rubricHost.innerHTML = '<div class="alert alert-warning mb-0">Nessuna rubrica associata al test. Assegnane una da <a href="' + escapeHtml(RUBRIC_CTX.rubric_editor_url) + '" target="_blank">github_rubriche.php</a>.</div>';
+	                }
 	                return;
 	            }
 
