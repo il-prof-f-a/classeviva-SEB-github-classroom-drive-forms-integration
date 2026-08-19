@@ -497,7 +497,7 @@ try {
                     </div>
                     <div class="action-bar mt-3 gap-2">
                         <a href="uda_publish.php?id=<?= urlencode($udaId) ?>" class="btn text-white" style="background-color: #198754; border-color: #198754;">
-                            <i class="bi bi-cloud-upload"></i><span class="d-block small">Pubblica</span>
+                            <i class="bi bi-cloud-upload"></i><span class="d-block small">Pubblica su Google Classroom</span>
                         </a>
                         <a href="uda_grades.php?id=<?= urlencode($udaId) ?>" class="btn text-white" style="background-color: #0d6efd; border-color: #0d6efd;">
                             <i class="bi bi-bar-chart"></i><span class="d-block small">Gestisci Voti</span>

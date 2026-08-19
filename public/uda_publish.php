@@ -31,6 +31,7 @@ use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupRepository;
 use App\Core\UdaGroupRepository;
 use App\Integration\GoogleClassroomAPI;
+use App\Integration\GoogleDriveAPI;
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 $userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
@@ -105,6 +106,7 @@ $googleDriveEnabled = ($config['google']['drive']['enabled'] ?? false);
 if ($googleClassroomEnabled && $googleDriveEnabled) {
     try {
         // Verifica che i file di configurazione esistano
+        $credentialsPath = ROOT_PATH . '/' . ($config['google']['credentials_file'] ?? 'config/google_credentials.json');
         if (!file_exists($credentialsPath)) {
             throw new Exception("File google_credentials.json non trovato in config/");
         }
