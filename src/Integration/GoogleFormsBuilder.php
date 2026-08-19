@@ -233,7 +233,9 @@ class GoogleFormsBuilder
         $client->setScopes([
             Forms::FORMS_BODY,
             Forms::FORMS_RESPONSES_READONLY,
-            Drive::DRIVE_FILE
+            // DRIVE completo: necessario per duplicare i template Forms
+            // (files.copy su file non creati dall'app richiede scope drive).
+            Drive::DRIVE
         ]);
         // Credenziali dal DB integrazioni (inline JSON) oppure da file di fallback
         $credentialsJson = $this->config['google']['credentials_json'] ?? null;

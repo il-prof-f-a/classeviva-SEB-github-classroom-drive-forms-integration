@@ -74,7 +74,7 @@ if (isset($_GET['code'])) {
         $client->setRedirectUri($googleRedirectUri);
 
         // Scopes richiesti
-        $client->addScope(\Google\Service\Drive::DRIVE_FILE);
+        $client->addScope(\Google\Service\Drive::DRIVE);
         $client->addScope(\Google\Service\Drive::DRIVE_METADATA_READONLY);
         $client->addScope(\Google\Service\Classroom::CLASSROOM_COURSES_READONLY);
         $client->addScope(\Google\Service\Classroom::CLASSROOM_COURSEWORK_ME);
@@ -196,7 +196,7 @@ if (!$error_message) {
         $client->setPrompt('consent');
 
         // Scopes completi
-        $client->addScope(\Google\Service\Drive::DRIVE_FILE);
+        $client->addScope(\Google\Service\Drive::DRIVE);
         $client->addScope(\Google\Service\Drive::DRIVE_METADATA_READONLY);
         $client->addScope(\Google\Service\Classroom::CLASSROOM_COURSES_READONLY);
         $client->addScope(\Google\Service\Classroom::CLASSROOM_COURSEWORK_ME);

@@ -10,6 +10,8 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
 use App\Integration\GoogleFormsBuilder;
+use Google\Client;
+use Google\Service\Forms;
 
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
