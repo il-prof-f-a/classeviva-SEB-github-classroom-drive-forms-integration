@@ -472,6 +472,15 @@ try {
             background-color: rgba(13, 110, 253, 0.14);
             color: inherit;
         }
+        .form-legend-swatch {
+            display: inline-block;
+            width: 0.8em;
+            height: 0.8em;
+            border-radius: 3px;
+            background-color: rgba(13, 110, 253, 0.14);
+            border: 1px solid rgba(13, 110, 253, 0.30);
+            vertical-align: -0.05em;
+        }
     </style>
 </head>
 <body class="bg-light">
@@ -1481,7 +1490,12 @@ try {
                             <div class="small text-muted test-catalog-help mb-2"></div>
                             <div class="alert d-none test-catalog-status mb-2"></div>
                             <div class="test-forms-catalog d-none">
-                                <label class="form-label">Cerca Google Form</label>
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <label class="form-label mb-0">Cerca Google Form</label>
+                                    <span class="test-forms-legend small text-muted d-none">
+                                        <span class="form-legend-swatch me-1"></span>Pubblicato nella Classroom
+                                    </span>
+                                </div>
                                 <input type="search" class="form-control test-forms-search mb-2" placeholder="Cerca per titolo, autore, data o descrizione..." autocomplete="off">
                                 <div class="list-group test-forms-list" role="listbox"></div>
                                 <a class="small d-none test-google-auth-link" href="user_integrations.php#google-section">Autorizza Google Drive e Forms nelle integrazioni</a>
@@ -1698,6 +1712,7 @@ try {
                     searchInput: wrapper.querySelector('.test-forms-search'),
                     listContainer: wrapper.querySelector('.test-forms-list'),
                     renderItem: window.GoogleFormsCatalogHelper.renderItem,
+                    onSelect: form => fillWizardTestFromCatalog(wrapper, form, 'google-forms')
                 })
                 : null;
             const classroomPicker = window.CatalogPicker && classroomBox
@@ -1739,6 +1754,9 @@ try {
                     const data = await fetchWizardCatalog('ajax_list_google_forms.php', ctx.googleCourseId ? { course_id: ctx.googleCourseId } : {});
                     const forms = Array.isArray(data.forms) ? data.forms : [];
                     forms = window.GoogleFormsCatalogHelper.sortPublishedFirst(forms);
+                    const hasPublished = forms.some(form => !!form.published_in_classroom);
+                    const legend = wrapper.querySelector('.test-forms-legend');
+                    if (legend) legend.classList.toggle('d-none', !hasPublished);
                     formsPicker?.setItems(forms);
                     setWizardCatalogStatus(wrapper, forms.length + ' Google Forms disponibili.', 'success');
                 } catch (error) {
