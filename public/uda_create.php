@@ -1752,7 +1752,7 @@ try {
                 try {
                     const ctx = wizardMappedProviderContext();
                     const data = await fetchWizardCatalog('ajax_list_google_forms.php', ctx.googleCourseId ? { course_id: ctx.googleCourseId } : {});
-                    const forms = Array.isArray(data.forms) ? data.forms : [];
+                    let forms = Array.isArray(data.forms) ? data.forms : [];
                     forms = window.GoogleFormsCatalogHelper.sortPublishedFirst(forms);
                     const hasPublished = forms.some(form => !!form.published_in_classroom);
                     const legend = wrapper.querySelector('.test-forms-legend');

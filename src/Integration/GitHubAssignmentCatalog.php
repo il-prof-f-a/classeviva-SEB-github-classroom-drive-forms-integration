@@ -20,11 +20,18 @@ final class GitHubAssignmentCatalog
         $teacherUrl = trim((string)($assignment['html_url'] ?? $assignment['url'] ?? $assignment['teacher_url'] ?? ''));
         if ($teacherUrl === '' && $slug !== '') {
             // L'API Classroom non espone sempre html_url: ricostruisci l'URL docente
-            // dal classroom.url + /assignments/{slug} (lista repo studenti accettati).
+            // (lista repo studenti accettati) da classroom.url / id+nome / id.
             $classroom = is_array($assignment['classroom'] ?? null) ? $assignment['classroom'] : [];
             $classroomUrl = trim((string)($classroom['url'] ?? ''));
+            $classroomId = trim((string)($classroom['id'] ?? ''));
+            $classroomName = trim((string)($classroom['name'] ?? ''));
+            if ($classroomUrl === '' && $classroomId !== '' && $classroomName !== '') {
+                $classroomUrl = 'https://classroom.github.com/classrooms/' . $classroomId . '-' . $classroomName;
+            }
             if ($classroomUrl !== '') {
                 $teacherUrl = rtrim($classroomUrl, '/') . '/assignments/' . $slug;
+            } elseif ($classroomId !== '') {
+                $teacherUrl = 'https://classroom.github.com/classrooms/' . $classroomId . '/assignments/' . $slug;
             }
         }
         $resolvedClassroomId = trim((string)($assignment['classroom_id'] ?? $classroomId ?? ''));

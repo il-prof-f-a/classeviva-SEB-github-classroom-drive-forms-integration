@@ -41,6 +41,10 @@ final class ClassroomAssignmentCatalog
     /** @param array<string,mixed> $assignment */
     public static function isImportable(array $assignment): bool
     {
+        // Le bozze non hanno link di pubblicazione: non sono importabili.
+        if (strtoupper((string)($assignment['state'] ?? '')) === 'DRAFT') {
+            return false;
+        }
         return in_array(strtoupper((string)($assignment['work_type'] ?? '')), ['ASSIGNMENT', 'QUIZ_ASSIGNMENT'], true);
     }
 
