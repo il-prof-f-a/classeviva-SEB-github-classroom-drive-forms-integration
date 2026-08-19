@@ -39,7 +39,7 @@ if (!class_exists(GoogleIdTokenVerifier::class)) {
     };
 
     $payload = GoogleIdTokenVerifier::verify($client, 'synthetic-id-token');
-    clockSkewCheck($client->observedLeeway === 30, 'la verifica Google accetta fino a 30 secondi di clock skew');
+    clockSkewCheck($client->observedLeeway === 300, 'la verifica Google accetta fino a 300 secondi di clock skew');
     clockSkewCheck(($payload['sub'] ?? null) === 'test-user', 'il payload verificato viene restituito senza alterazioni');
     clockSkewCheck(JWT::$leeway === 7, 'la tolleranza JWT precedente viene ripristinata');
 

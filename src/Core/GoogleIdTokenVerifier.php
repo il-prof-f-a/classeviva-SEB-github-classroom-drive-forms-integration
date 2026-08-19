@@ -12,7 +12,9 @@ use Google\Client;
  */
 final class GoogleIdTokenVerifier
 {
-    private const CLOCK_SKEW_LEEWAY_SECONDS = 30;
+    // 300s = tolleranza OIDC standard: i container/VM possono avere un clock
+    // leggermente sfalsato (anche ~1 min) rispetto ai server Google.
+    private const CLOCK_SKEW_LEEWAY_SECONDS = 300;
 
     public static function verify(Client $client, string $idToken): array|false
     {
