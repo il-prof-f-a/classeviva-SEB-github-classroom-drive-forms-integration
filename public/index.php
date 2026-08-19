@@ -99,7 +99,8 @@ if (!$currentYearConfig) {
     $currentYearConfig = $startYear . '-' . substr((string)($startYear + 1), -2);
 }
 
-$filterYear = array_key_exists('anno', $_GET) ? $_GET['anno'] : $currentYearConfig;
+$hasAnnoFilter = array_key_exists('anno', $_GET) && trim((string)$_GET['anno']) !== '';
+$filterYear = $hasAnnoFilter ? (string)$_GET['anno'] : '';
 $filterClasse = $_GET['classe'] ?? '';
 $filterMateria = $_GET['materia'] ?? '';
 $sortField = $_GET['sort'] ?? 'titolo';
@@ -151,11 +152,16 @@ if ($currentYearConfig !== '') {
     $anniDistinct[$currentYearConfig] = true;
 }
 ksort($anniDistinct);
+$anniKeys = array_keys($anniDistinct);
+$maxAnno = $anniKeys !== [] ? max($anniKeys) : $currentYearConfig;
+if (!$hasAnnoFilter) {
+    $filterYear = $maxAnno;
+}
 ksort($classiDistinct);
 ksort($materieDistinct);
 
 if ($filterYear !== '' && !isset($anniDistinct[$filterYear])) {
-    $filterYear = $currentYearConfig;
+    $filterYear = $maxAnno;
 }
 
 // Funzione colore deterministico per badge
