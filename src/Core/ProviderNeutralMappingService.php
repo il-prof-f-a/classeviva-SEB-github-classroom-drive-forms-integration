@@ -250,10 +250,43 @@ final class ProviderNeutralMappingService
             foreach ($providerRows as $row) {
                 $metadata = json_decode((string)($row['metadata_json'] ?? '{}'), true);
                 $metadata = is_array($metadata) ? $metadata : [];
-                $rows[] = self::legacyRow($provider, $group, $row, $metadata);
+                $rows[] = $this->enrichLegacyRow($provider, self::legacyRow($provider, $group, $row, $metadata));
             }
         }
         return $rows;
+    }
+
+    /**
+     * Risolve la coppia ClasseViva per i mapping github_classroom dei gruppi
+     * moderni: quando il metadata dell'integrazione github non contiene
+     * classeviva_class_id/subject_id, li deriva dall'integrazione classeviva
+     * separata dello stesso gruppo didattico (senza mai sovrascrivere il metadata).
+     *
+     * @param array<string,mixed> $row
+     * @return array<string,mixed>
+     */
+    private function enrichLegacyRow(string $provider, array $row): array
+    {
+        if ($provider !== 'github_classroom') {
+            return $row;
+        }
+        if (trim((string)($row['id_classe_cv'] ?? '')) !== '') {
+            return $row;
+        }
+        $groupId = trim((string)($row['id_gruppo'] ?? ''));
+        if ($groupId === '') {
+            return $row;
+        }
+        $cv = $this->integrations->findForGroupProvider($groupId, 'classeviva');
+        if ($cv === null) {
+            return $row;
+        }
+        $row['id_classe_cv'] = trim((string)($cv['external_context_id'] ?? ''));
+        $row['id_materia_cv'] = trim((string)($cv['external_subject_id'] ?? ''));
+        if (trim((string)($row['nome_classe_cv'] ?? '')) === '') {
+            $row['nome_classe_cv'] = trim((string)($cv['external_name'] ?? ''));
+        }
+        return $row;
     }
 
     /** @param array<string,mixed> $group @param array<string,mixed> $row @param array<string,mixed> $metadata */

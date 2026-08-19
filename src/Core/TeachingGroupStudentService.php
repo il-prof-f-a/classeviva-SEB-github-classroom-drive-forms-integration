@@ -18,6 +18,7 @@ final class TeachingGroupStudentService
     ];
 
     private TeachingGroupRepository $groups;
+    private TeachingGroupIntegrationRepository $integrations;
     private StudentRepository $students;
     private StudentIdentityRepository $identities;
     private GroupStudentRepository $memberships;
@@ -30,6 +31,7 @@ final class TeachingGroupStudentService
     ) {
         $this->userId = trim($this->userId) !== '' ? trim($this->userId) : 'system';
         $this->groups = new TeachingGroupRepository($this->db, $this->userId);
+        $this->integrations = new TeachingGroupIntegrationRepository($this->db, $this->userId);
         $this->students = new StudentRepository($this->db, $this->userId);
         $this->identities = new StudentIdentityRepository($this->db, $this->userId);
         $this->memberships = new GroupStudentRepository($this->db, $this->userId);
@@ -108,6 +110,11 @@ final class TeachingGroupStudentService
         $this->requireGroup($groupId);
         $rows = [];
         $memberships = $this->memberships->listForGroup($groupId);
+        // I contesti consentiti sono l'unione di membership e integrazioni: le
+        // membership registrano il provider_origine della sincronizzazione, ma
+        // quando lo studente è importato via facciate (StudentProviderMappingService,
+        // LegacyGithubStudentMapGateway) la membership registra un solo provider e
+        // gli altri contesti vanno recuperati dalle integrazioni collegate al gruppo.
         $allowedContexts = [];
         foreach ($memberships as $membership) {
             $provider = trim((string)($membership['provider_origine'] ?? ''));
@@ -115,6 +122,17 @@ final class TeachingGroupStudentService
                 continue;
             }
             $contextId = trim((string)($membership['external_context_id'] ?? ''));
+            $allowedContexts[$provider] ??= [];
+            if ($contextId !== '') {
+                $allowedContexts[$provider][$contextId] = true;
+            }
+        }
+        foreach ($this->integrations->listForGroup($groupId) as $integration) {
+            $provider = trim((string)($integration['provider'] ?? ''));
+            if ($provider === '' || ($integration['stato'] ?? 'attivo') === 'disattivo') {
+                continue;
+            }
+            $contextId = trim((string)($integration['external_context_id'] ?? ''));
             $allowedContexts[$provider] ??= [];
             if ($contextId !== '') {
                 $allowedContexts[$provider][$contextId] = true;

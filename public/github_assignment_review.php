@@ -6,6 +6,7 @@
 require_once '../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
+use App\Core\GitHubAssignmentRosterService;
 use App\Core\ProviderNeutralMappingService;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\UdaGroupRepository;
@@ -1020,40 +1021,8 @@ if (($githubClassroomId && $githubClassroomId !== ($test['github_classroom_id'] 
     }
 }
 
-// Carica mapping studenti per assignment (provider-neutral)
-$studentMap = [];
-if (!empty($githubAssignmentId)) {
-    $linkRows = $dbAdapter->findWhere('GITHUB_ASSIGNMENT_STUDENT_LINKS', [
-        'id_assignment' => $githubAssignmentId
-    ]);
-    foreach ($linkRows as $link) {
-        $internalId = (string)($link['id_studente'] ?? '');
-        $githubUsername = '';
-        $rosterIdentifier = '';
-        if ($internalId !== '') {
-            $identities = $dbAdapter->findWhere('STUDENTI_IDENTITA_ESTERNE', [
-                'id_studente' => $internalId,
-                'provider' => 'github_classroom',
-            ]);
-            foreach ($identities as $identity) {
-                $githubUsername = (string)($identity['external_user_id'] ?? '');
-                $metadata = json_decode((string)($identity['metadata_json'] ?? '{}'), true);
-                if (is_array($metadata)) {
-                    $rosterIdentifier = (string)($metadata['roster_identifier'] ?? '');
-                }
-                break;
-            }
-        }
-        $studentMap[] = [
-            'id_studente' => $internalId,
-            'github_username' => $githubUsername,
-            'roster_identifier' => $rosterIdentifier,
-            'student_repository_url' => (string)($link['student_repository_url'] ?? ''),
-        ];
-    }
-}
-
-// Carica roster/accepted assignments per arricchire repo link
+// Carica roster/accepted assignments dalle API GitHub Classroom: è la fonte
+// primaria per l'elenco studenti (provider-neutral, indipendente da ClasseViva).
 $acceptedAssignments = [];
 if ($isAuthenticated && !empty($githubAssignmentId)) {
     try {
@@ -1063,6 +1032,18 @@ if ($isAuthenticated && !empty($githubAssignmentId)) {
         $errorMessage = $errorMessage ?: "Errore nel caricamento accepted assignments: " . $e->getMessage();
     }
 }
+if (!is_array($acceptedAssignments)) {
+    $acceptedAssignments = [];
+}
+
+// Costruisce l'elenco studenti: roster API risolto verso id_studente interno
+// tramite le identità; GITHUB_ASSIGNMENT_STUDENT_LINKS resta come overlay per
+// associazioni manuali e repository sovrascritte.
+$studentMap = (new GitHubAssignmentRosterService($dbAdapter, $userId))->buildStudentMap(
+    $acceptedAssignments,
+    (string)$githubAssignmentId,
+    (string)($mappingRow['id_gruppo'] ?? '')
+);
 $acceptedByUser = [];
 $acceptedByRoster = [];
 $acceptedReposFound = 0;

@@ -179,6 +179,16 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
      */
     public function insertRow(string $sheetName, array $data): bool
     {
+        // Le tabelle legacy rimosse dallo schema non hanno una colonna di
+        // ownership riconosciuta, ma le rispettive facade/gateway richiedono
+        // comunque l'owner corretto per scrivere sulla tabella canonica.
+        // Le impostiamo qui, come già fatto per updateRow.
+        if (in_array($sheetName, ['MAPPATURA_STUDENTI', 'CLASSROOM_MAPPINGS', 'GITHUB_CLASSROOMS', 'GITHUB_ASSIGNMENT_STUDENT_MAP'], true)
+            || \App\Core\StudentReferenceGateway::handles($sheetName)) {
+            $data['id_utente'] = $this->userId;
+            return $this->inner->insertRow($sheetName, $data);
+        }
+
         $ownerColumn = $this->getOwnerColumn($sheetName);
 
         if ($ownerColumn !== null) {
