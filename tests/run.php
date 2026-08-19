@@ -404,6 +404,7 @@ $architectureTests = [
     'provider capability resolver group' => __DIR__ . '/domain/provider_capability_resolver_group.php',
     'grade import student service' => __DIR__ . '/domain/grade_import_student_service.php',
     'grade import email resolution' => __DIR__ . '/domain/grade_import_email_resolution.php',
+    'grade import premapped student' => __DIR__ . '/domain/grade_import_premapped_student.php',
     'grade import name resolution' => __DIR__ . '/domain/grade_import_name_resolution.php',
     'classroom import provider-neutral' => __DIR__ . '/public/classroom_import_provider_neutral.php',
     'forms import provider-neutral' => __DIR__ . '/public/forms_import_provider_neutral.php',
