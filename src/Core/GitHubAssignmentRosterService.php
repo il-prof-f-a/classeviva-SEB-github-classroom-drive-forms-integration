@@ -218,6 +218,49 @@ final class GitHubAssignmentRosterService
         return '';
     }
 
+    /**
+     * Arricchisce le righe dell'elenco con repository e roster_identifier
+     * provenienti da getAssignmentGrades (endpoint Classroom che continua a
+     * restituire le repo anche quando accepted_assignments è vuoto/being sunset).
+     * Non sovrascrive repository già valorizzate.
+     *
+     * @param list<array<string,mixed>> $studentMap
+     * @param list<array<string,mixed>> $grades
+     * @return list<array<string,mixed>>
+     */
+    public function enrichRepositories(array $studentMap, array $grades): array
+    {
+        $byUsername = [];
+        foreach ($grades as $grade) {
+            if (!is_array($grade)) {
+                continue;
+            }
+            $username = strtolower(trim((string)($grade['github_username'] ?? '')));
+            if ($username === '') {
+                continue;
+            }
+            $byUsername[$username] = $grade;
+        }
+        foreach ($studentMap as &$row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $username = strtolower(trim((string)($row['github_username'] ?? '')));
+            if ($username === '' || !isset($byUsername[$username])) {
+                continue;
+            }
+            $grade = $byUsername[$username];
+            if (empty($row['student_repository_url']) && !empty($grade['student_repository_url']) && is_scalar($grade['student_repository_url'])) {
+                $row['student_repository_url'] = (string)$grade['student_repository_url'];
+            }
+            if (empty($row['roster_identifier']) && !empty($grade['roster_identifier']) && is_scalar($grade['roster_identifier'])) {
+                $row['roster_identifier'] = (string)$grade['roster_identifier'];
+            }
+        }
+        unset($row);
+        return $studentMap;
+    }
+
     /** @param array<string,mixed> $item */
     private function extractUsername(array $item): string
     {

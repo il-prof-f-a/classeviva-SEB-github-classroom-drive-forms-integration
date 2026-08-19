@@ -416,6 +416,7 @@ $architectureTests = [
     'github review provider-neutral' => __DIR__ . '/public/github_review_provider_neutral.php',
     'GitHub assignment roster' => __DIR__ . '/domain/github_assignment_roster.php',
     'GitHub assignment group roster' => __DIR__ . '/domain/github_assignment_group_roster.php',
+    'GitHub assignment grade repos' => __DIR__ . '/domain/github_assignment_grade_repos.php',
     'wizard catalog groups' => __DIR__ . '/public/wizard_catalog_groups.php',
     'legacy mapping banner' => __DIR__ . '/public/legacy_mapping_banner.php',
     'CV token gate on mapping pages' => __DIR__ . '/public/provider_neutral_gate.php',

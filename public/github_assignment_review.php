@@ -1024,6 +1024,7 @@ if (($githubClassroomId && $githubClassroomId !== ($test['github_classroom_id'] 
 // Carica roster/accepted assignments dalle API GitHub Classroom: è la fonte
 // primaria per l'elenco studenti (provider-neutral, indipendente da ClasseViva).
 $acceptedAssignments = [];
+$assignmentGrades = [];
 if ($isAuthenticated && !empty($githubAssignmentId)) {
     try {
         $accepted = $github->listAcceptedAssignments($githubAssignmentId);
@@ -1031,19 +1032,33 @@ if ($isAuthenticated && !empty($githubAssignmentId)) {
     } catch (Exception $e) {
         $errorMessage = $errorMessage ?: "Errore nel caricamento accepted assignments: " . $e->getMessage();
     }
+    // getAssignmentGrades restituisce le repository anche quando accepted_assignments
+    // è vuoto (endpoint Classroom in chiusura): è la fonte affidabile per repo/roster.
+    try {
+        $grades = $github->getAssignmentGrades($githubAssignmentId);
+        $assignmentGrades = is_array($grades) ? $grades : [];
+    } catch (Exception $e) {
+        // non bloccare: accepted_assignments resta il fallback
+    }
 }
 if (!is_array($acceptedAssignments)) {
     $acceptedAssignments = [];
+}
+if (!is_array($assignmentGrades)) {
+    $assignmentGrades = [];
 }
 
 // Costruisce l'elenco studenti: roster API risolto verso id_studente interno
 // tramite le identità; GITHUB_ASSIGNMENT_STUDENT_LINKS resta come overlay per
 // associazioni manuali e repository sovrascritte.
-$studentMap = (new GitHubAssignmentRosterService($dbAdapter, $userId))->buildStudentMap(
+$rosterService = new GitHubAssignmentRosterService($dbAdapter, $userId);
+$studentMap = $rosterService->buildStudentMap(
     $acceptedAssignments,
     (string)$githubAssignmentId,
     (string)($mappingRow['id_gruppo'] ?? '')
 );
+// Arricchisce repo/roster dai grades (che includono student_repository_url).
+$studentMap = $rosterService->enrichRepositories($studentMap, $assignmentGrades);
 $acceptedByUser = [];
 $acceptedByRoster = [];
 $acceptedReposFound = 0;
@@ -1083,10 +1098,10 @@ if (!empty($githubAssignmentId) && !empty($studentMap)) {
     }
 
     if (!$hasAnyRepoStored) {
-        if (empty($acceptedAssignments)) {
+        if (empty($acceptedAssignments) && empty($assignmentGrades)) {
             $warningMessage = "Repo studenti non disponibili (N/D). Possibili cause: nessuno studente ha ancora accettato l'assignment (repo non create) oppure il token GitHub non ha accesso alle API GitHub Classroom. Verifica in Integrazioni → GitHub (Token GitHub Classroom) e riprova.";
-        } elseif ($acceptedReposFound === 0) {
-            $warningMessage = "Repo studenti non disponibili (N/D) anche se esistono accepted assignments: controlla i permessi del token GitHub Classroom oppure ripeti l'autenticazione.";
+        } else {
+            $warningMessage = "Repo studenti non disponibili (N/D) anche se esistono accepted assignments/grades: controlla i permessi del token GitHub Classroom oppure ripeti l'autenticazione.";
         }
     }
 }
