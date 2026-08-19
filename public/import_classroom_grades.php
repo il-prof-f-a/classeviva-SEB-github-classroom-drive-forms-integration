@@ -220,7 +220,9 @@ function getLatestTeacherComment(
 
 // Parametri
 $testId = $_GET['test_id'] ?? null;
-$step = $_GET['step'] ?? 'start';
+// Senza step esplicito si passa direttamente al caricamento delle consegne
+// (niente passaggio intermedio col pulsante).
+$step = $_GET['step'] ?? 'load_submissions';
 
 if (!$testId) {
     die("ID test mancante");
@@ -582,7 +584,137 @@ if ($step === 'import_grades' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php endif; ?>
 
         <!-- STEP REVIEW -->
+        <?php if ($step === 'review'): ?>
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Passo 2: Revisiona e Correggi Voti</h5>
+                    <p>Controlla che gli studenti siano stati matchati correttamente e seleziona il voto da importare per ciascuno.</p>
 
+                    <form method="POST" action="?test_id=<?= urlencode($testId) ?>&step=import_grades">
+                        <div class="mb-3">
+                            <label class="form-label"><strong>Tipo di Valutazione:</strong></label>
+                            <select name="tipo_voto" class="form-select" style="max-width: 300px;" required>
+                                <option value="scritto" selected>Scritto</option>
+                                <option value="orale">Orale</option>
+                                <option value="pratico">Pratico</option>
+                            </select>
+                        </div>
+
+                        <div class="table-responsive">
+                            <table class="table table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Studente Classroom</th>
+                                        <th>Studente Locale</th>
+                                        <th>Voto Compito</th>
+                                        <th>Voto Importato</th>
+                                        <th>Commento Docente</th>
+                                        <th>Stato</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php
+                                    $maxPoints = floatval($test['punteggio_max'] ?? 100);
+                                    if ($maxPoints == 0) $maxPoints = 100;
+                                    $availableGrades = getClasseVivaGrades();
+
+                                    foreach ($matchedStudents as $idx => $match):
+                                        $rawGrade = $match['submission']['assigned_grade'] ?? null;
+                                        $suggestedGrade = getNearestClasseVivaGrade($rawGrade, $maxPoints);
+                                        $submittedAt = $match['submission']['turned_in_time']
+                                            ?? ($match['submission']['updated_time'] ?? ($match['submission']['created_time'] ?? null));
+                                        $submittedAtFormatted = $submittedAt ? date('d/m/Y H:i', strtotime($submittedAt)) : null;
+                                        $studentId = $match['local_student']['id'] ?? '';
+                                    ?>
+                                        <tr>
+                                            <td>
+                                                <?php if ($match['classroom_student']): ?>
+                                                    <?= htmlspecialchars($match['classroom_student']['name'] ?? '') ?>
+                                                    <?php if ($submittedAtFormatted): ?>
+                                                        <br><small class="text-muted">Consegnato: <?= $submittedAtFormatted ?></small>
+                                                    <?php endif; ?>
+                                                <?php else: ?>
+                                                    <em class="text-muted">Non disponibile</em>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <?php if ($match['local_student']): ?>
+                                                    <span class="badge bg-success">Associato</span>
+                                                    <small class="text-muted d-block">ID: <?= htmlspecialchars($studentId) ?></small>
+                                                <?php else: ?>
+                                                    <span class="badge bg-warning text-dark">Da associare</span>
+                                                <?php endif; ?>
+                                                <input type="hidden" name="student_id[<?= $idx ?>]" value="<?= htmlspecialchars($studentId) ?>">
+                                                <input type="hidden" name="submission_time[<?= $idx ?>]" value="<?= htmlspecialchars($submittedAt ?? '') ?>">
+                                            </td>
+                                            <td>
+                                                <?php
+                                                if ($rawGrade !== null) {
+                                                    echo '<strong>' . htmlspecialchars((string)$rawGrade) . '</strong> / ' . htmlspecialchars((string)$maxPoints);
+                                                } else {
+                                                    echo '<em class="text-muted">Non consegnato</em>';
+                                                }
+                                                ?>
+                                            </td>
+                                            <td>
+                                                <select name="import_grade[<?= $idx ?>]" class="form-select form-select-sm" style="width: 150px;" <?= $match['local_student'] ? '' : 'disabled' ?>>
+                                                    <?php foreach ($availableGrades as $grade): ?>
+                                                        <?php
+                                                        $label = $grade;
+                                                        if ($grade === 'i') $label = 'i (impreparato)';
+                                                        elseif ($grade === 'a') $label = 'a (assente)';
+                                                        elseif ($grade === 'skip') $label = '- non importare voto -';
+                                                        ?>
+                                                        <option value="<?= htmlspecialchars($grade) ?>" <?= ($grade === $suggestedGrade) ? 'selected' : '' ?>><?= htmlspecialchars($label) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </td>
+                                            <td>
+                                                <textarea name="commento[<?= $idx ?>]" class="form-control form-control-sm" rows="2"
+                                                          placeholder="Commento del docente (opzionale)" <?= $match['local_student'] ? '' : 'disabled' ?>><?= htmlspecialchars($match['teacher_comment'] ?? '') ?></textarea>
+                                            </td>
+                                            <td>
+                                                <small class="text-muted"><?= htmlspecialchars((string)($match['submission']['state'] ?? '')) ?></small>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="alert alert-info mt-3">
+                            <i class="bi bi-info-circle"></i>
+                            <strong>Nota:</strong> I voti sono stati approssimati automaticamente alla scala ClasseViva (mezzi punti da 1.0 a 10.0).
+                            Gli studenti con "- non importare voto -" verranno saltati.
+                        </div>
+
+                        <button type="submit" class="btn btn-success">
+                            <i class="bi bi-check-circle"></i> Importa Voti Selezionati
+                        </button>
+                        <a href="uda_tests.php?id=<?= urlencode($test['id_uda']) ?>" class="btn btn-secondary">Annulla</a>
+                    </form>
+                </div>
+            </div>
+        <?php endif; ?>
+
+        <!-- STEP COMPLETE -->
+        <?php if ($step === 'complete'): ?>
+            <div class="card">
+                <div class="card-body text-center">
+                    <i class="bi bi-check-circle text-success" style="font-size: 48px;"></i>
+                    <h3 class="mt-3">Importazione Completata!</h3>
+                    <p>I voti sono stati importati con successo nel sistema.</p>
+                    <div class="d-flex gap-2 justify-content-center">
+                        <a href="uda_grades.php?id=<?= urlencode($test['id_uda']) ?>" class="btn btn-success">
+                            <i class="bi bi-eye"></i> Visualizza Voti
+                        </a>
+                        <a href="uda_tests.php?id=<?= urlencode($test['id_uda']) ?>" class="btn btn-primary">
+                            <i class="bi bi-arrow-left"></i> Torna ai Test
+                        </a>
+                    </div>
+                </div>
+            </div>
+        <?php endif; ?>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 </body>
