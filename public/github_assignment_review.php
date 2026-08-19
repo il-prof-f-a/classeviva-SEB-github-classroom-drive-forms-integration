@@ -1105,12 +1105,15 @@ if (!empty($githubAssignmentId) && !empty($studentMap)) {
     }
 }
 
-// Commit info (ultimo commit e conteggio base)
+// Commit info (ultimo commit e conteggio base): iteriamo lo studentMap
+// (che ora contiene student_repository_url dai grades) invece di acceptedByUser,
+// perché accepted_assignments è vuoto (endpoint Classroom in chiusura).
 $commitInfo = [];
-if ($isAuthenticated && !empty($acceptedByUser)) {
-    foreach ($acceptedByUser as $user => $item) {
-        $repoUrl = (string)($item['repository']['html_url'] ?? ($item['repository_url'] ?? ''));
-        if (!$repoUrl) {
+if ($isAuthenticated && !empty($studentMap)) {
+    foreach ($studentMap as $row) {
+        $user = strtolower(trim((string)($row['github_username'] ?? '')));
+        $repoUrl = (string)($row['student_repository_url'] ?? '');
+        if ($user === '' || $repoUrl === '') {
             continue;
         }
         $parsed = parse_url($repoUrl);
