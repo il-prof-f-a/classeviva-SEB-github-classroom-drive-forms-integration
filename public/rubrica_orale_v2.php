@@ -1286,6 +1286,14 @@ try {
     $classi = [];
 }
 
+// Preseleziona la prima classe disponibile se non ne e' stata selezionata alcuna.
+if (empty($idClasseDaGet) && !empty($classi)) {
+    $primaClasse = (string)($classi[0]['classId'] ?? '');
+    if ($primaClasse !== '') {
+        $idClasseDaGet = $primaClasse;
+    }
+}
+
 // Mappa nomi materie da ClasseViva per normalizzare le etichette
 try {
     $subjectsCv = $cvAPI->getSubjects();
@@ -1839,7 +1847,7 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                             <label class="form-label">Seleziona Studente *</label>
                             <select name="id_studente" id="selectStudente" class="form-select" required onchange="caricaValutazioneStudente(this.value)">
                                 <option value="">-- Seleziona uno studente --</option>
-                                <?php foreach ($studenti as $st):
+                                <?php $firstStudente = true; foreach ($studenti as $st):
                                     $idStud = $st['id'];
                                     $providerStud = $st['provider'] ?? 'classeviva';
                                     $nomeCompleto = $st['nome_completo'];
@@ -1862,9 +1870,10 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                                 ?>
                                     <option value="<?= htmlspecialchars($idStud) ?>"
                                             data-nome="<?= htmlspecialchars($nomeCompleto) ?>"
-                                            data-provider="<?= htmlspecialchars($providerStud) ?>">
+                                            data-provider="<?= htmlspecialchars($providerStud) ?>"<?= $firstStudente ? ' selected' : '' ?>>
                                         <?= htmlspecialchars($nomeCompleto . $testoVoto) ?>
                                     </option>
+                                    <?php $firstStudente = false; ?>
                                 <?php endforeach; ?>
                             </select>
                         </div>
@@ -2889,6 +2898,12 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                         console.log('Valore vuoto, non submitto');
                     }
                 });
+            }
+
+            // Preseleziona il primo studente (la classe e' gia' preselezionata lato server).
+            const selectStudente = document.getElementById('selectStudente');
+            if (selectStudente && selectStudente.value) {
+                caricaValutazioneStudente(selectStudente.value);
             }
         });
     </script>
