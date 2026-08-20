@@ -272,16 +272,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                             $testTitle = UdaClassroomPublishService::testTitle($test);
                             $piattaforma = strtolower(trim((string)($test['piattaforma'] ?? '')));
 
-                            $testDescription = $test['descrizione'] ?? '';
-                            if (!empty($test['num_domande'])) {
-                                $testDescription .= "\n\nNumero domande: " . $test['num_domande'];
-                            }
-                            if (!empty($test['durata_minuti'])) {
-                                $testDescription .= "\nDurata: " . $test['durata_minuti'] . " minuti";
-                            }
-                            if (!empty($test['punteggio_max'])) {
-                                $testDescription .= "\nPunteggio massimo: " . $test['punteggio_max'];
-                            }
+                            $testDescription = UdaClassroomPublishService::testDescription($test);
 
                             try {
                                 // Usa l'URL studenti o fallback a url generico

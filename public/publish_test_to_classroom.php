@@ -10,6 +10,7 @@ error_reporting(E_ALL);
 $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\UDAManager;
+use App\Core\UdaClassroomPublishService;
 use App\Core\Database\DatabaseFactory;
 use App\Integration\GoogleClassroomAPI;
 use App\Integration\GoogleDriveAPI;
@@ -85,9 +86,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $publishMode = $_POST['publish_mode'] ?? 'link';
         $draftOrPublish = $_POST['draft_or_publish'] ?? 'draft';
         $courseId = $_POST['course_id'] ?? '';
-        $topicName = $_POST['topic_name'] ?? ($uda ? $uda->titolo : 'Test');
+        $topicName = $_POST['topic_name'] ?? ($uda ? (!empty($uda->argomento) ? $uda->argomento : $uda->titolo) : 'Test');
         $testTitle = $_POST['test_title'] ?? ($test['nome'] ?? 'Test');
-        $testDescription = $_POST['test_description'] ?? ($test['descrizione'] ?? '');
+        $testDescription = $_POST['test_description'] ?? UdaClassroomPublishService::testDescription($test);
         $dueDate = $_POST['due_date'] ?? '';
         $dueTime = $_POST['due_time'] ?? '';
 
@@ -436,7 +437,7 @@ if (!$initError && $_SERVER['REQUEST_METHOD'] === 'GET') {
 
                             <div class="mb-3">
                                 <label class="form-label">Argomento (Topic)</label>
-                                <input type="text" class="form-control" name="topic_name" value="<?= htmlspecialchars($uda->titolo) ?>">
+                                <input type="text" class="form-control" name="topic_name" value="<?= htmlspecialchars(!empty($uda->argomento) ? $uda->argomento : $uda->titolo) ?>">
                             </div>
 
                             <div class="mb-3">
@@ -446,7 +447,7 @@ if (!$initError && $_SERVER['REQUEST_METHOD'] === 'GET') {
 
                             <div class="mb-3">
                                 <label class="form-label">Descrizione</label>
-                                <textarea class="form-control" name="test_description" rows="3"><?= htmlspecialchars($test['descrizione'] ?? '') ?></textarea>
+                                <textarea class="form-control" name="test_description" rows="3"><?= htmlspecialchars(UdaClassroomPublishService::testDescription($test)) ?></textarea>
                             </div>
 
                             <div class="row">

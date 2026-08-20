@@ -43,6 +43,28 @@ final class UdaClassroomPublishService
     }
 
     /**
+     * Costruisce la descrizione testuale di un test per Classroom: descrizione
+     * + numero domande + durata + punteggio massimo.
+     *
+     * @param array<string,mixed> $test
+     */
+    public static function testDescription(array $test): string
+    {
+        $text = (string)($test['descrizione'] ?? '');
+        if (!empty($test['num_domande'])) {
+            $text .= "\n\nNumero domande: " . $test['num_domande'];
+        }
+        if (!empty($test['durata_minuti'])) {
+            $text .= "\nDurata: " . $test['durata_minuti'] . " minuti";
+        }
+        if (!empty($test['punteggio_max'])) {
+            $text .= "\nPunteggio massimo: " . $test['punteggio_max'];
+        }
+
+        return $text;
+    }
+
+    /**
      * Costruisce la descrizione testuale del materiale Classroom: descrizione,
      * note e l'elenco completo degli obiettivi didattici e disciplinari
      * (raggruppati per tipo_obiettivo).

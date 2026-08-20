@@ -35,6 +35,12 @@ checkEq('Test Finale', UdaClassroomPublishService::testTitle(['tipo_test' => 'fi
 checkEq('Test Sondaggio', UdaClassroomPublishService::testTitle(['tipo_test' => 'sondaggio']), 'testTitle fallback altro', $failures);
 checkEq('Test Prerequisiti', UdaClassroomPublishService::testTitle(['nome' => '   ', 'tipo_test' => 'prerequisiti']), 'testTitle ignora nome vuoto', $failures);
 
+// testDescription: descrizione + numero domande + durata + punteggio massimo.
+checkEq('Descrizione base', UdaClassroomPublishService::testDescription(['descrizione' => 'Descrizione base']), 'testDescription solo descrizione', $failures);
+checkEq("Descrizione base\n\nNumero domande: 10\nDurata: 30 minuti\nPunteggio massimo: 150", UdaClassroomPublishService::testDescription(['descrizione' => 'Descrizione base', 'num_domande' => 10, 'durata_minuti' => 30, 'punteggio_max' => 150]), 'testDescription completa', $failures);
+checkEq("\n\nNumero domande: 5", UdaClassroomPublishService::testDescription(['num_domande' => 5]), 'testDescription senza descrizione', $failures);
+checkEq('', UdaClassroomPublishService::testDescription([]), 'testDescription vuoto', $failures);
+
 // materialDescription: descrizione, note e obiettivi raggruppati.
 $obiettivi = [
     ['descrizione' => 'Conoscere il ciclo di sviluppo', 'tipo_obiettivo' => 'conoscenze', 'livello_tassonomia' => 'ricordare'],
