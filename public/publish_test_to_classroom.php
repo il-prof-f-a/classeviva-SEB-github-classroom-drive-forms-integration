@@ -11,7 +11,10 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\UDAManager;
 use App\Core\UdaClassroomPublishService;
+use App\Core\ClassroomCourseOrdering;
 use App\Core\Database\DatabaseFactory;
+use App\Core\TeachingGroupIntegrationRepository;
+use App\Core\UdaGroupRepository;
 use App\Integration\GoogleClassroomAPI;
 use App\Integration\GoogleDriveAPI;
 
@@ -24,6 +27,7 @@ $mode = $_GET['mode'] ?? 'draft';
 $testId = $_GET['test_id'] ?? null;
 $successMessage = null;
 $errorMessage = null;
+$userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
 
 function formatClassroomPublishError(Throwable $e): string
 {
@@ -243,6 +247,26 @@ if (!$initError && $_SERVER['REQUEST_METHOD'] === 'GET') {
     try {
         $classroomAPI = new GoogleClassroomAPI($config);
         $classroomCourses = $classroomAPI->getCourses(['ACTIVE']);
+
+        // Privilegia i corsi Classroom già collegati ai gruppi dell'UDA,
+        // mantenendo stabile l'ordine originale degli altri corsi.
+        $mappedCourseIds = [];
+        if ($udaId !== null && $udaId !== '') {
+            $groupRepo = new UdaGroupRepository($dbAdapter, $userId);
+            $integrationRepo = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
+            foreach ($groupRepo->listForUda((string)$udaId) as $assignment) {
+                $groupId = trim((string)($assignment['id_gruppo'] ?? ''));
+                if ($groupId === '') {
+                    continue;
+                }
+                $integration = $integrationRepo->findForGroupProvider($groupId, 'google_classroom');
+                $courseId = trim((string)($integration['external_context_id'] ?? ''));
+                if ($courseId !== '') {
+                    $mappedCourseIds[] = $courseId;
+                }
+            }
+        }
+        $classroomCourses = ClassroomCourseOrdering::mappedFirst($classroomCourses, $mappedCourseIds);
     } catch (Throwable $e) {
         // Non è fatale, mostra solo un warning
         if (!$errorMessage) {
@@ -427,8 +451,8 @@ if (!$initError && $_SERVER['REQUEST_METHOD'] === 'GET') {
                                 <label class="form-label">Corso Classroom *</label>
                                 <select class="form-select" name="course_id" required>
                                     <option value="">Seleziona...</option>
-                                    <?php foreach ($classroomCourses as $course): ?>
-                                        <option value="<?= htmlspecialchars($course['id']) ?>">
+                                    <?php foreach ($classroomCourses as $courseIndex => $course): ?>
+                                        <option value="<?= htmlspecialchars($course['id']) ?>" <?= $courseIndex === 0 ? 'selected' : '' ?>>
                                             <?= htmlspecialchars($course['name']) ?>
                                         </option>
                                     <?php endforeach; ?>

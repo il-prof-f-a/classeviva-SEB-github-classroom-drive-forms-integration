@@ -18,10 +18,13 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\ClasseVivaTokenGuard;
 use App\Core\Database\DatabaseFactory;
+use App\Core\GroupStudentRepository;
 use App\Core\ProviderCapabilityResolver;
+use App\Core\StudentIdentityRepository;
 use App\Core\UDAManager;
 use App\Core\StudentiManager;
 use App\Core\TeachingGroupIntegrationRepository;
+use App\Core\UdaGroupRepository;
 use App\Integration\ClasseVivaAPI;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -45,10 +48,19 @@ $idMateriaCV = $_GET['id_materia_cv'] ?? $_POST['id_materia_cv'] ?? null;
 
 // Risolvi il gruppo didattico dalla coppia classe/materia ClasseViva.
 $integrationRepo = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
+$udaGroupRepo = new UdaGroupRepository($dbAdapter, $userId);
+$groupStudentRepo = new GroupStudentRepository($dbAdapter, $userId);
+$studentIdentityRepo = new StudentIdentityRepository($dbAdapter, $userId);
 $groupId = null;
 if ($idClasseCV && $idMateriaCV) {
     $cvIntegration = $integrationRepo->findByExternal('classeviva', (string)$idClasseCV, (string)$idMateriaCV);
     $groupId = $cvIntegration['id_gruppo'] ?? null;
+}
+if (($groupId === null || $groupId === '') && $udaId) {
+    $assignments = $udaGroupRepo->listForUda((string)$udaId);
+    if (count($assignments) === 1) {
+        $groupId = trim((string)($assignments[0]['id_gruppo'] ?? '')) ?: null;
+    }
 }
 
 // Username docente
@@ -64,22 +76,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
     header('Content-Type: application/json');
 
     try {
-        // Verifica autenticazione ClasseViva
-        if ($cvAuthError !== null) {
-            echo json_encode(['ok' => false, 'error' => 'Autenticazione ClasseViva fallita: ' . $cvAuthError]);
-            exit;
+        // Salvataggio locale: non richiede token né mappatura ClasseViva.
+        $idStud = $_POST['id_studente'] ?? ($_POST['id_studente_cv'] ?? null);
+        $idStudInternal = trim((string)($_POST['id_studente_internal'] ?? ''));
+        if ($idStudInternal === '' && $groupId && $idStud) {
+            foreach ($groupStudentRepo->listForGroup((string)$groupId) as $membership) {
+                if ((string)($membership['id_studente'] ?? '') === (string)$idStud) {
+                    $idStudInternal = (string)$idStud;
+                    break;
+                }
+            }
         }
-
-        $idStud = $_POST['id_studente_cv'] ?? null;
         $votoProposto = isset($_POST['voto']) ? floatval($_POST['voto']) : null;
         $descrizioneEvidenze = $_POST['descrizione_evidenze'] ?? '';
 
-        if (!$udaId || !$idClasseCV || !$idMateriaCV || !$idStud) {
+        if (!$udaId || !$idStud || !$groupId) {
             echo json_encode(['ok' => false, 'error' => 'Parametri mancanti (udaId=' . ($udaId ?? 'null') . ', idClasseCV=' . ($idClasseCV ?? 'null') . ', idMateriaCV=' . ($idMateriaCV ?? 'null') . ', idStud=' . ($idStud ?? 'null') . ')']);
-            exit;
-        }
-        if (!ProviderCapabilityResolver::supportsCvForPair($dbAdapter, $userId, (string)$idClasseCV, (string)$idMateriaCV, 'publish_grade')) {
-            echo json_encode(['ok' => false, 'error' => 'La classe non è collegata a un gruppo con ClasseViva.']);
             exit;
         }
         if ($votoProposto === null) {
@@ -88,11 +100,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
         }
 
         // Recupera evidenze in coda per lo studente
-        $queueRows = $dbAdapter->findWhere('PLUSMINUS_QUEUE', [
+        $studentLookup = [
             'id_uda' => $udaId,
             'id_gruppo' => $groupId,
-            'id_studente_cv' => $idStud
-        ]);
+        ];
+        if ($idStudInternal !== '') {
+            $studentLookup['id_studente'] = $idStudInternal;
+        } else {
+            $studentLookup['id_studente_cv'] = $idStud;
+        }
+        $queueRows = $dbAdapter->findWhere('PLUSMINUS_QUEUE', $studentLookup);
 
         // Copia su VALUTAZIONI_LABORATORIO e cancella dalla coda
         $now = date('Y-m-d H:i:s');
@@ -114,7 +131,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
         $pubblicateRaw = $dbAdapter->findWhere('VALUTAZIONI_LABORATORIO', [
             'id_uda' => $udaId,
             'id_gruppo' => $groupId,
-            'id_studente_cv' => $idStud
+            ...(($idStudInternal !== '') ? ['id_studente' => $idStudInternal] : ['id_studente_cv' => $idStud])
         ]);
         $pubblicate = array_filter($pubblicateRaw, function($row) {
             return empty($row['data_registrazione']);
@@ -181,10 +198,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
         $resultCV = null;
 
         // Registra il voto anche nella tabella VOTI per visualizzazione in uda_grades.php
-        $dbAdapter->insertRow('VOTI', [
+        $votoPayload = [
             'id_voto' => $votoId,
             'id_uda' => $udaId,
-            'id_studente_cv' => $idStud,
+            'id_studente' => $idStudInternal !== '' ? $idStudInternal : null,
+            'id_studente_cv' => $idStudInternal !== '' ? null : $idStud,
             'id_gruppo' => $groupId,
             'voto' => $votoProposto,
             'tipo_voto' => 'pratico',
@@ -192,7 +210,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
             'data_valutazione' => date('Y-m-d'),
             'pubblicato' => 0,
             'link_origine' => $linkOrigine
-        ]);
+        ];
+        $dbAdapter->insertRow('VOTI', $votoPayload);
 
         echo json_encode([
             'ok' => true,
@@ -219,6 +238,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
         }
         if (!$udaId || !$idClasseCV || !$idMateriaCV) {
             echo json_encode(['ok' => false, 'error' => 'Parametri mancanti (UDA/classe/materia)']);
+            exit;
+        }
+        if (!ProviderCapabilityResolver::supportsCvForPair($dbAdapter, $userId, (string)$idClasseCV, (string)$idMateriaCV, 'publish_grade')) {
+            echo json_encode(['ok' => false, 'error' => 'La classe non è collegata a un gruppo con ClasseViva.']);
             exit;
         }
 
@@ -413,13 +436,38 @@ try {
     $studenti = [];
     if ($idClasseCV) {
         if (!$cvReady) {
-            $error = $error ?? ($cvAuthError ?? 'Token ClasseViva non disponibile.');
+            $error = $error ?? null;
         } else {
             try {
                 $studenti = $studentiManager->getStudentiClasse($idClasseCV);
             } catch (Exception $e) {
                 $error = "Impossibile caricare studenti: " . $e->getMessage();
             }
+        }
+    }
+    if (empty($studenti) && $groupId) {
+        foreach ($groupStudentRepo->listForGroup((string)$groupId) as $membership) {
+            $internalId = trim((string)($membership['id_studente'] ?? ''));
+            if ($internalId === '') {
+                continue;
+            }
+            $displayName = '';
+            foreach ($studentIdentityRepo->listForStudent($internalId) as $identity) {
+                $metadata = json_decode((string)($identity['metadata_json'] ?? '{}'), true);
+                if (is_array($metadata)) {
+                    $displayName = trim((string)($metadata['display_name'] ?? ($metadata['name'] ?? '')));
+                }
+                if ($displayName !== '') {
+                    break;
+                }
+            }
+            $studenti[] = [
+                'id_studente' => $internalId,
+                'id' => $internalId,
+                'nome_completo' => $displayName !== '' ? $displayName : $internalId,
+                'cognome' => '',
+                'nome' => $displayName !== '' ? $displayName : $internalId,
+            ];
         }
     }
 
@@ -438,7 +486,7 @@ try {
     // Struttura: $votiCoda[id_studente][id_indicatore] = ['valore' => '+', 'data' => '...', 'in_coda' => true]
     $votiCoda = [];
     foreach ($votiCodaRaw as $voto) {
-        $idStud = $voto['id_studente_cv'];
+        $idStud = $voto['id_studente'] ?? $voto['id_studente_cv'] ?? '';
         $idInd = $voto['id_indicatore'];
         $dataInserimento = $voto['data_inserimento'] ?? '';
 
@@ -491,7 +539,7 @@ try {
     $votiRegistrati = [];
 
     foreach ($votiRegistratiRaw as $voto) {
-        $idStud = $voto['id_studente_cv'];
+        $idStud = $voto['id_studente'] ?? $voto['id_studente_cv'] ?? '';
         $idInd = $voto['id_indicatore'];
 
         $votoObj = [
@@ -918,6 +966,9 @@ try {
                                 <button type="button" class="btn btn-info" id="toggle-descrizioni-btn" onclick="toggleDescrizioni()">
                                     <i class="bi bi-info-circle"></i> <span id="toggle-text">Mostra Descrizioni</span>
                                 </button>
+                                <a class="btn btn-outline-primary" href="uda_grades.php?id=<?= htmlspecialchars((string)$udaId) ?>">
+                                    <i class="bi bi-eye"></i> Visualizza voti assegnati
+                                </a>
                             </div>
                         <?php endif; ?>
                     </div>

@@ -14,14 +14,17 @@
 
 use App\Core\ClasseVivaTokenGuard;
 use App\Core\Database\DatabaseFactory;
+use App\Core\GroupStudentRepository;
+use App\Core\StudentIdentityRepository;
 use App\Core\TeachingGroupIntegrationRepository;
+use App\Core\TeachingGroupRepository;
 use App\Core\UDAManager;
+use App\Core\UdaGroupRepository;
 use App\Core\RubricManager;
 use App\Integration\ClasseVivaAPI;
 use App\Integration\GoogleClassroomAPI;
 use App\Integration\GoogleDriveAPI;
 
-define('REQUIRES_CLASSEVIVA', true);
 $config = require_once __DIR__ . '/../bootstrap.php';
 
 error_reporting(E_ALL);
@@ -29,6 +32,7 @@ error_reporting(E_ALL);
 $classeVivaState = ClasseVivaTokenGuard::getTokenState($config);
 $cvReady = $classeVivaState['ready'];
 $cvNotice = $classeVivaState['notice'] ?? 'Token ClasseViva non disponibile.';
+$userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
 
 $action = $_POST['action'] ?? $_GET['action'] ?? 'step0';
 $message = null;
@@ -47,6 +51,7 @@ $classiUda = [];
 $studentiProvider = 'classeviva';
 $idUdaDaGet = $_GET['id_uda'] ?? null;
 $idClasseDaGet = $_GET['id_classe'] ?? null;
+$idGruppoDaGet = trim((string)($_GET['id_gruppo'] ?? ''));
 $templateDownloadUrl = app_url('Materiale/' . rawurlencode('Rubrica valutazione orale VUOTA.xlsx'));
 $hasVotoNumerico = false;
 $hasVotoFinale = false;
@@ -223,6 +228,11 @@ try {
     // La generazione del voto non dipende da ClasseViva: la pagina funziona anche
     // con una classe mappata su un altro provider. Solo la pubblicazione richiede CV.
     $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
+    $udaGroupRepository = new UdaGroupRepository($dbAdapter, $userId);
+    $teachingGroupRepository = new TeachingGroupRepository($dbAdapter, $userId);
+    $teachingGroupIntegrationRepository = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
+    $groupStudentRepository = new GroupStudentRepository($dbAdapter, $userId);
+    $studentIdentityRepository = new StudentIdentityRepository($dbAdapter, $userId);
     $udaManager = new UDAManager($config);
     $rubricManager = new RubricManager($dbAdapter, $config);
     $colsValRubrica = [];
@@ -249,6 +259,18 @@ function getTableColumns($dbAdapter, string $table): array {
 
 function packValutazioneData($dbAdapter, array $data): array {
     $cols = getTableColumns($dbAdapter, 'VALUTAZIONI_RUBRICA');
+    // Un foglio/tavola vuota non restituisce colonne da findAll: mantieni il
+    // contratto provider-neutral e lascia al gateway il filtro sullo schema
+    // reale, altrimenti il primo voto perderebbe id_gruppo/id_studente.
+    if (empty($cols)) {
+        $cols = [
+            'id_valutazione', 'id_uda', 'id_gruppo', 'id_studente',
+            'id_classe_cv', 'id_materia_cv', 'id_studente_cv', 'id_studente_gc',
+            'nome_studente', 'id_rubrica', 'voto_numerico', 'voto_finale',
+            'giudizio', 'valutazione_testuale', 'data_valutazione',
+            'pubblicato_cv', 'pubblicato', 'dati_json', 'note'
+        ];
+    }
     $isLegacy = empty($cols) || !in_array('voto_numerico', $cols, true);
 
     $payload = [];
@@ -521,6 +543,37 @@ if ($action === 'salva_valutazione_studente') {
     $idClasseCV = $_POST['id_classe_cv'] ?? $idClasseDaGet;
     $idStudenteProvider = $_POST['id_studente_provider'] ?? 'classeviva';
     $idStudenteField = ($idStudenteProvider === 'google_classroom') ? 'id_studente_gc' : 'id_studente_cv';
+    $idGruppo = trim((string)($_POST['id_gruppo'] ?? ''));
+    $idStudenteInterno = trim((string)($_POST['id_studente_internal'] ?? ''));
+    $idMateriaCvPost = trim((string)($_POST['id_materia_cv'] ?? ''));
+
+    // Il gruppo interno è la chiave primaria per il salvataggio locale. Se il
+    // vecchio link contiene solo id_classe_cv, ricaviamo il gruppo dalla
+    // mappatura UDA (o dall'unica assegnazione disponibile).
+    if ($idGruppo === '' && $idUda !== '') {
+        foreach ($udaGroupRepository->listForUda((string)$idUda) as $assignment) {
+            $candidateGroup = trim((string)($assignment['id_gruppo'] ?? ''));
+            if ($candidateGroup === '') {
+                continue;
+            }
+            $cvIntegration = $teachingGroupIntegrationRepository->findForGroupProvider($candidateGroup, 'classeviva');
+            if ($cvIntegration !== null && (string)($cvIntegration['external_context_id'] ?? '') === (string)$idClasseCV) {
+                $idGruppo = $candidateGroup;
+                break;
+            }
+            if ($idGruppo === '' && count($udaGroupRepository->listForUda((string)$idUda)) === 1) {
+                $idGruppo = $candidateGroup;
+            }
+        }
+    }
+
+    if ($idGruppo !== '' && $idStudenteProvider !== 'classeviva' && $idStudenteInterno === '') {
+        $identity = $studentIdentityRepository->findByExternal($idStudenteProvider, (string)$idStudente);
+        $idStudenteInterno = trim((string)($identity['id_studente'] ?? ''));
+    }
+    if ($idGruppo !== '' && $idStudenteInterno === '') {
+        $idStudenteInterno = (string)$idStudente;
+    }
 
     // Prepara i dati JSON con tutti i livelli selezionati
     $datiJsonArray = [
@@ -536,12 +589,18 @@ if ($action === 'salva_valutazione_studente') {
     ];
 
     // Controlla se esiste già una valutazione per questo studente/UDA/classe
-	    $esistente = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', [
-	        'id_uda' => $idUda,
-	        'id_classe_cv' => $idClasseCV,
-	        $idStudenteField => $idStudente,
-	        'id_rubrica' => $idRubrica
-	    ]);
+    $lookup = [
+        'id_uda' => $idUda,
+        'id_rubrica' => $idRubrica
+    ];
+    if ($idGruppo !== '' && $idStudenteInterno !== '') {
+        $lookup['id_gruppo'] = $idGruppo;
+        $lookup['id_studente'] = $idStudenteInterno;
+    } else {
+        $lookup['id_classe_cv'] = $idClasseCV;
+        $lookup[$idStudenteField] = $idStudente;
+    }
+	    $esistente = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $lookup);
 
     $votoOriginale = $voto;
     $existingFinale = null;
@@ -578,9 +637,11 @@ if ($action === 'salva_valutazione_studente') {
             'nome_studente' => $nomeStudente,
             'id_rubrica' => $idRubrica,
             'id_uda' => $idUda,
+            'id_gruppo' => $idGruppo !== '' ? $idGruppo : ($esistente[0]['id_gruppo'] ?? null),
+            'id_studente' => $idStudenteInterno !== '' ? $idStudenteInterno : ($esistente[0]['id_studente'] ?? null),
             'id_classe_cv' => $idClasseCV,
             $idStudenteField => $idStudente,
-            'id_materia_cv' => $_POST['id_materia_cv'] ?? $esistente[0]['id_materia_cv'] ?? $materiaSelezionataId
+            'id_materia_cv' => $idMateriaCvPost !== '' ? $idMateriaCvPost : ($esistente[0]['id_materia_cv'] ?? ($materiaSelezionataId ?? null))
         ];
         if ($storeFinaleColumn && $votoFinale !== null && $votoFinale !== '') {
             $payload['voto_finale'] = $votoFinale;
@@ -593,6 +654,8 @@ if ($action === 'salva_valutazione_studente') {
         $toInsert = [
             'id_valutazione' => 'VAL_RUB_' . uniqid(),
             'id_uda' => $idUda,
+            'id_gruppo' => $idGruppo !== '' ? $idGruppo : null,
+            'id_studente' => $idStudenteInterno !== '' ? $idStudenteInterno : null,
             'id_classe_cv' => $idClasseCV,
             $idStudenteField => $idStudente,
             'nome_studente' => $nomeStudente,
@@ -602,7 +665,7 @@ if ($action === 'salva_valutazione_studente') {
             'data_valutazione' => date('Y-m-d H:i:s'),
             'pubblicato_cv' => 0,
             'dati_json' => $datiJson,
-            'id_materia_cv' => $_POST['id_materia_cv'] ?? $materiaSelezionataId
+            'id_materia_cv' => $idMateriaCvPost !== '' ? $idMateriaCvPost : ($materiaSelezionataId ?? null)
         ];
         if ($storeFinaleColumn && $votoFinale !== null && $votoFinale !== '') {
             $toInsert['voto_finale'] = $votoFinale;
@@ -653,7 +716,8 @@ if ($action === 'salva_valutazione_studente') {
     }
 
     // Redirect per ricaricare la pagina con i dati aggiornati
-    header("Location: rubrica_orale_v2.php?id_uda=$idUda&id_classe=$idClasseCV");
+    $redirectGroup = $idGruppo !== '' ? '&id_gruppo=' . rawurlencode($idGruppo) : '';
+    header("Location: rubrica_orale_v2.php?id_uda=$idUda&id_classe=$idClasseCV{$redirectGroup}");
     exit;
 }
 
@@ -1235,6 +1299,8 @@ $materiaSelezionataId = null;
 $materiaSelezionataNome = null;
 $classiUda = [];
 $subjectNameById = [];
+$gruppiUda = [];
+$gruppoSelezionatoId = $idGruppoDaGet;
 
 // Determina UDA selezionata
 $udaSelezionata = null;
@@ -1249,41 +1315,97 @@ if ($idUdaSelezionata) {
     }
 }
 
-// Carica classi da ClasseViva - SOLO quelle assegnate all'UDA
+// Carica classi CV quando disponibili e, in parallelo, i gruppi assegnati
+// all'UDA. Il gruppo interno resta valido anche senza token/mapping CV.
 try {
-    $tutteClassi = $cvAPI->getClasses();
-
     if ($udaSelezionata) {
+        foreach ($udaGroupRepository->listForUda((string)$udaSelezionata->id_uda) as $assignment) {
+            $groupId = trim((string)($assignment['id_gruppo'] ?? ''));
+            if ($groupId === '') {
+                continue;
+            }
+            $group = $teachingGroupRepository->findById($groupId);
+            if ($group === null) {
+                continue;
+            }
+            $gruppiUda[] = ['assignment' => $assignment, 'group' => $group];
+        }
+    }
+
+    if ($cvReady) {
+        $tutteClassi = $cvAPI->getClasses();
         $classiAssegnate = $dbAdapter->findAll('CLASSI_ASSEGNATE');
-
-        // Filtra classi per questa UDA
-        $classiUda = array_filter($classiAssegnate, function($ca) use ($udaSelezionata) {
-            return ($ca['id_uda'] ?? '') === $udaSelezionata->id_uda;
+        $classiUda = array_filter($classiAssegnate, static function (array $ca) use ($udaSelezionata): bool {
+            return $udaSelezionata !== null && ($ca['id_uda'] ?? '') === $udaSelezionata->id_uda;
         });
-
         $idClassiUda = array_column($classiUda, 'id_classe');
 
-        // Filtra SOLO le classi dell'UDA (nessun fallback)
         foreach ($tutteClassi as $classe) {
-            if (in_array($classe['classId'], $idClassiUda)) {
-                $classi[] = $classe;
-                // Se questa è la classe selezionata, prendi materia da CLASSI_ASSEGNATE
-                if ($idClasseDaGet && $classe['classId'] == $idClasseDaGet) {
-                    foreach ($classiUda as $ca) {
-                        if (($ca['id_classe'] ?? '') == $idClasseDaGet) {
-                            $materiaSelezionataId = $ca['id_materia_cv'] ?? null;
-                            $materiaSelezionataNome = $ca['nome_materia'] ?? null;
-                            break;
-                        }
+            if (!in_array($classe['classId'] ?? null, $idClassiUda, true)) {
+                continue;
+            }
+            $classi[] = $classe;
+            if ($idClasseDaGet && (string)$classe['classId'] === (string)$idClasseDaGet) {
+                foreach ($classiUda as $ca) {
+                    if ((string)($ca['id_classe'] ?? '') === (string)$idClasseDaGet) {
+                        $materiaSelezionataId = $ca['id_materia_cv'] ?? null;
+                        $materiaSelezionataNome = $ca['nome_materia'] ?? null;
+                        $gruppoSelezionatoId = trim((string)($ca['id_gruppo'] ?? $gruppoSelezionatoId));
+                        break;
                     }
                 }
             }
         }
     }
+
+    // Risolvi il gruppo dal vecchio id_classe_cv, dall'id_gruppo esplicito o
+    // dall'unica assegnazione UDA. In assenza di CV mostriamo un corso sintetico.
+    if ($gruppoSelezionatoId === '' && $idClasseDaGet !== null) {
+        foreach ($gruppiUda as $entry) {
+            $candidate = trim((string)($entry['assignment']['id_gruppo'] ?? ''));
+            $integration = $teachingGroupIntegrationRepository->findForGroupProvider($candidate, 'classeviva');
+            if ($integration !== null && (string)($integration['external_context_id'] ?? '') === (string)$idClasseDaGet) {
+                $gruppoSelezionatoId = $candidate;
+                break;
+            }
+        }
+    }
+    if ($gruppoSelezionatoId === '' && count($gruppiUda) === 1) {
+        $gruppoSelezionatoId = (string)$gruppiUda[0]['assignment']['id_gruppo'];
+    }
+    if ($gruppoSelezionatoId !== '') {
+        foreach ($gruppiUda as $entry) {
+            if ((string)($entry['assignment']['id_gruppo'] ?? '') !== $gruppoSelezionatoId) {
+                continue;
+            }
+            $group = $entry['group'];
+            $alreadyListed = false;
+            foreach ($classi as $classe) {
+                if ((string)($classe['classId'] ?? '') === $gruppoSelezionatoId) {
+                    $alreadyListed = true;
+                    break;
+                }
+            }
+            if (!$alreadyListed) {
+                $classi[] = [
+                    'classId' => $gruppoSelezionatoId,
+                    'className' => (string)($group['nome_gruppo'] ?? $group['nome_classe'] ?? $gruppoSelezionatoId),
+                    'students' => [],
+                    'id_gruppo' => $gruppoSelezionatoId,
+                    'provider' => 'provider-neutral',
+                ];
+            }
+            if ($idClasseDaGet === null || $idClasseDaGet === '') {
+                $idClasseDaGet = $gruppoSelezionatoId;
+            }
+            break;
+        }
+    }
 } catch (Exception $e) {
-    error_log("Errore caricamento classi: " . $e->getMessage());
-    $error = "Impossibile caricare le classi da ClasseViva.";
-    $classi = [];
+    error_log("Errore caricamento classi/gruppi: " . $e->getMessage());
+    if ($classi === []) {
+        $error = "Impossibile caricare i gruppi didattici.";
+    }
 }
 
 // Preseleziona la prima classe disponibile se non ne e' stata selezionata alcuna.
@@ -1293,10 +1415,18 @@ if (empty($idClasseDaGet) && !empty($classi)) {
         $idClasseDaGet = $primaClasse;
     }
 }
+if ($gruppoSelezionatoId === '' && $idClasseDaGet !== null) {
+    foreach ($gruppiUda as $entry) {
+        if ((string)($entry['assignment']['id_gruppo'] ?? '') === (string)$idClasseDaGet) {
+            $gruppoSelezionatoId = (string)$idClasseDaGet;
+            break;
+        }
+    }
+}
 
 // Mappa nomi materie da ClasseViva per normalizzare le etichette
 try {
-    $subjectsCv = $cvAPI->getSubjects();
+    $subjectsCv = $cvReady ? $cvAPI->getSubjects() : [];
     foreach ($subjectsCv as $subject) {
         $subjectId = $subject['id'] ?? ($subject['subjectId'] ?? '');
         if ($subjectId === '') {
@@ -1320,10 +1450,12 @@ if ($idUdaSelezionata) {
         $numStudenti = count($classe['students'] ?? []);
 
         // Conta voti per questa classe
-	        $where = [
-	            'id_uda' => $idUdaSelezionata,
-	            'id_classe_cv' => $idClasse
-	        ];
+	        $where = ['id_uda' => $idUdaSelezionata];
+	        if ($gruppoSelezionatoId !== '' && (string)$idClasse === $gruppoSelezionatoId) {
+	            $where['id_gruppo'] = $gruppoSelezionatoId;
+	        } else {
+	            $where['id_classe_cv'] = $idClasse;
+	        }
 	        if (isset($rubrica) && $rubrica && !empty($rubrica->id_rubrica)) {
 	            $where['id_rubrica'] = $rubrica->id_rubrica;
 	        }
@@ -1406,8 +1538,53 @@ if ($idClasseDaGet) {
         }
     }
 
+    // Roster provider-neutral: non richiede alcuna mappatura ClasseViva e usa
+    // sempre l'id interno dello studente per le successive scritture.
+    if (empty($studenti) && $gruppoSelezionatoId !== '') {
+        try {
+            foreach ($groupStudentRepository->listForGroup($gruppoSelezionatoId) as $membership) {
+                $internalId = trim((string)($membership['id_studente'] ?? ''));
+                if ($internalId === '') {
+                    continue;
+                }
+                $displayName = '';
+                $provider = 'internal';
+                foreach ($studentIdentityRepository->listForStudent($internalId) as $identity) {
+                    $providerCandidate = trim((string)($identity['provider'] ?? ''));
+                    $metadata = json_decode((string)($identity['metadata_json'] ?? '{}'), true);
+                    if (!is_array($metadata)) {
+                        $metadata = [];
+                    }
+                    $candidateName = trim((string)($metadata['display_name'] ?? ($metadata['name'] ?? '')));
+                    if ($candidateName !== '') {
+                        $displayName = $candidateName;
+                    }
+                    if ($providerCandidate !== '') {
+                        $provider = $providerCandidate;
+                    }
+                    if ($displayName !== '') {
+                        break;
+                    }
+                }
+                $studenti[] = [
+                    'id' => $internalId,
+                    'id_studente_internal' => $internalId,
+                    'provider' => $provider,
+                    'nome_completo' => $displayName !== '' ? $displayName : $internalId,
+                    'cognome' => '',
+                    'nome' => $displayName !== '' ? $displayName : $internalId,
+                ];
+            }
+            if ($studenti !== []) {
+                $studentiProvider = 'internal';
+            }
+        } catch (Exception $e) {
+            error_log('Errore caricamento roster provider-neutral: ' . $e->getMessage());
+        }
+    }
+
     // Fallback: carica studenti direttamente da ClasseViva (API)
-    if (empty($studenti)) {
+    if (empty($studenti) && $cvReady) {
         try {
             $studentsCv = $cvAPI->getStudentiClasse((string)$idClasseDaGet);
             foreach ($studentsCv as $st) {
@@ -1509,10 +1686,12 @@ foreach ($studenti as $st) {
 }
 
 if ($idUdaSelezionata && $idClasseDaGet) {
-	    $where = [
-	        'id_uda' => $idUdaSelezionata,
-	        'id_classe_cv' => $idClasseDaGet
-	    ];
+	    $where = ['id_uda' => $idUdaSelezionata];
+	    if ($gruppoSelezionatoId !== '') {
+	        $where['id_gruppo'] = $gruppoSelezionatoId;
+	    } else {
+	        $where['id_classe_cv'] = $idClasseDaGet;
+	    }
 	    if (isset($rubrica) && $rubrica && !empty($rubrica->id_rubrica)) {
 	        $where['id_rubrica'] = $rubrica->id_rubrica;
 	    }
@@ -1520,7 +1699,10 @@ if ($idUdaSelezionata && $idClasseDaGet) {
 
     // Converti le valutazioni in un array associativo per ID studente
     foreach ($valutazioniSalvate as $val) {
-        $idStud = $val['id_studente_cv'];
+        $idStud = (string)($val['id_studente'] ?? $val['id_studente_cv'] ?? $val['id_studente_gc'] ?? '');
+        if ($idStud === '') {
+            continue;
+        }
 
         // ricostruisci dati extra da note se schema legacy
         $extra = [];
@@ -1884,7 +2066,9 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                 <input type="hidden" name="id_uda" value="<?= htmlspecialchars($idUdaDaGet) ?>">
                 <input type="hidden" name="id_rubrica" value="<?= htmlspecialchars($rubrica->id_rubrica ?? '') ?>">
                 <input type="hidden" name="id_classe_cv" value="<?= htmlspecialchars($idClasseDaGet) ?>">
+                <input type="hidden" name="id_gruppo" value="<?= htmlspecialchars($gruppoSelezionatoId) ?>">
                 <input type="hidden" name="id_studente_provider" id="idStudenteProvider" value="<?= htmlspecialchars($studentiProvider) ?>">
+                <input type="hidden" name="id_studente_internal" id="idStudenteInternal" value="">
 
                 <div class="card mb-4">
                     <div class="card-header bg-warning">
@@ -1896,7 +2080,7 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                     <div class="card-body">
                         <!-- Seleziona Classe (ricarica pagina via GET) -->
                         <div class="mb-4">
-                            <form method="GET" action="" id="formClasse">
+                            <div id="formClasse">
                                 <input type="hidden" name="id_uda" value="<?= htmlspecialchars($idUdaDaGet) ?>">
                                 <label class="form-label">Seleziona Classe *</label>
                                 <select name="id_classe" id="selectClasse" class="form-select">
@@ -1925,13 +2109,13 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                                 <noscript>
                                     <button type="submit" class="btn btn-primary btn-sm mt-2">Carica Classe</button>
                                 </noscript>
-                            </form>
+                            </div>
                         </div>
 
                         <?php if (!empty($studenti)): ?>
                         <div class="mb-3">
                             <label class="form-label">Materia *</label>
-                            <select name="id_materia_cv" class="form-select" required>
+                            <select name="id_materia_cv" class="form-select" <?= ($gruppoSelezionatoId !== '' && empty($materieDisponibili)) ? '' : 'required' ?>>
                                 <option value="">-- Seleziona materia --</option>
                                 <?php foreach ($materieDisponibili as $mat): ?>
                                     <option value="<?= htmlspecialchars($mat['id_materia_cv']) ?>"
@@ -1941,7 +2125,7 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                                 <?php endforeach; ?>
                             </select>
                             <?php if (empty($materieDisponibili)): ?>
-                                <div class="text-danger small mt-1">Nessuna materia assegnata a questa classe per l'UDA.</div>
+                                <div class="text-muted small mt-1">Nessuna materia ClasseViva associata: il voto verrà salvato nel gruppo didattico.</div>
                             <?php endif; ?>
                         </div>
 
@@ -1972,7 +2156,8 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                                 ?>
                                     <option value="<?= htmlspecialchars($idStud) ?>"
                                             data-nome="<?= htmlspecialchars($nomeCompleto) ?>"
-                                            data-provider="<?= htmlspecialchars($providerStud) ?>"<?= $firstStudente ? ' selected' : '' ?>>
+                                            data-provider="<?= htmlspecialchars($providerStud) ?>"
+                                            data-studente-internal="<?= htmlspecialchars((string)($st['id_studente_internal'] ?? '')) ?>"<?= $firstStudente ? ' selected' : '' ?>>
                                         <?= htmlspecialchars($nomeCompleto . $testoVoto) ?>
                                     </option>
                                     <?php $firstStudente = false; ?>
@@ -2289,8 +2474,11 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
             const selectedOption = selectEl.options[selectEl.selectedIndex];
             const nomeCompleto = selectedOption ? (selectedOption.getAttribute('data-nome') || '') : '';
             const providerStud = selectedOption ? (selectedOption.getAttribute('data-provider') || 'classeviva') : 'classeviva';
+            const internalStudentId = selectedOption ? (selectedOption.getAttribute('data-studente-internal') || '') : '';
             const providerEl = document.getElementById('idStudenteProvider');
             if (providerEl) providerEl.value = providerStud;
+            const internalEl = document.getElementById('idStudenteInternal');
+            if (internalEl) internalEl.value = internalStudentId;
 
             aggiornaBadgeStudente(nomeCompleto);
 
@@ -2897,8 +3085,8 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
 
                     if (idClasse && idClasse !== '') {
                         // Recupera id_uda dall'input hidden
-                        const form = this.form;
-                        const idUda = form.querySelector('input[name="id_uda"]').value;
+                        const idUdaInput = document.querySelector('#formValutazione input[name="id_uda"]');
+                        const idUda = idUdaInput ? idUdaInput.value : '';
 
                         // Costruisci URL manualmente
                         const newUrl = `rubrica_orale_v2.php?id_uda=${encodeURIComponent(idUda)}&id_classe=${encodeURIComponent(idClasse)}`;

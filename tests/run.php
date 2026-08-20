@@ -435,6 +435,7 @@ $architectureTests = [
     'laboratorio griglia provider-neutral' => __DIR__ . '/public/laboratorio_griglia_provider_neutral.php',
     'rubrica orale preselezione' => __DIR__ . '/public/rubrica_orale_preselezione.php',
     'rubrica orale riepilogo nomi' => __DIR__ . '/public/rubrica_orale_riepilogo_nomi.php',
+    'provider-neutral grades and Classroom publish' => __DIR__ . '/public/provider_neutral_grades_and_classroom_publish.php',
     'provider-neutral mappings' => __DIR__ . '/domain/provider_neutral_mappings.php',
     'GitHub mapping CV pair fallback' => __DIR__ . '/domain/provider_neutral_github_cv_pair.php',
     'ClasseViva student sync' => __DIR__ . '/integration/classeviva_student_sync.php',
