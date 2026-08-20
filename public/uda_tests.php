@@ -606,8 +606,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         $btnIcon = $risultatiImportati ? 'check-circle' : 'upload';
                                         $btnText = $risultatiImportati ? 'Voti Importati' : 'Importa Voti';
                                         $platformParam = $piattaforma;
+                                        $testUdaId = trim((string)($test['id_uda'] ?? ($uda->id_uda ?? '')));
                                         ?>
-                                        <a href="import_quiz_results_excel.php?uda_id=<?= urlencode($udaId ?: ($test['id_uda'] ?? '')) ?>&platform=<?= urlencode($platformParam) ?>&test_id=<?= urlencode($test['id_test']) ?>"
+                                        <a href="import_quiz_results_excel.php?uda_id=<?= urlencode($testUdaId) ?>&platform=<?= urlencode($platformParam) ?>&test_id=<?= urlencode($test['id_test']) ?>"
                                            class="btn btn-sm <?= $btnClass ?> me-1">
                                             <i class="bi bi-<?= $btnIcon ?>"></i> <?= $btnText ?>
                                         </a>

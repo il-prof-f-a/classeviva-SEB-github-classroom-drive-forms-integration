@@ -6,6 +6,46 @@ $root = dirname(__DIR__);
 $failures = [];
 $passes = 0;
 
+$rubricaGroupOnlyCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/public/rubrica_orale_group_only.php');
+exec($rubricaGroupOnlyCommand . ' 2>&1', $rubricaGroupOnlyOutput, $rubricaGroupOnlyExitCode);
+if ($rubricaGroupOnlyExitCode === 0) {
+    $passes++;
+    echo "PASS: rubrica orale gruppo senza materia\n";
+} else {
+    $failures[] = 'Rubrica orale gruppo senza materia: ' . implode(' | ', $rubricaGroupOnlyOutput);
+    echo "FAIL: rubrica orale gruppo senza materia\n";
+}
+
+$excelImportStudentNamesCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/public/excel_import_student_names.php');
+exec($excelImportStudentNamesCommand . ' 2>&1', $excelImportStudentNamesOutput, $excelImportStudentNamesExitCode);
+if ($excelImportStudentNamesExitCode === 0) {
+    $passes++;
+    echo "PASS: nomi studenti import Excel\n";
+} else {
+    $failures[] = 'Nomi studenti import Excel: ' . implode(' | ', $excelImportStudentNamesOutput);
+    echo "FAIL: nomi studenti import Excel\n";
+}
+
+$excelImportSubmitCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/public/excel_import_submit.php');
+exec($excelImportSubmitCommand . ' 2>&1', $excelImportSubmitOutput, $excelImportSubmitExitCode);
+if ($excelImportSubmitExitCode === 0) {
+    $passes++;
+    echo "PASS: submit import Excel\n";
+} else {
+    $failures[] = 'Submit import Excel: ' . implode(' | ', $excelImportSubmitOutput);
+    echo "FAIL: submit import Excel\n";
+}
+
+$udaTestsImportLinkCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/public/uda_tests_import_link.php');
+exec($udaTestsImportLinkCommand . ' 2>&1', $udaTestsImportLinkOutput, $udaTestsImportLinkExitCode);
+if ($udaTestsImportLinkExitCode === 0) {
+    $passes++;
+    echo "PASS: link importazione quiz da uda_tests\n";
+} else {
+    $failures[] = 'Link importazione quiz da uda_tests: ' . implode(' | ', $udaTestsImportLinkOutput);
+    echo "FAIL: link importazione quiz da uda_tests\n";
+}
+
 $adminEnvCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/admin_env_configuration.php');
 exec($adminEnvCommand . ' 2>&1', $adminEnvOutput, $adminEnvExitCode);
 if ($adminEnvExitCode === 0) {

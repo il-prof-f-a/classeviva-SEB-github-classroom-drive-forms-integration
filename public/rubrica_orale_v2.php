@@ -737,10 +737,10 @@ if ($action === 'salva_valutazione_studente') {
 	            'id_classe_cv' => $idClasse,
 	            'id_studente_cv' => $idStudente
 	        ];
-	        if (!empty($idRubrica)) {
-	            $where['id_rubrica'] = $idRubrica;
-	        }
-	        $valutazioni = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $where);
+    if (!empty($idRubrica)) {
+        $where['id_rubrica'] = $idRubrica;
+	    }
+	    $valutazioni = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $where);
 
         if (!empty($valutazioni)) {
             $idValutazione = $valutazioni[0]['id_valutazione'];
@@ -895,22 +895,61 @@ if ($action === 'aggiorna_voto_finale') {
 	    $idUda = $_POST['id_uda'] ?? null;
 	    $idClasse = $_POST['id_classe'] ?? null;
 	    $idRubrica = $_POST['id_rubrica'] ?? null;
+	    $idGruppo = trim((string)($_POST['id_gruppo'] ?? ''));
 
-    if (!$idStudente || !$idUda || !$idClasse) {
+	    if (!$idStudente || !$idUda || !$idClasse) {
         echo json_encode(['success' => false, 'message' => 'Dati mancanti']);
         exit;
+    }
+
+    // In modalità provider-neutral l'id ricevuto dalla pagina può essere
+    // direttamente quello del gruppo didattico. Risolviamo comunque anche i
+    // vecchi link che contengono solo id_classe.
+    if ($idGruppo === '') {
+        foreach ($udaGroupRepository->listForUda((string)$idUda) as $assignment) {
+            $candidateGroup = trim((string)($assignment['id_gruppo'] ?? ''));
+            if ($candidateGroup === '') {
+                continue;
+            }
+            if ($candidateGroup === (string)$idClasse) {
+                $idGruppo = $candidateGroup;
+                break;
+            }
+            $integration = $teachingGroupIntegrationRepository->findForGroupProvider($candidateGroup, 'classeviva');
+            if ($integration !== null && (string)($integration['external_context_id'] ?? '') === (string)$idClasse) {
+                $idGruppo = $candidateGroup;
+                break;
+            }
+        }
     }
 
 	    // Trova la valutazione nel database
 	    $where = [
 	        'id_uda' => $idUda,
-	        'id_classe_cv' => $idClasse,
-	        'id_studente_cv' => $idStudente
 	    ];
+	    if ($idGruppo !== '') {
+	        $where['id_gruppo'] = $idGruppo;
+	        $where['id_studente'] = $idStudente;
+	    } else {
+	        $where['id_classe_cv'] = $idClasse;
+	        $where['id_studente_cv'] = $idStudente;
+	    }
 	    if (!empty($idRubrica)) {
 	        $where['id_rubrica'] = $idRubrica;
 	    }
 	    $valutazioni = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $where);
+    // Compatibilità con valutazioni legacy non ancora migrate al gruppo.
+    if (empty($valutazioni) && $idGruppo !== '') {
+        $legacyWhere = [
+            'id_uda' => $idUda,
+            'id_classe_cv' => $idClasse,
+            'id_studente_cv' => $idStudente
+        ];
+        if (!empty($idRubrica)) {
+            $legacyWhere['id_rubrica'] = $idRubrica;
+        }
+        $valutazioni = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $legacyWhere);
+    }
 
     if (empty($valutazioni)) {
         echo json_encode(['success' => false, 'message' => 'Valutazione non trovata']);
@@ -926,10 +965,6 @@ if ($action === 'aggiorna_voto_finale') {
         exit;
     }
     $subjectId = $val['id_materia_cv'] ?? $materiaSelezionataId ?? '';
-    if ($subjectId === '' || $subjectId === null) {
-        echo json_encode(['success' => false, 'message' => 'ID materia (subject_id) mancante per il salvataggio.']);
-        exit;
-    }
 
     try {
         // Salva il voto ORALE nel sistema (pubblicazione da Gestione Voti)
@@ -950,12 +985,14 @@ if ($action === 'aggiorna_voto_finale') {
         $dataValutazione = $val['data_valutazione'] ?? date('Y-m-d');
 
         // Inserisci il voto nel registro locale VOTI con lo stesso id
-        $dbAdapter->insertRow('VOTI', [
+        $votoPayload = [
             'id_voto' => $votoId,
             'id_uda' => $idUda,
-            'id_studente_cv' => $idStudente,
-            'id_classe_cv' => $idClasse,
-            'id_materia_cv' => $subjectId,
+            'id_gruppo' => $idGruppo !== '' ? $idGruppo : null,
+            'id_studente' => $idGruppo !== '' ? $idStudente : null,
+            'id_studente_cv' => $idGruppo === '' ? $idStudente : null,
+            'id_classe_cv' => $idGruppo === '' ? $idClasse : null,
+            'id_materia_cv' => ($subjectId !== '' && $subjectId !== null) ? $subjectId : null,
             'tipo_voto' => 'orale',
             'voto' => $votoFinale,
             'giudizio' => $descrizione,
@@ -967,7 +1004,8 @@ if ($action === 'aggiorna_voto_finale') {
             'num_evidenze_negative' => null,
             'num_evidenze_totali' => null,
             'link_origine' => $linkOrigine
-        ]);
+        ];
+        $dbAdapter->insertRow('VOTI', $votoPayload);
 
         // Aggiorna il flag pubblicato_cv nel database dopo il salvataggio
         $idValutazione = $val['id_valutazione'];
@@ -994,6 +1032,7 @@ if ($action === 'aggiorna_voto_finale') {
 	    $idUda = $_POST['id_uda'] ?? null;
 	    $idClasse = $_POST['id_classe'] ?? null;
 	    $idRubrica = $_POST['id_rubrica'] ?? null;
+	    $idGruppo = trim((string)($_POST['id_gruppo'] ?? ''));
         $votiPayload = $_POST['voti'] ?? null;
 
     if (!$idUda || !$idClasse) {
@@ -1001,15 +1040,48 @@ if ($action === 'aggiorna_voto_finale') {
         exit;
     }
 
+    if ($idGruppo === '') {
+        foreach ($udaGroupRepository->listForUda((string)$idUda) as $assignment) {
+            $candidateGroup = trim((string)($assignment['id_gruppo'] ?? ''));
+            if ($candidateGroup === '') {
+                continue;
+            }
+            if ($candidateGroup === (string)$idClasse) {
+                $idGruppo = $candidateGroup;
+                break;
+            }
+            $integration = $teachingGroupIntegrationRepository->findForGroupProvider($candidateGroup, 'classeviva');
+            if ($integration !== null && (string)($integration['external_context_id'] ?? '') === (string)$idClasse) {
+                $idGruppo = $candidateGroup;
+                break;
+            }
+        }
+    }
+
     // Trova tutte le valutazioni (filtriamo dopo)
 	    $where = [
-	        'id_uda' => $idUda,
-	        'id_classe_cv' => $idClasse
+	        'id_uda' => $idUda
 	    ];
+	    if ($idGruppo !== '') {
+	        $where['id_gruppo'] = $idGruppo;
+	    } else {
+	        $where['id_classe_cv'] = $idClasse;
+	    }
 	    if (!empty($idRubrica)) {
 	        $where['id_rubrica'] = $idRubrica;
 	    }
 	    $tutteValutazioni = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $where);
+    // Compatibilità con dati legacy salvati per la coppia classe/studente CV.
+    if (empty($tutteValutazioni) && $idGruppo !== '') {
+        $legacyWhere = [
+            'id_uda' => $idUda,
+            'id_classe_cv' => $idClasse
+        ];
+        if (!empty($idRubrica)) {
+            $legacyWhere['id_rubrica'] = $idRubrica;
+        }
+        $tutteValutazioni = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $legacyWhere);
+    }
 
     $selectedIds = [];
     if (!empty($votiPayload)) {
@@ -1033,7 +1105,7 @@ if ($action === 'aggiorna_voto_finale') {
 
     if (!empty($selectedIds)) {
         $votiDaCaricare = array_filter($tutteValutazioni, function($val) use ($selectedIds) {
-            return in_array((string)($val['id_studente_cv'] ?? ''), $selectedIds, true);
+            return in_array((string)($val['id_studente'] ?? $val['id_studente_cv'] ?? ''), $selectedIds, true);
         });
     } else {
         // default: solo non pubblicati
@@ -1064,10 +1136,7 @@ if ($action === 'aggiorna_voto_finale') {
                 continue;
             }
             $subjectId = $val['id_materia_cv'] ?? $materiaSelezionataId ?? '';
-            if ($subjectId === '' || $subjectId === null) {
-                $errori[] = "Studente {$val['id_studente_cv']}: ID materia mancante";
-                continue;
-            }
+            $studentIdForMessage = $val['id_studente'] ?? $val['id_studente_cv'] ?? '';
 
             $descrizioneBase = $val['valutazione_testuale'] ?? ($val['giudizio'] ?? '');
             $noteLines = [];
@@ -1082,12 +1151,14 @@ if ($action === 'aggiorna_voto_finale') {
             $dataValutazione = $val['data_valutazione'] ?? date('Y-m-d');
 
             // Inserisci nel registro locale VOTI
-            $dbAdapter->insertRow('VOTI', [
+            $votoPayload = [
                 'id_voto' => $votoId,
                 'id_uda' => $idUda,
-                'id_studente_cv' => $val['id_studente_cv'],
-                'id_classe_cv' => $idClasse,
-                'id_materia_cv' => $subjectId,
+                'id_gruppo' => $idGruppo !== '' ? $idGruppo : null,
+                'id_studente' => $idGruppo !== '' ? ($val['id_studente'] ?? $val['id_studente_cv'] ?? null) : null,
+                'id_studente_cv' => $idGruppo === '' ? ($val['id_studente_cv'] ?? null) : null,
+                'id_classe_cv' => $idGruppo === '' ? $idClasse : null,
+                'id_materia_cv' => ($subjectId !== '' && $subjectId !== null) ? $subjectId : null,
                 'tipo_voto' => 'orale',
                 'voto' => $votoFinale,
                 'giudizio' => $descrizione,
@@ -1099,7 +1170,8 @@ if ($action === 'aggiorna_voto_finale') {
                 'num_evidenze_negative' => null,
                 'num_evidenze_totali' => null,
                 'link_origine' => $linkOrigine
-            ]);
+            ];
+            $dbAdapter->insertRow('VOTI', $votoPayload);
 
             $updateData = ['pubblicato_cv' => 1];
             if (in_array('data_pubblicazione', $colsValRubrica, true)) {
@@ -1108,7 +1180,7 @@ if ($action === 'aggiorna_voto_finale') {
             $dbAdapter->updateRow('VALUTAZIONI_RUBRICA', 'id_valutazione', $val['id_valutazione'], $updateData);
             $successi++;
         } catch (Exception $e) {
-            $errori[] = "Studente {$val['id_studente_cv']}: " . $e->getMessage();
+            $errori[] = "Studente {$studentIdForMessage}: " . $e->getMessage();
         }
     }
 
@@ -2199,21 +2271,10 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                         </div>
 
                         <?php if (!empty($studenti)): ?>
-                        <div class="mb-3">
-                            <label class="form-label">Materia *</label>
-                            <select name="id_materia_cv" class="form-select" <?= ($gruppoSelezionatoId !== '' && empty($materieDisponibili)) ? '' : 'required' ?>>
-                                <option value="">-- Seleziona materia --</option>
-                                <?php foreach ($materieDisponibili as $mat): ?>
-                                    <option value="<?= htmlspecialchars($mat['id_materia_cv']) ?>"
-                                        <?= ($mat['id_materia_cv'] == $materiaSelezionataId) ? 'selected' : '' ?>>
-                                        <?= htmlspecialchars($mat['nome_materia']) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                            <?php if (empty($materieDisponibili)): ?>
-                                <div class="text-muted small mt-1">Nessuna materia ClasseViva associata: il voto verrà salvato nel gruppo didattico.</div>
-                            <?php endif; ?>
-                        </div>
+                        <!-- La materia è contestualizzata dal gruppo didattico e non
+                             viene mostrata nella grafica. Manteniamo l'eventuale
+                             associazione CV solo per compatibilità di pubblicazione. -->
+                        <input type="hidden" name="id_materia_cv" value="<?= htmlspecialchars((string)($materiaSelezionataId ?? '')) ?>">
 
                         <div class="mb-4">
                             <label class="form-label">Seleziona Studente *</label>
@@ -2854,6 +2915,7 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                     'id_studente': idStudente,
                     'id_uda': idUda,
                     'id_classe': idClasse,
+                    'id_gruppo': document.querySelector('input[name="id_gruppo"]')?.value || '',
                     'voto_finale': votoFinale,
                     'valutazione_testuale': val.valutazione_testuale
                 })
@@ -2964,6 +3026,7 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                     'action': 'carica_registro_blocco',
                     'id_uda': idUda,
                     'id_classe': idClasse,
+                    'id_gruppo': document.querySelector('input[name="id_gruppo"]')?.value || '',
                     'id_rubrica': idRubrica,
                     'voti': JSON.stringify(payload)
                 })

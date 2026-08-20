@@ -16,6 +16,7 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
 use App\Core\GradeImportStudentService;
+use App\Core\StudentIdentityRepository;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\UdaGroupRepository;
 use App\Core\UDAManager;
@@ -123,6 +124,124 @@ function findBestStudentMatch(string $username, array $studenti): ?array
     }
 
     return null;
+}
+
+/**
+ * Ricostruisce a runtime i nomi degli studenti per le righe già presenti in
+ * sessione. Le sessioni create prima della risoluzione provider-neutral possono
+ * contenere l'id interno (o l'id del gruppo) al posto del nome.
+ *
+ * @param array<int,array<string,mixed>> $rows
+ * @return array<int,array<string,mixed>>
+ */
+function resolveQuizStudentNames($dbAdapter, array $config, string $userId, ?string $groupId, array $rows): array
+{
+    $groupId = trim((string)$groupId);
+    if ($groupId === '' || $rows === []) {
+        return $rows;
+    }
+
+    $needsRuntimeName = false;
+    foreach ($rows as $row) {
+        $studentId = trim((string)($row['student_id'] ?? ''));
+        $currentName = trim((string)($row['student_name'] ?? ''));
+        if ($studentId !== '' && ($currentName === '' || $currentName === $studentId || $currentName === $groupId
+            || strcasecmp($currentName, 'ID: ' . $studentId) === 0)) {
+            $needsRuntimeName = true;
+            break;
+        }
+    }
+    if (!$needsRuntimeName) {
+        return $rows;
+    }
+
+    $nameByExternalId = [];
+    try {
+        $integrationRepository = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
+        $googleIntegration = null;
+        foreach ($integrationRepository->listForGroup($groupId) as $integration) {
+            if (($integration['provider'] ?? '') !== 'google_classroom'
+                || ($integration['stato'] ?? 'attivo') === 'disattivo') {
+                continue;
+            }
+            $contextId = trim((string)($integration['external_context_id'] ?? ''));
+            if ($contextId !== '') {
+                $googleIntegration = $contextId;
+                break;
+            }
+        }
+
+        if ($googleIntegration !== null) {
+            $courseStudents = (new GoogleClassroomAPI($config))->getCourseStudents($googleIntegration);
+            foreach ($courseStudents as $courseStudent) {
+                $externalId = trim((string)($courseStudent['id'] ?? ''));
+                $displayName = trim((string)($courseStudent['name'] ?? ''));
+                if ($externalId !== '' && $displayName !== '') {
+                    $nameByExternalId[$externalId] = $displayName;
+                }
+            }
+        }
+
+        $normalizeName = static function (string $value): string {
+            $value = trim($value);
+            $translit = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
+            if ($translit !== false && $translit !== null) {
+                $value = $translit;
+            }
+            $value = function_exists('mb_strtolower') ? mb_strtolower($value) : strtolower($value);
+            return trim((string)preg_replace('/[^a-z0-9]+/', ' ', $value));
+        };
+        $nameByNormalizedName = [];
+        foreach ($nameByExternalId as $displayName) {
+            $normalizedName = $normalizeName($displayName);
+            if ($normalizedName !== '') {
+                $nameByNormalizedName[$normalizedName] = $displayName;
+            }
+        }
+
+        // Collega l'id interno della riga all'identità Google del gruppo.
+        $identityRepository = new StudentIdentityRepository($dbAdapter, $userId);
+        $nameByInternalId = [];
+        foreach ($rows as $row) {
+            $studentId = trim((string)($row['student_id'] ?? ''));
+            if ($studentId === '') {
+                continue;
+            }
+            foreach ($identityRepository->listForStudent($studentId) as $identity) {
+                $externalId = trim((string)($identity['external_user_id'] ?? ''));
+                if (($identity['provider'] ?? '') === 'google_classroom'
+                    && $externalId !== '' && isset($nameByExternalId[$externalId])) {
+                    $nameByInternalId[$studentId] = $nameByExternalId[$externalId];
+                    break;
+                }
+            }
+        }
+
+        foreach ($rows as &$row) {
+            $studentId = trim((string)($row['student_id'] ?? ''));
+            if ($studentId === '') {
+                continue;
+            }
+            $currentName = trim((string)($row['student_name'] ?? ''));
+            if ($currentName !== '' && $currentName !== $studentId && $currentName !== $groupId
+                && strcasecmp($currentName, 'ID: ' . $studentId) !== 0) {
+                continue;
+            }
+            $resolvedName = $nameByInternalId[$studentId] ?? ($nameByExternalId[$studentId] ?? null);
+            if ($resolvedName === null) {
+                $normalizedUsername = $normalizeName((string)($row['username'] ?? ''));
+                $resolvedName = $nameByNormalizedName[$normalizedUsername] ?? null;
+            }
+            if ($resolvedName !== null && $resolvedName !== '') {
+                $row['student_name'] = $resolvedName;
+            }
+        }
+        unset($row);
+    } catch (Throwable $e) {
+        error_log('Impossibile ricostruire i nomi studenti dell’import Excel: ' . $e->getMessage());
+    }
+
+    return $rows;
 }
 
 /**
@@ -298,6 +417,7 @@ if ($step === 'upload' && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES
                 'matched' => ($studentId !== null && $studentId !== ''),
             ];
         }
+        $matchedRows = resolveQuizStudentNames($dbAdapter, $config, $userId, $groupId, $matchedRows);
 
         $_SESSION['import_quiz_excel_data'] = [
             'platform' => $platform,
@@ -464,6 +584,20 @@ if ($step === 'import' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// Aggiorna anche le anteprime già presenti in sessione dopo un cambio di
+// versione: il nome è sempre richiesto al roster runtime, mai sostituito con
+// l'id del gruppo didattico.
+if ($step === 'review' && is_array($importData)) {
+    $importData['rows'] = resolveQuizStudentNames(
+        $dbAdapter,
+        $config,
+        $userId,
+        $importData['id_gruppo'] ?? null,
+        is_array($importData['rows'] ?? null) ? $importData['rows'] : []
+    );
+    $_SESSION['import_quiz_excel_data'] = $importData;
+}
+
 // Calcola step corrente per la barra di avanzamento
 $currentStep = 1;
 if ($step === 'review') {
@@ -560,6 +694,7 @@ $progressWidth = $currentStep === 1 ? '33%' : ($currentStep === 2 ? '66%' : '100
             
 
             $totaleRisposte = count($rows);
+            $righeImportabili = count(array_filter($rows, static fn(array $row): bool => trim((string)($row['student_id'] ?? '')) !== ''));
             $sufficienti = count(array_filter($rows, fn($r) => ($r['voto'] ?? 0) >= 6));
             $insufficienti = $totaleRisposte - $sufficienti;
             $mediaVoti = $totaleRisposte > 0 ? array_sum(array_column($rows, 'voto')) / $totaleRisposte : 0;
@@ -662,8 +797,15 @@ $progressWidth = $currentStep === 1 ? '33%' : ($currentStep === 2 ? '66%' : '100
                                                         </td>
                                                         <td>
                                                             <?php if ($row['student_id']): ?>
+                                                                <?php
+                                                                $displayStudentName = trim((string)($row['student_name'] ?? ''));
+                                                                if ($displayStudentName === '' || $displayStudentName === (string)$groupId
+                                                                    || strcasecmp($displayStudentName, 'ID: ' . (string)$row['student_id']) === 0) {
+                                                                    $displayStudentName = 'Nome non disponibile';
+                                                                }
+                                                                ?>
                                                                 <input type="hidden" name="student_id[<?= $idx ?>]" value="<?= htmlspecialchars($row['student_id']) ?>">
-                                                                <span class="badge bg-success"><i class="bi bi-check-circle"></i> <?= htmlspecialchars((string)$row['student_name']) ?></span>
+                                                                <span class="badge bg-success"><i class="bi bi-check-circle"></i> <?= htmlspecialchars($displayStudentName) ?></span>
                                                             <?php else: ?>
                                                                 <span class="badge bg-warning text-dark">Non mappato</span>
                                                             <?php endif; ?>
@@ -721,9 +863,11 @@ $progressWidth = $currentStep === 1 ? '33%' : ($currentStep === 2 ? '66%' : '100
                                         </a>
                                         <div class="d-flex gap-2 align-items-center">
                                             <span class="text-muted small" id="publishInfo">
-                                                Seleziona classe, materia e tipo voto
+                                                <?= $righeImportabili > 0
+                                                    ? 'Seleziona le righe da importare'
+                                                    : 'Nessuna riga associata a uno studente' ?>
                                             </span>
-                                            <button type="submit" class="btn btn-success btn-lg" id="publishBtn" disabled>
+                                            <button type="submit" class="btn btn-success btn-lg" id="publishBtn" <?= $righeImportabili === 0 ? 'disabled' : '' ?>>
                                                 <i class="bi bi-cloud-upload"></i>
                                                 Importa <span id="publishCount">0</span> Voti
                                             </button>
