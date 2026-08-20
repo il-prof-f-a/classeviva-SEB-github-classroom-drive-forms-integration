@@ -20,6 +20,7 @@ session_start();
 $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\GoogleTokenProvider;
+use App\Core\GoogleFormScoreNormalizer;
 use App\Core\Database\DatabaseFactory;
 use App\Core\UDAManager;
 use App\Core\NotificationManager;
@@ -192,32 +193,6 @@ $cbmParams = [
 $cbmEnabled = false;
 $cbmFeedbackMap = loadCbmFeedbackMap(__DIR__ . '/../Materiale/CBM_mappa_feedback_v2.xlsx');
 
-/**
- * Calcola il punteggio massimo per ogni domanda (escludendo le domande di confidenza)
- * usando tutte le risposte disponibili. Restituisce array questionId => maxScore.
- */
-function computeMaxScoresPerQuestion(array $responses, array $confidenceIds = []): array
-{
-    $questionMaxScores = [];
-    foreach ($responses as $response) {
-        $answers = $response->getAnswers();
-        if (!$answers) {
-            continue;
-        }
-        foreach ($answers as $questionId => $answer) {
-            if (!empty($confidenceIds) && in_array($questionId, $confidenceIds, true)) {
-                continue;
-            }
-            $grade = $answer->getGrade();
-            $score = $grade ? ($grade->getScore() ?? 0.0) : 0.0;
-            if (!isset($questionMaxScores[$questionId]) || $score > $questionMaxScores[$questionId]) {
-                $questionMaxScores[$questionId] = $score;
-            }
-        }
-    }
-    return $questionMaxScores;
-}
-
 // Carica test se specificato
 if ($testId) {
     $allTests = $dbAdapter->findAll('TEST');
@@ -385,13 +360,16 @@ if ($step === 'read_responses' && $testId) {
 
         // Leggi form per ottenere struttura domande
         $formItems = [];
+        $questionIdByItemId = [];
         if ($form instanceof Form && $form->getItems()) {
             foreach ($form->getItems() as $item) {
                 $title = $item->getTitle();
                 $formItems[$item->getItemId()] = $title;
                 $questionObj = $item->getQuestionItem()?->getQuestion();
                 if ($questionObj && $questionObj->getQuestionId()) {
-                    $formItems[$questionObj->getQuestionId()] = $title;
+                    $questionId = (string)$questionObj->getQuestionId();
+                    $formItems[$questionId] = $title;
+                    $questionIdByItemId[(string)$item->getItemId()] = $questionId;
                 }
             }
         }
@@ -405,16 +383,23 @@ if ($step === 'read_responses' && $testId) {
         }
 
         // Parametri di valutazione
-        $punteggioMax = floatval($test['punteggio_max'] ?? 100);
         $sogliaMinima = floatval($test['soglia_sufficienza'] ?? 60);
         $cbmParams = $_SESSION['cbm_params'] ?? $cbmParams;
 
         // Mapping CBM domanda/confidenza (se presente)
         $cbmMappingRows = $cbmEnabled ? $dbAdapter->findWhere('TEST_CBM_MAPPING', ['id_test' => $testId]) : [];
         $cbmMappingByQuestion = [];
+        $normalizedCbmMappingRows = [];
         foreach ($cbmMappingRows as $row) {
             if (!empty($row['form_item_id'])) {
-                $cbmMappingByQuestion[$row['form_item_id']] = $row;
+                $questionId = $questionIdByItemId[(string)$row['form_item_id']]
+                    ?? (string)$row['form_item_id'];
+                $confidenceId = $questionIdByItemId[(string)($row['confidence_item_id'] ?? '')]
+                    ?? (string)($row['confidence_item_id'] ?? '');
+                $row['form_item_id'] = $questionId;
+                $row['confidence_item_id'] = $confidenceId;
+                $normalizedCbmMappingRows[] = $row;
+                $cbmMappingByQuestion[$questionId] = $row;
             }
         }
         if ($cbmEnabled && empty($cbmMappingByQuestion)) {
@@ -423,14 +408,36 @@ if ($step === 'read_responses' && $testId) {
             $cbmMappingWarning = "CBM era abilitato sul test ma non è presente un mapping domanda/confidenza. Import eseguito in modalità classica.";
         }
 
-        // Ricava i punteggi massimi per domanda (escludendo le domande di confidenza)
-        $confidenceIds = array_column($cbmMappingByQuestion, 'confidence_item_id');
-        $questionMaxScores = computeMaxScoresPerQuestion($responses, $confidenceIds);
-        $classicMax = max(1, array_sum($questionMaxScores));
-        $numQuestions = max(1, count($questionMaxScores));
-        $maxCbmPerQuestion = max($cbmParams['c1_correct'], $cbmParams['c2_correct'], $cbmParams['c3_correct']);
-        // Aggiorna il punteggio massimo del test sulla base dei pesi reali
+        // I massimi arrivano dalla configurazione del Form, non dai risultati osservati.
+        $confidenceIds = array_values(array_filter(array_map(
+            static fn(array $row): string => (string)($row['confidence_item_id'] ?? ''),
+            $cbmMappingByQuestion
+        )));
+        $questionMaxScores = GoogleFormScoreNormalizer::extractQuestionWeights(
+            $form->getItems() ?? [],
+            $confidenceIds
+        );
+        $classicMax = GoogleFormScoreNormalizer::totalPoints($questionMaxScores);
         $dbAdapter->updateRow('TEST', 'id_test', $testId, ['punteggio_max' => $classicMax]);
+
+        foreach ($normalizedCbmMappingRows as $mappingRow) {
+            $questionId = (string)($mappingRow['form_item_id'] ?? '');
+            $weight = $questionMaxScores[$questionId] ?? null;
+            if ($weight === null || empty($mappingRow['id_mapping'])) {
+                continue;
+            }
+            $dbAdapter->updateRow(
+                'TEST_CBM_MAPPING',
+                'id_mapping',
+                (string)$mappingRow['id_mapping'],
+                [
+                    'form_item_id' => $questionId,
+                    'confidence_item_id' => (string)($mappingRow['confidence_item_id'] ?? ''),
+                    'max_score' => $weight,
+                    'punteggio_domanda' => $weight,
+                ]
+            );
+        }
 
         // Calcola voti per ogni risposta
         foreach ($responses as $response) {
@@ -507,7 +514,7 @@ if ($step === 'read_responses' && $testId) {
                                 break;
                         }
 
-                        $w = $questionMaxScores[$questionId] ?? 1.0;
+                        $w = $maxQ;
                         $cbmTotal += $cbmScore * $w;
                         $cbmDetails[$questionId] = [
                             'conf_level' => $confLevel,
@@ -526,10 +533,14 @@ if ($step === 'read_responses' && $testId) {
                 }
             }
 
-            // Calcola voto numerico (scala 1-10) usando la base dei punteggi massimi
-            $percentuale = ($classicMax > 0) ? (($totalScore - 0.000000001) / $classicMax) * 100 : 0;
-            if ($percentuale < 0) $percentuale = 0;
-            if ($percentuale > 100) $percentuale = 100;
+            $normalizedScores = GoogleFormScoreNormalizer::normalize(
+                $totalScore - 0.000000001,
+                $cbmTotal,
+                $questionMaxScores
+            );
+
+            // Calcola voto numerico (scala 1-10) sulla base dei punti configurati nel Form.
+            $percentuale = max(0.0, min(100.0, $normalizedScores['classic_percent']));
             $votoNumerico = round(($percentuale / 100) * 10, 1);
             if ($votoNumerico <= 0) {
                 $votoNumerico = 1;
@@ -545,20 +556,8 @@ if ($step === 'read_responses' && $testId) {
             $cbmFeedback = null;
             $sufficiente = false;
             if ($cbmEnabled && !empty($cbmDetails)) {
-                // Normalizza CBM su scala 0..300 usando min/max teorici pesati per domanda (w_i = punteggio massimo domanda)
-                $minWrong = min($cbmParams['c1_wrong'], $cbmParams['c2_wrong'], $cbmParams['c3_wrong']);
-                $maxCorrect = max($cbmParams['c1_correct'], $cbmParams['c2_correct'], $cbmParams['c3_correct']);
-                $cbmMinRaw = 0;
-                $cbmMaxRaw = 0;
-                foreach ($questionMaxScores as $w) {
-                    $cbmMinRaw += $minWrong * $w;
-                    $cbmMaxRaw += $maxCorrect * $w;
-                }
-                $cbmRange = ($cbmMaxRaw - $cbmMinRaw);
-                if (abs($cbmRange) < 1e-9) {
-                    $cbmRange = 1; // fallback per evitare divisione per zero
-                }
-                $cbmPercentuale = $cbmTotal / $totalScore * 100.0;
+                // La formula storica normalizza il CBM sul totale punti del Form.
+                $cbmPercentuale = $normalizedScores['cbm_percent'];
 
                 // Voto CBM puro (solo per riferimento)
                 $cbmVotoNumerico = round(($cbmPercentuale / 100) * 10, 1);

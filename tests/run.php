@@ -410,6 +410,7 @@ $architectureTests = [
     'grade import name resolution' => __DIR__ . '/domain/grade_import_name_resolution.php',
     'classroom import provider-neutral' => __DIR__ . '/public/classroom_import_provider_neutral.php',
     'forms import provider-neutral' => __DIR__ . '/public/forms_import_provider_neutral.php',
+    'forms score normalization integration' => __DIR__ . '/public/forms_score_normalization_integration.php',
     'forms import email smtp' => __DIR__ . '/public/import_forms_email_smtp.php',
     'forms import publish button' => __DIR__ . '/public/import_forms_publish_button.php',
     'forms import email detail' => __DIR__ . '/public/import_forms_email_detail.php',
