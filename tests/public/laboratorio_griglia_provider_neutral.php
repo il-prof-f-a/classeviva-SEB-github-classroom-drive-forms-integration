@@ -16,6 +16,9 @@ foreach (['findByExternal', 'id_gruppo', 'votiCoda', 'votiRegistrati', 'statisti
         $failures[] = "riferimento provider-neutral/difensivo assente: " . $required;
     }
 }
+if (strpos($source, "uda_view.php?id=") === false || strpos($source, 'Torna all') === false) {
+    $failures[] = 'pulsante Torna all\'UDA assente nell\'header';
+}
 // Le tabelle migrate non devono piu' essere scritte con la coppia legacy CV.
 if (strpos($source, "'id_classe_cv' => \$idClasseCV") !== false) {
     $failures[] = "scrittura legacy id_classe_cv ancora presente su tabella migrata";

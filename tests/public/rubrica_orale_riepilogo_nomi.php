@@ -16,6 +16,9 @@ foreach (['$nomePerStudente = [];', 'nomePerStudente[$sid] = $nomeSt;', 'nomePer
         $failures[] = "ricostruzione nome studente assente: " . $required;
     }
 }
+if (strpos($source, '$internalAlias') === false || strpos($source, 'nomePerStudente[$internalAlias]') === false) {
+    $failures[] = 'alias interno dello studente non collegato al nome runtime';
+}
 if ($failures !== []) {
     foreach ($failures as $failure) {
         fwrite(STDERR, "FAIL: " . $failure . "\n");

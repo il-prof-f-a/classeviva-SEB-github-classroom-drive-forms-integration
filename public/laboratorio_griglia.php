@@ -886,7 +886,12 @@ try {
 <body>
     <?php
     $pageTitle = '<i class="bi bi-plus-slash-minus"></i> Laboratorio PiuOMeno - Griglia Classe';
-    $headerActions = '<a href="index.php" class="btn btn-outline-light btn-sm"><i class="bi bi-house"></i> Dashboard</a>';
+    $headerActions = '';
+    if ($udaId) {
+        $headerActions .= '<a href="uda_view.php?id=' . rawurlencode((string)$udaId) . '" class="btn btn-outline-light btn-sm">'
+            . '<i class="bi bi-arrow-left"></i> Torna all\'UDA</a>';
+    }
+    $headerActions .= '<a href="index.php" class="btn btn-outline-light btn-sm"><i class="bi bi-house"></i> Dashboard</a>';
     $headerContainerClass = 'container-fluid';
     include __DIR__ . '/partials/app_header.php';
     ?>
