@@ -228,10 +228,12 @@ class GoogleClassroomAPI
 
         $result = $this->service->courses_courseWorkMaterials->create($courseId, $courseWorkMaterial);
 
-        // alternateLink non è valorizzato per le bozze: ricostruisci l'URL canonico.
+        // alternateLink non è valorizzato per le bozze: ricostruisci l'URL canonico
+        // (gli ID nel path sono base64, non i valori numerici grezzi).
         $link = (string)($result->alternateLink ?? '');
         if ($link === '') {
-            $link = "https://classroom.google.com/c/{$courseId}/m/{$result->id}/details";
+            $b64 = static fn(string $id): string => rtrim(base64_encode($id), '=');
+            $link = "https://classroom.google.com/c/" . $b64($courseId) . "/m/" . $b64((string)$result->id) . "/details";
         }
 
         return [
@@ -333,10 +335,12 @@ class GoogleClassroomAPI
 
         $result = $this->service->courses_courseWork->create($courseId, $courseWork);
 
-        // alternateLink non è valorizzato per le bozze: ricostruisci l'URL canonico.
+        // alternateLink non è valorizzato per le bozze: ricostruisci l'URL canonico
+        // (gli ID nel path sono base64, non i valori numerici grezzi).
         $link = (string)($result->alternateLink ?? '');
         if ($link === '') {
-            $link = "https://classroom.google.com/c/{$courseId}/a/{$result->id}/details";
+            $b64 = static fn(string $id): string => rtrim(base64_encode($id), '=');
+            $link = "https://classroom.google.com/c/" . $b64($courseId) . "/a/" . $b64((string)$result->id) . "/details";
         }
 
         return [
