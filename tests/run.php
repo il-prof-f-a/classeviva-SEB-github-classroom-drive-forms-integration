@@ -6,6 +6,16 @@ $root = dirname(__DIR__);
 $failures = [];
 $passes = 0;
 
+$legacyClassesMigrationCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/database/legacy_classes_to_groups.php');
+exec($legacyClassesMigrationCommand . ' 2>&1', $legacyClassesMigrationOutput, $legacyClassesMigrationExitCode);
+if ($legacyClassesMigrationExitCode === 0) {
+    $passes++;
+    echo "PASS: migrazione classi legacy verso gruppi didattici\n";
+} else {
+    $failures[] = 'Migrazione classi legacy: ' . implode(' | ', $legacyClassesMigrationOutput);
+    echo "FAIL: migrazione classi legacy verso gruppi didattici\n";
+}
+
 $rubricaGroupOnlyCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/public/rubrica_orale_group_only.php');
 exec($rubricaGroupOnlyCommand . ' 2>&1', $rubricaGroupOnlyOutput, $rubricaGroupOnlyExitCode);
 if ($rubricaGroupOnlyExitCode === 0) {
