@@ -21,6 +21,7 @@ use App\Core\Database\DatabaseFactory;
 use App\Core\ProviderCapabilityResolver;
 use App\Core\UDAManager;
 use App\Core\StudentiManager;
+use App\Core\TeachingGroupIntegrationRepository;
 use App\Integration\ClasseVivaAPI;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -41,6 +42,14 @@ $error = null;
 $udaId = $_GET['id_uda'] ?? $_POST['uda_id'] ?? null;
 $idClasseCV = $_GET['id_classe_cv'] ?? $_POST['id_classe_cv'] ?? null;
 $idMateriaCV = $_GET['id_materia_cv'] ?? $_POST['id_materia_cv'] ?? null;
+
+// Risolvi il gruppo didattico dalla coppia classe/materia ClasseViva.
+$integrationRepo = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
+$groupId = null;
+if ($idClasseCV && $idMateriaCV) {
+    $cvIntegration = $integrationRepo->findByExternal('classeviva', (string)$idClasseCV, (string)$idMateriaCV);
+    $groupId = $cvIntegration['id_gruppo'] ?? null;
+}
 
 // Username docente
 $username = $_SESSION['username'] ?? 'docente';
@@ -81,8 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
         // Recupera evidenze in coda per lo studente
         $queueRows = $dbAdapter->findWhere('PLUSMINUS_QUEUE', [
             'id_uda' => $udaId,
-            'id_classe_cv' => $idClasseCV,
-            'id_materia_cv' => $idMateriaCV,
+            'id_gruppo' => $groupId,
             'id_studente_cv' => $idStud
         ]);
 
@@ -105,8 +113,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
         // Recupera evidenze già pubblicate (non registrate) e somma a quelle migrate
         $pubblicateRaw = $dbAdapter->findWhere('VALUTAZIONI_LABORATORIO', [
             'id_uda' => $udaId,
-            'id_classe_cv' => $idClasseCV,
-            'id_materia_cv' => $idMateriaCV,
+            'id_gruppo' => $groupId,
             'id_studente_cv' => $idStud
         ]);
         $pubblicate = array_filter($pubblicateRaw, function($row) {
@@ -178,8 +185,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
             'id_voto' => $votoId,
             'id_uda' => $udaId,
             'id_studente_cv' => $idStud,
-            'id_classe_cv' => $idClasseCV,
-            'id_materia_cv' => $idMateriaCV,
+            'id_gruppo' => $groupId,
             'voto' => $votoProposto,
             'tipo_voto' => 'pratico',
             'descrizione' => $descrizione,
@@ -218,8 +224,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
 
         $queue = $dbAdapter->findWhere('PLUSMINUS_QUEUE', [
             'id_uda' => $udaId,
-            'id_classe_cv' => $idClasseCV,
-            'id_materia_cv' => $idMateriaCV
+            'id_gruppo' => $groupId,
         ]);
         $queue = array_filter($queue, function($ev) {
             return ($ev['registrato'] ?? 0) == 0;
@@ -317,8 +322,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
                         $dbAdapter->insertRow('VALUTAZIONI_LABORATORIO', [
                             'id_valutazione' => $valId,
                             'id_uda' => $udaId,
-                            'id_materia_cv' => $idMateriaCV,
-                            'id_classe_cv' => $idClasseCV,
+                            'id_gruppo' => $groupId,
                             'id_studente_cv' => $studenteId,
                             'id_indicatore' => $ev['id_indicatore'] ?? '',
                             'nome_indicatore' => $ev['nome_indicatore'] ?? '',
@@ -351,6 +355,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
         exit;
     }
 }
+
+// Inizializzazione difensiva (evita warning se una query fallisce)
+$categorie = [];
+$indicatori = [];
+$studenti = [];
+$votiCoda = [];
+$votiPubblicati = [];
+$votiRegistrati = [];
+$pesiIndicatori = [];
+$udas = [];
+$classi = [];
+$statisticheClassi = [];
 
 try {
     // ============================================
@@ -413,8 +429,7 @@ try {
     $votiCodaRaw = [];
     if ($idClasseCV && $idMateriaCV && $udaId) {
         $votiCodaRaw = $dbAdapter->findWhere('PLUSMINUS_QUEUE', [
-            'id_classe_cv' => $idClasseCV,
-            'id_materia_cv' => $idMateriaCV,
+            'id_gruppo' => $groupId,
             'id_uda' => $udaId
         ]);
     }
@@ -457,8 +472,7 @@ try {
         // Controlla se foglio esiste
         try {
             $votiRegistratiRaw = $dbAdapter->findWhere('VALUTAZIONI_LABORATORIO', [
-                'id_classe_cv' => $idClasseCV,
-                'id_materia_cv' => $idMateriaCV,
+                'id_gruppo' => $groupId,
                 'id_uda' => $udaId
             ]);
         } catch (Exception $e) {

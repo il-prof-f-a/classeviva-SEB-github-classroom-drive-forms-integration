@@ -54,6 +54,25 @@ final class StudentReferenceGateway
         if ($internalId !== '') {
             $data['id_studente'] = $internalId;
         }
+
+        // Risolvi id_gruppo dalla coppia classe/materia ClasseViva (compatibilità pagine legacy).
+        $groupId = trim((string)($data['id_gruppo'] ?? ''));
+        if ($groupId === '') {
+            $classId = trim((string)($data['id_classe_cv'] ?? ''));
+            if ($classId !== '') {
+                $subjectId = trim((string)($data['id_materia_cv'] ?? ''));
+                $integration = (new TeachingGroupIntegrationRepository($db, $userId))
+                    ->findByExternal('classeviva', $classId, $subjectId === '' ? null : $subjectId);
+                if ($integration !== null) {
+                    $groupId = trim((string)($integration['id_gruppo'] ?? ''));
+                }
+            }
+        }
+        unset($data['id_classe_cv'], $data['id_materia_cv']);
+        if ($groupId !== '') {
+            $data['id_gruppo'] = $groupId;
+        }
+
         $data['id_utente'] = $userId;
 
         $allowed = SchemaDefinitions::getSheetColumns($table) ?? [];
@@ -80,6 +99,22 @@ final class StudentReferenceGateway
                     if ($provider === 'github_classroom') $row['github_username'] = $externalId;
                 }
             }
+            // Esponi anche la coppia classe/materia ClasseViva dal gruppo (compatibilità legacy).
+            $groupId = trim((string)($row['id_gruppo'] ?? ''));
+            if ($groupId !== '' && $userId !== '') {
+                foreach ($db->findWhere('GRUPPI_INTEGRAZIONI', [
+                    'id_utente' => $userId,
+                    'id_gruppo' => $groupId,
+                    'provider' => 'classeviva',
+                ]) as $integration) {
+                    if (($integration['stato'] ?? 'attivo') === 'disattivo') {
+                        continue;
+                    }
+                    $row['id_classe_cv'] = (string)($integration['external_context_id'] ?? '');
+                    $row['id_materia_cv'] = (string)($integration['external_subject_id'] ?? '');
+                    break;
+                }
+            }
             $result[] = $row;
         }
         return $result;
@@ -89,7 +124,8 @@ final class StudentReferenceGateway
     public static function hasExternalCriteria(array $where): bool
     {
         return (bool)array_intersect(array_keys($where), [
-            'id_studente_cv', 'id_studente_gc', 'github_username', 'nome_studente', 'email_studente'
+            'id_studente_cv', 'id_studente_gc', 'github_username', 'nome_studente', 'email_studente',
+            'id_classe_cv', 'id_materia_cv'
         ]);
     }
 
