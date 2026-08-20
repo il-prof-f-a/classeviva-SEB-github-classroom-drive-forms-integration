@@ -415,6 +415,7 @@ $architectureTests = [
     'UDA classroom publish service' => __DIR__ . '/domain/uda_classroom_publish.php',
     'uda view groups' => __DIR__ . '/public/uda_view_groups.php',
     'uda assign groups' => __DIR__ . '/public/uda_assign_groups.php',
+    'uda grades publish summary' => __DIR__ . '/public/uda_grades_publish_summary.php',
     'github assignment provider-neutral' => __DIR__ . '/public/github_assignment_provider_neutral.php',
     'github review provider-neutral' => __DIR__ . '/public/github_review_provider_neutral.php',
     'GitHub assignment roster' => __DIR__ . '/domain/github_assignment_roster.php',

@@ -12,6 +12,8 @@ use App\Core\Database\DatabaseFactory;
 $udaManager = new UDAManager($config);
 $error = null;
 $success = null;
+$publishSummary = $_SESSION['publish_summary'] ?? null;
+unset($_SESSION['publish_summary']);
 
 $cvConfig = $config['classeviva'] ?? [];
 $cvTokenPayload = is_array($cvConfig['token'] ?? null) ? $cvConfig['token'] : [];
@@ -286,6 +288,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_registro']
 
         $selectedVoti = $_POST['voti_ids'] ?? [];
         $published = 0;
+        $publishedSummary = [];
+        $classNames = [];
 
         foreach ($selectedVoti as $votoId) {
             // Trova voto
@@ -297,53 +301,89 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_registro']
                 }
             }
 
-            if ($voto) {
-                // Prepara dati per publishGrade (REST web)
-                $gradeType = $voto['tipo_valutazione'] ?? 'orale';
-                $gradeType = strtolower($gradeType);
-                if (!in_array($gradeType, ['orale','scritto','pratico'])) {
-                    $gradeType = 'orale';
-                }
-                $dataValRaw = $voto['data_valutazione'] ?? ($voto['data_creazione'] ?? '');
-                $dataVal = $dataValRaw ? date('Y-m-d', strtotime($dataValRaw)) : date('Y-m-d');
-
-                $desc = $voto['descrizione'] ?? ($voto['giudizio'] ?? '');
-                $noteCode = '';
-                if (!empty($voto['id_voto'])) {
-                    $noteCode = '<' . $voto['id_voto'] . '>';
-                }
-
-                $gradeData = [
-                    'student_id' => $voto['id_studente'],
-                    'class_id' => $voto['id_classe'] ?? '',
-                    'subject_id' => $voto['id_materia'] ?? '',
-                    'subject_name' => $voto['nome_materia'] ?? 'Materia',
-                    'grade_type' => $gradeType,
-                    'grade_value' => $voto['voto'],
-                    'date' => $dataVal,
-                    'description' => $desc,
-                    'notes' => $noteCode,
-                    'notes_2' => $desc,
-                    'link_origine' => $voto['link_origine'] ?? $linkOrigineDefault
-                ];
-
-                $resultCv = $classeVivaAPI->publishGrade($gradeData);
-
-                // Aggiorna DB: pubblicato=1 e id_annotazione_cv se disponibile
-                $updateData = [
-                    'pubblicato' => 1,
-                    'id_annotazione_cv' => $resultCv['response']['evento_id'] ?? ($resultCv['response']['id_evento'] ?? '')
-                ];
-                try {
-                    $dbAdapter->updateRow('VOTI', 'id_voto', $voto['id_voto'], $updateData);
-                } catch (Exception $e) {
-                    // Non bloccare la pubblicazione se l'update locale fallisce
-                    error_log("Aggiornamento VOTI dopo publishGrade fallito: " . $e->getMessage());
-                }
-                $published++;
+            if (!$voto) {
+                continue;
             }
+
+            // Prepara dati per publishGrade (REST web)
+            $gradeType = $voto['tipo_valutazione'] ?? 'orale';
+            $gradeType = strtolower($gradeType);
+            if (!in_array($gradeType, ['orale','scritto','pratico'])) {
+                $gradeType = 'orale';
+            }
+            $dataValRaw = $voto['data_valutazione'] ?? ($voto['data_creazione'] ?? '');
+            $dataVal = $dataValRaw ? date('Y-m-d', strtotime($dataValRaw)) : date('Y-m-d');
+
+            $desc = $voto['descrizione'] ?? ($voto['giudizio'] ?? '');
+            $noteCode = '';
+            if (!empty($voto['id_voto'])) {
+                $noteCode = '<' . $voto['id_voto'] . '>';
+            }
+
+            $gradeData = [
+                'student_id' => $voto['id_studente'],
+                'class_id' => $voto['id_classe'] ?? '',
+                'subject_id' => $voto['id_materia'] ?? '',
+                'subject_name' => $voto['nome_materia'] ?? 'Materia',
+                'grade_type' => $gradeType,
+                'grade_value' => $voto['voto'],
+                'date' => $dataVal,
+                'description' => $desc,
+                'notes' => $noteCode,
+                'notes_2' => $desc,
+                'link_origine' => $voto['link_origine'] ?? $linkOrigineDefault
+            ];
+
+            $resultCv = $classeVivaAPI->publishGrade($gradeData);
+
+            // Aggiorna DB: pubblicato=1 e id_annotazione_cv se disponibile
+            $updateData = [
+                'pubblicato' => 1,
+                'id_annotazione_cv' => $resultCv['response']['evento_id'] ?? ($resultCv['response']['id_evento'] ?? '')
+            ];
+            try {
+                $dbAdapter->updateRow('VOTI', 'id_voto', $voto['id_voto'], $updateData);
+            } catch (Exception $e) {
+                // Non bloccare la pubblicazione se l'update locale fallisce
+                error_log("Aggiornamento VOTI dopo publishGrade fallito: " . $e->getMessage());
+            }
+
+            // Nome classe (cache per class_id)
+            $classId = (string)($gradeData['class_id'] ?? '');
+            if (!isset($classNames[$classId])) {
+                $classNames[$classId] = $classId;
+                if ($classId !== '') {
+                    try {
+                        foreach ($classeVivaAPI->getClassesWithTeacherSubjects() as $cls) {
+                            if ((string)($cls['id'] ?? '') === $classId) {
+                                $classNames[$classId] = trim((string)($cls['name'] ?? $classId));
+                                break;
+                            }
+                        }
+                    } catch (Exception $e) {
+                        // lascia il fallback (id)
+                    }
+                }
+            }
+
+            $studentFull = trim(($voto['cognome_studente'] ?? '') . ' ' . ($voto['nome_studente'] ?? ''));
+            if ($studentFull === '') {
+                $studentFull = 'ID ' . ($voto['internal_student_id'] ?? $voto['id_studente'] ?? 'N/D');
+            }
+
+            $publishedSummary[] = [
+                'studente' => $studentFull,
+                'classe' => $classNames[$classId],
+                'voto' => (string)($resultCv['grade_value'] ?? $voto['voto']),
+                'colonna' => (int)($resultCv['slot_position'] ?? 0),
+                'tipo' => $gradeType,
+                'link' => 'https://web.spaggiari.eu/cvv/app/default/regvoti.php?classe_id=' . urlencode($classId),
+            ];
+
+            $published++;
         }
 
+        $_SESSION['publish_summary'] = $publishedSummary;
         $success = "{$published} voti pubblicati su ClasseViva";
         // ricarica per vedere stato aggiornato
         header("refresh:1;url=?id=" . urlencode($udaId));
@@ -380,6 +420,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_registro']
         <?php if ($success): ?>
             <div class="alert alert-success">
                 <i class="bi bi-check-circle"></i> <?= htmlspecialchars($success) ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if (!empty($publishSummary)): ?>
+            <div class="alert alert-success">
+                <h6 class="mb-2"><i class="bi bi-check-circle-fill"></i> Sono stati inseriti correttamente i voti nel registro elettronico di:</h6>
+                <ul class="mb-0 ps-3">
+                    <?php foreach ($publishSummary as $row): ?>
+                        <li>
+                            <?= htmlspecialchars($row['studente']) ?> classe <?= htmlspecialchars($row['classe']) ?>
+                            voto <strong><?= htmlspecialchars($row['voto']) ?></strong>
+                            su colonna <?= (int)$row['colonna'] ?> dei voti per il <?= htmlspecialchars($row['tipo']) ?>
+                            (<a href="<?= htmlspecialchars($row['link']) ?>" target="_blank" rel="noopener">link</a>)
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
             </div>
         <?php endif; ?>
 

@@ -1286,7 +1286,11 @@ class ClasseVivaAPI
                     'response' => $jsonResponse ?: $bodyTrim,
                     'grade_type' => $gradeData['grade_type'],
                     'grade_value' => $valoreDisplay,
-                    'student_id' => $gradeData['student_id']
+                    'student_id' => $gradeData['student_id'],
+                    'slot_position' => $slotPosition,
+                    'descrizione_1' => $descrizione1,
+                    'class_id' => $gradeData['class_id'],
+                    'subject_id' => $gradeData['subject_id'],
                 ];
 
                 // Invia notifica email (se abilitata nel config)
