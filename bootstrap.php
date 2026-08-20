@@ -128,6 +128,12 @@ function buildConfigFromEnv(): array {
             'debug_mode' => filter_var(env('APP_DEBUG', false), FILTER_VALIDATE_BOOLEAN),
             'maintenance_mode' => filter_var(env('MAINTENANCE_MODE', false), FILTER_VALIDATE_BOOLEAN),
         ],
+        'security' => [
+            'test_access' => [
+                'allowed_emails' => env('TEST_ALLOWED_EMAILS', ''),
+                'notification_email' => env('TEST_ACCESS_NOTIFICATION_EMAIL', ''),
+            ],
+        ],
         'paths' => [
             'base' => env('PATH_BASE', ROOT_PATH . '/'),
             'storage' => env('PATH_STORAGE', 'storage/'),
