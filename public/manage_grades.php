@@ -204,7 +204,7 @@ if ($selectedClassId && $selectedSubjectId) {
     $cvUser = $config['classeviva']['token']['ident'] ?? 'Docente';
     $pageSubtitle = 'Docente: ' . $cvUser;
     $headerActions = '<a href="verify_grades.php" class="btn btn-warning btn-sm">'
-        . '<i class="fas fa-sync-alt me-1"></i>Verifica e Sincronizza</a>';
+        . '<i class="fas fa-sync-alt me-1"></i>Gestione voti Classe Viva</a>';
     include __DIR__ . '/partials/app_header.php';
     ?>
 

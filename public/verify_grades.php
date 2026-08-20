@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Verifica e Sincronizzazione Voti
+ * Gestione voti Classe Viva
  *
  * Mostra tutti i voti del registro VOTI interno e verifica la loro presenza su ClasseViva.
  * Permette di eliminare i voti non più presenti su ClasseViva per sincronizzare lo stato.
@@ -225,7 +225,7 @@ if ($cvReady && $cv) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Verifica e Sincronizzazione Voti</title>
+    <title>Gestione voti Classe Viva</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
@@ -276,7 +276,7 @@ if ($cvReady && $cv) {
 </head>
 <body>
     <?php
-    $pageTitle = '<i class="bi bi-check2-circle"></i> Verifica e Sincronizzazione Voti';
+    $pageTitle = '<i class="bi bi-check2-circle"></i> Gestione voti Classe Viva';
     $cvUser = $config['classeviva']['token']['ident'] ?? 'Docente';
     ob_start();
     ?>

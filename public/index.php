@@ -451,14 +451,11 @@ function sortLink(string $field, string $label, string $currentField, string $cu
                     </div>
                     <div class="card-body">
                         <div class="d-grid gap-2">
-                            <a href="studenti_sync.php" class="btn btn-outline-info btn-sm">
-                                <i class="bi bi-arrow-repeat"></i> Sincronizzazione Studenti
-                            </a>
                             <a href="manage_grades.php" class="btn btn-outline-info btn-sm">
                                 <i class="bi bi-clipboard-data"></i> Gestione Voti
                             </a>
                             <a href="verify_grades.php" class="btn btn-outline-info btn-sm">
-                                <i class="bi bi-check2-circle"></i> Verifica & Sincronizza Voti
+                                <i class="bi bi-check2-circle"></i> Gestione voti Classe Viva
                             </a>
                             <a href="rubrica_orale_v2.php" class="btn btn-outline-info btn-sm">
                                 <i class="bi bi-chat-left-text"></i> Rubrica Orale

@@ -426,6 +426,7 @@ $architectureTests = [
     'GitHub assignment grade repos' => __DIR__ . '/domain/github_assignment_grade_repos.php',
     'wizard catalog groups' => __DIR__ . '/public/wizard_catalog_groups.php',
     'legacy mapping banner' => __DIR__ . '/public/legacy_mapping_banner.php',
+    'portal navigation cleanup' => __DIR__ . '/public/portal_navigation_cleanup.php',
     'CV token gate on mapping pages' => __DIR__ . '/public/provider_neutral_gate.php',
     'resolver consumed' => __DIR__ . '/public/resolver_consumed.php',
     'rubrica orale provider-neutral' => __DIR__ . '/public/rubrica_orale_provider_neutral.php',

@@ -499,34 +499,6 @@ foreach ($checks as $check) {
             </div>
         </div>
 
-        <!-- Actions -->
-        <div class="row mt-4">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-header bg-primary text-white">
-                        <h5 class="mb-0"><i class="bi bi-tools"></i> Azioni Disponibili</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-4 mb-3">
-                                <a href="../tests/test_database.php" class="btn btn-outline-primary w-100" target="_blank">
-                                    <i class="bi bi-database"></i> Test Database
-                                </a>
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <a href="../tests/test_integrations.php" class="btn btn-outline-success w-100" target="_blank">
-                                    <i class="bi bi-plug"></i> Test Integrazioni API
-                                </a>
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <a href="index.php" class="btn btn-outline-secondary w-100">
-                                    <i class="bi bi-arrow-left"></i> Torna alla Dashboard
-                                </a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
         <?php if ($cvTokenNotice && $checks['classeviva']['status'] !== 'success'): ?>
             <div class="alert alert-warning mt-4">
                 <i class="bi bi-exclamation-triangle-fill me-2"></i>

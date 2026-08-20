@@ -410,7 +410,7 @@ $showWorkflow = in_array($section, ['workflow', 'full']);
                                     <i class="bi bi-card-checklist"></i> Gestisci e Pubblica Voti
                                 </a>
                                 <a href="verify_grades.php" class="btn btn-outline-secondary btn-sm">
-                                    <i class="bi bi-search"></i> Verifica Voti Pubblicati
+                                    <i class="bi bi-search"></i> Gestione voti Classe Viva
                                 </a>
                             </div>
                         </div>
@@ -430,7 +430,7 @@ $showWorkflow = in_array($section, ['workflow', 'full']);
                             <ul class="small">
                                 <li>
                                     <strong>Resoconto voti registro</strong>: Confronta voti piattaforma vs voti manuali
-                                    <br><a href="verify_grades.php" class="text-primary small">→ verify_grades.php</a>
+                                    <br><a href="verify_grades.php" class="text-primary small">→ Gestione voti Classe Viva</a>
                                 </li>
                                 <li>
                                     <strong>Statistiche sommarie</strong>: Medie per classe, distribuzione voti, trend temporali
