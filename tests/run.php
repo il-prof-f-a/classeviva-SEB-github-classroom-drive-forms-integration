@@ -404,6 +404,7 @@ $architectureTests = [
     'provider capability resolver' => __DIR__ . '/domain/provider_capability_resolver.php',
     'provider capability resolver group' => __DIR__ . '/domain/provider_capability_resolver_group.php',
     'grade import student service' => __DIR__ . '/domain/grade_import_student_service.php',
+    'Google Forms score normalizer' => __DIR__ . '/domain/google_form_score_normalizer.php',
     'grade import google id resolution' => __DIR__ . '/domain/grade_import_google_id_resolution.php',
     'grade register target' => __DIR__ . '/domain/grade_register_target.php',
     'grade import name resolution' => __DIR__ . '/domain/grade_import_name_resolution.php',
