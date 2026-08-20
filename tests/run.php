@@ -408,6 +408,7 @@ $architectureTests = [
     'grade import name resolution' => __DIR__ . '/domain/grade_import_name_resolution.php',
     'classroom import provider-neutral' => __DIR__ . '/public/classroom_import_provider_neutral.php',
     'forms import provider-neutral' => __DIR__ . '/public/forms_import_provider_neutral.php',
+    'forms import email smtp' => __DIR__ . '/public/import_forms_email_smtp.php',
     'kahoot import provider-neutral' => __DIR__ . '/public/kahoot_import_provider_neutral.php',
     'excel import provider-neutral' => __DIR__ . '/public/excel_import_provider_neutral.php',
     'publish provider-neutral' => __DIR__ . '/public/publish_provider_neutral.php',

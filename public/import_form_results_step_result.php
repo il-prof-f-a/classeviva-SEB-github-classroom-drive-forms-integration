@@ -189,7 +189,7 @@ unset($_SESSION['email_sent']);
                             L'email riepilogativa non e' stata consegnata. Controlla la configurazione SMTP e verifica i log email.
                         </p>
                         <p class="small text-muted mt-2 mb-0">
-                            La funzione `mail()` ha restituito false, quindi il sistema non ha potuto inviare l'email. Assicurati che SMTP sia attivo e raggiungibile.
+                            L'invio tramite SMTP non è riuscito. Verifica la configurazione SMTP (host, porta, credenziali) nelle integrazioni e i log email.
                         </p>
                     </div>
                 </div>

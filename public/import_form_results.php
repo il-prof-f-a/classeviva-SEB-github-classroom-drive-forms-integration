@@ -22,6 +22,7 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 use App\Core\GoogleTokenProvider;
 use App\Core\Database\DatabaseFactory;
 use App\Core\UDAManager;
+use App\Core\NotificationManager;
 use App\Core\GradeImportStudentService;
 use App\Integration\GoogleClassroomAPI;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -969,7 +970,10 @@ if ($step === 'publish_grades' && $_SERVER['REQUEST_METHOD'] === 'POST') {
  * Invia email riepilogativa con tutti i voti importati
  */
 function inviaEmailRiepilogativa($pubblicati, $test, $uda, $errori, $config) {
-    $emailDocente = $config['notifications']['email_docente'] ?? null;
+    // Destinatario: test_recipient (o from_address) della config SMTP per-utente,
+    // con fallback legacy su email_docente.
+    $emailCfg = $config['notifications']['email'] ?? [];
+    $emailDocente = $emailCfg['test_recipient'] ?? ($emailCfg['from_address'] ?? ($config['notifications']['email_docente'] ?? null));
 
     if (!$emailDocente) {
         return false;
@@ -1031,14 +1035,11 @@ function inviaEmailRiepilogativa($pubblicati, $test, $uda, $errori, $config) {
     $emailBody .= "Data: " . date('d/m/Y H:i:s');
     $emailBody .= "</p></body></html>";
 
-    // Invia email
-    $headers = "MIME-Version: 1.0\r\n";
-    $headers .= "Content-type: text/html; charset=utf-8\r\n";
-    $headers .= "From: Sistema UDA <email@email.it>\r\n";
-
+    // Invia email via SMTP (NotificationManager/PHPMailer), non via mail().
     $subject = "Voti Importati: " . $test['nome'] . " ($totale studenti)";
 
-    return mail($emailDocente, $subject, $emailBody, $headers);
+    $notificationManager = new NotificationManager($config);
+    return $notificationManager->sendHtmlEmail($emailDocente, $subject, $emailBody);
 }
 
 ?>

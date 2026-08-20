@@ -87,6 +87,30 @@ class NotificationManager
     }
 
     /**
+     * Invia un'email HTML generica al destinatario indicato (es. riepilogo import
+     * voti) usando la configurazione SMTP per-utente.
+     */
+    public function sendHtmlEmail(string $to, string $subject, string $htmlBody): bool
+    {
+        if (!($this->config['notifications']['email']['enabled'] ?? false)) {
+            return false;
+        }
+
+        try {
+            $mail = $this->createMailer();
+            $mail->addAddress($to);
+            $mail->Subject = $subject;
+            $mail->Body = $htmlBody;
+            $mail->AltBody = $this->htmlToPlainText($htmlBody);
+
+            return $mail->send();
+        } catch (PHPMailerException $e) {
+            $this->logger->error('Failed to send HTML email', ['error' => $e->getMessage()]);
+            return false;
+        }
+    }
+
+    /**
      * Crea istanza PHPMailer configurata
      */
     private function createMailer(): PHPMailer
