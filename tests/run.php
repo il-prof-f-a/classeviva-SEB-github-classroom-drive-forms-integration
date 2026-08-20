@@ -428,6 +428,7 @@ $architectureTests = [
     'legacy mapping banner' => __DIR__ . '/public/legacy_mapping_banner.php',
     'CV token gate on mapping pages' => __DIR__ . '/public/provider_neutral_gate.php',
     'resolver consumed' => __DIR__ . '/public/resolver_consumed.php',
+    'rubrica orale provider-neutral' => __DIR__ . '/public/rubrica_orale_provider_neutral.php',
     'provider-neutral mappings' => __DIR__ . '/domain/provider_neutral_mappings.php',
     'GitHub mapping CV pair fallback' => __DIR__ . '/domain/provider_neutral_github_cv_pair.php',
     'ClasseViva student sync' => __DIR__ . '/integration/classeviva_student_sync.php',

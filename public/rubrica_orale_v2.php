@@ -14,9 +14,11 @@
 
 use App\Core\ClasseVivaTokenGuard;
 use App\Core\Database\DatabaseFactory;
+use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\UDAManager;
 use App\Core\RubricManager;
 use App\Integration\ClasseVivaAPI;
+use App\Integration\GoogleClassroomAPI;
 use App\Integration\GoogleDriveAPI;
 
 define('REQUIRES_CLASSEVIVA', true);
@@ -42,6 +44,7 @@ $materieDisponibili = [];
 $domandeUDA = [];
 $subjectNameById = [];
 $classiUda = [];
+$studentiProvider = 'classeviva';
 $idUdaDaGet = $_GET['id_uda'] ?? null;
 $idClasseDaGet = $_GET['id_classe'] ?? null;
 $templateDownloadUrl = app_url('Materiale/' . rawurlencode('Rubrica valutazione orale VUOTA.xlsx'));
@@ -217,10 +220,8 @@ function formatVotoLabel($voto, int $decimals = 2): string {
 }
 
 try {
-    if (!$cvReady) {
-        throw new Exception($cvNotice);
-    }
-
+    // La generazione del voto non dipende da ClasseViva: la pagina funziona anche
+    // con una classe mappata su un altro provider. Solo la pubblicazione richiede CV.
     $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
     $udaManager = new UDAManager($config);
     $rubricManager = new RubricManager($dbAdapter, $config);
@@ -518,6 +519,8 @@ if ($action === 'salva_valutazione_studente') {
     $idUda = $_POST['id_uda'] ?? $idUdaDaGet;
     $idRubrica = $_POST['id_rubrica'] ?? null;
     $idClasseCV = $_POST['id_classe_cv'] ?? $idClasseDaGet;
+    $idStudenteProvider = $_POST['id_studente_provider'] ?? 'classeviva';
+    $idStudenteField = ($idStudenteProvider === 'google_classroom') ? 'id_studente_gc' : 'id_studente_cv';
 
     // Prepara i dati JSON con tutti i livelli selezionati
     $datiJsonArray = [
@@ -536,7 +539,7 @@ if ($action === 'salva_valutazione_studente') {
 	    $esistente = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', [
 	        'id_uda' => $idUda,
 	        'id_classe_cv' => $idClasseCV,
-	        'id_studente_cv' => $idStudente,
+	        $idStudenteField => $idStudente,
 	        'id_rubrica' => $idRubrica
 	    ]);
 
@@ -576,7 +579,7 @@ if ($action === 'salva_valutazione_studente') {
             'id_rubrica' => $idRubrica,
             'id_uda' => $idUda,
             'id_classe_cv' => $idClasseCV,
-            'id_studente_cv' => $idStudente,
+            $idStudenteField => $idStudente,
             'id_materia_cv' => $_POST['id_materia_cv'] ?? $esistente[0]['id_materia_cv'] ?? $materiaSelezionataId
         ];
         if ($storeFinaleColumn && $votoFinale !== null && $votoFinale !== '') {
@@ -591,7 +594,7 @@ if ($action === 'salva_valutazione_studente') {
             'id_valutazione' => 'VAL_RUB_' . uniqid(),
             'id_uda' => $idUda,
             'id_classe_cv' => $idClasseCV,
-            'id_studente_cv' => $idStudente,
+            $idStudenteField => $idStudente,
             'nome_studente' => $nomeStudente,
             'id_rubrica' => $idRubrica,
             'voto_numerico' => $votoOriginale,
@@ -1414,6 +1417,73 @@ if ($idClasseDaGet) {
             $error = "Impossibile caricare gli studenti.";
         }
     }
+
+    // Fallback provider-neutrale: recupera i nomi da Google Classroom quando il gruppo
+    // mappato ha un corso collegato (generare il voto non dipende da ClasseViva).
+    if (empty($studenti)) {
+        $classiUdaFallback = $classiUda;
+        if ($classiUdaFallback === [] && $udaSelezionata) {
+            $classiUdaFallback = array_filter(
+                $dbAdapter->findAll('CLASSI_ASSEGNATE'),
+                static fn(array $ca): bool => ($ca['id_uda'] ?? '') === $udaSelezionata->id_uda
+            );
+        }
+        foreach ($classiUdaFallback as $ca) {
+            if ((string)($ca['id_classe'] ?? '') !== (string)$idClasseDaGet) {
+                continue;
+            }
+            $groupIdFallback = trim((string)($ca['id_gruppo'] ?? ''));
+            $ownerId = trim((string)($ca['id_utente'] ?? 'system')) ?: 'system';
+            if ($groupIdFallback === '') {
+                continue;
+            }
+            try {
+                $integrationRepo = new TeachingGroupIntegrationRepository($dbAdapter, $ownerId);
+                $gcIntegration = $integrationRepo->findForGroupProvider($groupIdFallback, 'google_classroom');
+                if ($gcIntegration === null || empty($gcIntegration['external_context_id'])) {
+                    continue;
+                }
+                $gcApi = new GoogleClassroomAPI($config);
+                $gcStudents = $gcApi->getCourseStudents((string)$gcIntegration['external_context_id']);
+                $identityRepo = new \App\Core\StudentIdentityRepository($dbAdapter, $ownerId);
+                foreach ($gcStudents as $st) {
+                    $nomeCompletoGc = trim((string)($st['name'] ?? ''));
+                    $gcStudentId = (string)($st['id'] ?? '');
+                    if ($nomeCompletoGc === '' || $gcStudentId === '') {
+                        continue;
+                    }
+                    // Se lo studente è già fuso con un'identità ClasseViva, usa l'ID CV
+                    // così il resto della pagina continua a funzionare invariato.
+                    $gcIdentity = $identityRepo->findByExternal('google_classroom', $gcStudentId);
+                    $idDaUsare = $gcStudentId;
+                    $providerDaUsare = 'google_classroom';
+                    if ($gcIdentity !== null) {
+                        foreach ($identityRepo->listForStudent((string)$gcIdentity['id_studente']) as $idn) {
+                            if (($idn['provider'] ?? '') === 'classeviva' && !empty($idn['external_user_id'])) {
+                                $idDaUsare = (string)$idn['external_user_id'];
+                                $providerDaUsare = 'classeviva';
+                                break;
+                            }
+                        }
+                    }
+                    $studenti[] = [
+                        'id' => $idDaUsare,
+                        'provider' => $providerDaUsare,
+                        'nome_completo' => $nomeCompletoGc,
+                        'cognome' => '',
+                        'nome' => $nomeCompletoGc,
+                    ];
+                }
+                if (!empty($studenti)) {
+                    // Provider effettivo del primo studente caricato (l'elenco è omogeneo).
+                    $studentiProvider = (string)($studenti[0]['provider'] ?? 'classeviva');
+                }
+                break;
+            } catch (Exception $e) {
+                error_log('Errore caricamento studenti Google Classroom: ' . $e->getMessage());
+            }
+        }
+    }
 }
 
 // Carica valutazioni salvate dal DATABASE per questa UDA e classe
@@ -1704,6 +1774,7 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                 <input type="hidden" name="id_uda" value="<?= htmlspecialchars($idUdaDaGet) ?>">
                 <input type="hidden" name="id_rubrica" value="<?= htmlspecialchars($rubrica->id_rubrica ?? '') ?>">
                 <input type="hidden" name="id_classe_cv" value="<?= htmlspecialchars($idClasseDaGet) ?>">
+                <input type="hidden" name="id_studente_provider" id="idStudenteProvider" value="<?= htmlspecialchars($studentiProvider) ?>">
 
                 <div class="card mb-4">
                     <div class="card-header bg-warning">
@@ -1770,6 +1841,7 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                                 <option value="">-- Seleziona uno studente --</option>
                                 <?php foreach ($studenti as $st):
                                     $idStud = $st['id'];
+                                    $providerStud = $st['provider'] ?? 'classeviva';
                                     $nomeCompleto = $st['nome_completo'];
 
                                     // Controlla se ha un voto
@@ -1789,7 +1861,8 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                                     }
                                 ?>
                                     <option value="<?= htmlspecialchars($idStud) ?>"
-                                            data-nome="<?= htmlspecialchars($nomeCompleto) ?>">
+                                            data-nome="<?= htmlspecialchars($nomeCompleto) ?>"
+                                            data-provider="<?= htmlspecialchars($providerStud) ?>">
                                         <?= htmlspecialchars($nomeCompleto . $testoVoto) ?>
                                     </option>
                                 <?php endforeach; ?>
@@ -2194,6 +2267,9 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
             const selectEl = document.getElementById('selectStudente');
             const selectedOption = selectEl.options[selectEl.selectedIndex];
             const nomeCompleto = selectedOption ? (selectedOption.getAttribute('data-nome') || '') : '';
+            const providerStud = selectedOption ? (selectedOption.getAttribute('data-provider') || 'classeviva') : 'classeviva';
+            const providerEl = document.getElementById('idStudenteProvider');
+            if (providerEl) providerEl.value = providerStud;
 
             aggiornaBadgeStudente(nomeCompleto);
 
