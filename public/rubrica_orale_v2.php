@@ -1736,6 +1736,33 @@ foreach ($studenti as $st) {
     $nomeSt = trim((string)($st['nome_completo'] ?? ''));
     if ($sid !== '' && $nomeSt !== '') {
         $nomePerStudente[$sid] = $nomeSt;
+
+        // Le valutazioni salvate usano l'id interno, mentre il roster puo'
+        // essere indicizzato con l'id esterno del provider. Collega entrambi
+        // gli alias al nome runtime senza persistere dati personali.
+        $internalAlias = trim((string)($st['id_studente_internal'] ?? ''));
+        if ($internalAlias === '' && ($st['provider'] ?? '') === 'internal') {
+            $internalAlias = $sid;
+        }
+        if ($internalAlias === '') {
+            foreach (RuntimeStudentNameResolver::PROVIDER_PRIORITY as $providerAlias) {
+                $identityAlias = $studentIdentityRepository->findByExternal($providerAlias, $sid);
+                $candidateInternal = trim((string)($identityAlias['id_studente'] ?? ''));
+                if ($candidateInternal !== '') {
+                    $internalAlias = $candidateInternal;
+                    break;
+                }
+            }
+        }
+        if ($internalAlias !== '') {
+            $nomePerStudente[$internalAlias] = $nomeSt;
+            foreach ($studentIdentityRepository->listForStudent($internalAlias) as $identityAlias) {
+                $externalAlias = trim((string)($identityAlias['external_user_id'] ?? ''));
+                if ($externalAlias !== '') {
+                    $nomePerStudente[$externalAlias] = $nomeSt;
+                }
+            }
+        }
     }
 }
 
