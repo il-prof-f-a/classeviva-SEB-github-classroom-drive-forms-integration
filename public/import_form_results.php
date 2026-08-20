@@ -716,6 +716,7 @@ if ($step === 'read_responses' && $testId) {
 
         // Salva in sessione per step successivo
         $_SESSION['form_responses'] = $formResponses;
+        $_SESSION['form_items'] = $formItems;
         $_SESSION['test_id'] = $testId;
         $_SESSION['uda_id'] = $udaId;
         $_SESSION['resolution'] = $resolution;
@@ -930,12 +931,28 @@ if ($step === 'publish_grades' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
+            $resolutionMatches = $_SESSION['resolution']['matches'] ?? [];
+            $studentName = (string)($resolutionMatches[strtolower($studentEmail)]['display_name'] ?? $studentEmail);
+            if ($studentName === '') {
+                $studentName = $studentEmail;
+            }
+
             $pubblicati[] = [
                 'email' => $studentEmail,
-                'nome' => $studentEmail,
+                'nome' => $studentName,
                 'voto' => $voto,
                 'percentuale' => $percentuale,
-                'tipo_voto' => $gradeTypeLabel
+                'tipo_voto' => $gradeTypeLabel,
+                'total_score' => $responseData['total_score'] ?? 0,
+                'max_score' => $responseData['max_score'] ?? 0,
+                'voto_numerico' => $responseData['voto_numerico'] ?? null,
+                'cbm_total_score' => $responseData['cbm_total_score'] ?? null,
+                'cbm_percentuale' => $responseData['cbm_percentuale'] ?? null,
+                'cbm_voto_finale' => $responseData['cbm_voto_finale'] ?? null,
+                'cbm_feedback_label' => (string)($responseData['cbm_feedback_label'] ?? ''),
+                'cbm_feedback_text' => (string)($responseData['cbm_feedback_text'] ?? ''),
+                'answers' => $responseData['answers'] ?? [],
+                'cbm_details' => $responseData['cbm_details'] ?? [],
             ];
         }
 
@@ -949,7 +966,7 @@ if ($step === 'publish_grades' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         // Invia email riepilogativa
         $emailSent = false;
         if (!empty($pubblicati)) {
-            $emailSent = inviaEmailRiepilogativa($pubblicati, $test, $uda, $errori, $config);
+            $emailSent = inviaEmailRiepilogativa($pubblicati, $test, $uda, $errori, $config, $_SESSION['form_items'] ?? []);
             if (!$emailSent) {
                 $errori[] = 'Email riepilogativa non inviata: controlla la configurazione SMTP.';
             }
@@ -969,7 +986,7 @@ if ($step === 'publish_grades' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 /**
  * Invia email riepilogativa con tutti i voti importati
  */
-function inviaEmailRiepilogativa($pubblicati, $test, $uda, $errori, $config) {
+function inviaEmailRiepilogativa($pubblicati, $test, $uda, $errori, $config, $formItems = []) {
     // Destinatario: test_recipient (o from_address) della config SMTP per-utente,
     // con fallback legacy su email_docente.
     $emailCfg = $config['notifications']['email'] ?? [];
@@ -1007,6 +1024,44 @@ function inviaEmailRiepilogativa($pubblicati, $test, $uda, $errori, $config) {
 
     $emailBody .= "</table>";
 
+    // Dettaglio per studente: risposte date e composizione del voto
+    $emailBody .= "<h3>Dettaglio Risposte e Composizione Voto</h3>";
+    foreach ($pubblicati as $p) {
+        $emailBody .= "<div style='margin-bottom:16px;'>";
+        $emailBody .= "<strong>" . htmlspecialchars($p['nome'] ?? $p['email']) . "</strong> (" . htmlspecialchars($p['email'] ?? '') . ")";
+        $emailBody .= " &mdash; Voto finale: <strong>" . htmlspecialchars((string)($p['voto'] ?? '')) . "</strong> (" . round((float)($p['percentuale'] ?? 0), 1) . "%)<br>";
+        $emailBody .= "Composizione: Punteggio classico " . ($p['total_score'] ?? 0) . "/" . ($p['max_score'] ?? 0) . " &rarr; voto " . number_format((float)($p['voto_numerico'] ?? 0), 2);
+        if (isset($p['cbm_voto_finale']) && $p['cbm_voto_finale'] !== null) {
+            $emailBody .= "; CBM " . ($p['cbm_total_score'] ?? 0) . "/" . ($p['max_score'] ?? 0) . " (" . round((float)($p['cbm_percentuale'] ?? 0), 1) . "%) &rarr; voto CBM " . number_format((float)$p['cbm_voto_finale'], 2);
+        }
+        $emailBody .= "<br>";
+        if (!empty($p['cbm_feedback_label'])) {
+            $emailBody .= "Valutazione CBM: " . htmlspecialchars($p['cbm_feedback_label']) . "<br>";
+        }
+
+        $cbmDetails = $p['cbm_details'] ?? [];
+        $answers = $p['answers'] ?? [];
+        $qids = array_values(array_unique(array_merge(array_keys($answers), array_keys($cbmDetails))));
+        if (!empty($qids)) {
+            $emailBody .= "<table border='1' cellpadding='3' cellspacing='0' style='border-collapse:collapse;font-size:12px;'>";
+            $emailBody .= "<tr style='background-color:#f4f4f4;'><th>Domanda</th><th>Punteggio</th><th>Confidenza</th><th>CBM</th></tr>";
+            foreach ($qids as $qid) {
+                $label = (string)($cbmDetails[$qid]['question_label'] ?? ($formItems[$qid] ?? $qid));
+                $score = $answers[$qid]['score'] ?? ($cbmDetails[$qid]['classic_score'] ?? '');
+                $conf = $cbmDetails[$qid]['conf_value'] ?? ($cbmDetails[$qid]['conf_level'] ?? '');
+                $cbm = $cbmDetails[$qid]['cbm_score'] ?? '';
+                $emailBody .= "<tr>";
+                $emailBody .= "<td>" . htmlspecialchars($label) . "</td>";
+                $emailBody .= "<td style='text-align:center;'>" . htmlspecialchars((string)$score) . "</td>";
+                $emailBody .= "<td style='text-align:center;'>" . htmlspecialchars((string)$conf) . "</td>";
+                $emailBody .= "<td style='text-align:center;'>" . htmlspecialchars((string)$cbm) . "</td>";
+                $emailBody .= "</tr>";
+            }
+            $emailBody .= "</table>";
+        }
+        $emailBody .= "</div>";
+    }
+
     // Statistiche
     $totale = count($pubblicati);
     $sufficienti = count(array_filter($pubblicati, fn($p) => $p['voto'] >= 6));
@@ -1038,8 +1093,88 @@ function inviaEmailRiepilogativa($pubblicati, $test, $uda, $errori, $config) {
     // Invia email via SMTP (NotificationManager/PHPMailer), non via mail().
     $subject = "Voti Importati: " . $test['nome'] . " ($totale studenti)";
 
+    // Excel allegato con il dettaglio
+    $attachments = [];
+    $excelFile = generaExcelDettaglio($pubblicati, $formItems);
+    if ($excelFile !== null) {
+        $attachments[] = [
+            'path' => $excelFile,
+            'name' => 'Dettaglio_risposte_' . preg_replace('/[^A-Za-z0-9_\-]+/', '_', (string)($test['nome'] ?? 'test')) . '.xlsx',
+        ];
+    }
+
     $notificationManager = new NotificationManager($config);
-    return $notificationManager->sendHtmlEmail($emailDocente, $subject, $emailBody);
+    $result = $notificationManager->sendHtmlEmail($emailDocente, $subject, $emailBody, $attachments);
+
+    if ($excelFile !== null) {
+        @unlink($excelFile);
+    }
+
+    return $result;
+}
+
+/**
+ * Genera un file Excel con il dettaglio delle risposte e la composizione del
+ * voto per ogni studente. Restituisce il path del file temporaneo, o null.
+ */
+function generaExcelDettaglio(array $pubblicati, array $formItems): ?string
+{
+    try {
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+
+        $sheetVoti = $spreadsheet->getActiveSheet();
+        $sheetVoti->setTitle('Voti');
+        $sheetVoti->fromArray([
+            'Studente', 'Email', 'Voto', 'Percentuale', 'Punteggio classico', 'Max', 'Voto classico', 'CBM %', 'Voto CBM finale'
+        ], null, 'A1');
+        $row = 2;
+        foreach ($pubblicati as $p) {
+            $sheetVoti->fromArray([
+                $p['nome'] ?? $p['email'],
+                $p['email'] ?? '',
+                $p['voto'] ?? '',
+                round((float)($p['percentuale'] ?? 0), 1),
+                $p['total_score'] ?? 0,
+                $p['max_score'] ?? 0,
+                $p['voto_numerico'] ?? '',
+                (isset($p['cbm_percentuale']) && $p['cbm_percentuale'] !== null) ? round((float)$p['cbm_percentuale'], 1) : '',
+                $p['cbm_voto_finale'] ?? '',
+            ], null, 'A' . $row);
+            $row++;
+        }
+
+        $sheetRisposte = $spreadsheet->createSheet();
+        $sheetRisposte->setTitle('Risposte');
+        $sheetRisposte->fromArray([
+            'Studente', 'Email', 'Domanda', 'Punteggio', 'Confidenza', 'Punteggio CBM'
+        ], null, 'A1');
+        $row = 2;
+        foreach ($pubblicati as $p) {
+            $cbmDetails = $p['cbm_details'] ?? [];
+            $answers = $p['answers'] ?? [];
+            $qids = array_values(array_unique(array_merge(array_keys($answers), array_keys($cbmDetails))));
+            foreach ($qids as $qid) {
+                $sheetRisposte->fromArray([
+                    $p['nome'] ?? $p['email'],
+                    $p['email'] ?? '',
+                    (string)($cbmDetails[$qid]['question_label'] ?? ($formItems[$qid] ?? $qid)),
+                    $answers[$qid]['score'] ?? ($cbmDetails[$qid]['classic_score'] ?? ''),
+                    $cbmDetails[$qid]['conf_value'] ?? ($cbmDetails[$qid]['conf_level'] ?? ''),
+                    $cbmDetails[$qid]['cbm_score'] ?? '',
+                ], null, 'A' . $row);
+                $row++;
+            }
+        }
+
+        $file = sys_get_temp_dir() . '/report_risposte_' . uniqid() . '.xlsx';
+        $writer = \PhpOffice\PhpSpreadsheet\IOFactory::createWriter($spreadsheet, 'Xlsx');
+        $writer->save($file);
+
+        return $file;
+    } catch (\Throwable $e) {
+        error_log("Errore generazione Excel dettaglio: " . $e->getMessage());
+        return null;
+    }
 }
 
 ?>

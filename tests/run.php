@@ -410,6 +410,7 @@ $architectureTests = [
     'forms import provider-neutral' => __DIR__ . '/public/forms_import_provider_neutral.php',
     'forms import email smtp' => __DIR__ . '/public/import_forms_email_smtp.php',
     'forms import publish button' => __DIR__ . '/public/import_forms_publish_button.php',
+    'forms import email detail' => __DIR__ . '/public/import_forms_email_detail.php',
     'kahoot import provider-neutral' => __DIR__ . '/public/kahoot_import_provider_neutral.php',
     'excel import provider-neutral' => __DIR__ . '/public/excel_import_provider_neutral.php',
     'publish provider-neutral' => __DIR__ . '/public/publish_provider_neutral.php',

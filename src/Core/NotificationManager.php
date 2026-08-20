@@ -90,7 +90,10 @@ class NotificationManager
      * Invia un'email HTML generica al destinatario indicato (es. riepilogo import
      * voti) usando la configurazione SMTP per-utente.
      */
-    public function sendHtmlEmail(string $to, string $subject, string $htmlBody): bool
+    /**
+     * @param list<array{path:string,name?:string}> $attachments
+     */
+    public function sendHtmlEmail(string $to, string $subject, string $htmlBody, array $attachments = []): bool
     {
         if (!($this->config['notifications']['email']['enabled'] ?? false)) {
             return false;
@@ -102,6 +105,15 @@ class NotificationManager
             $mail->Subject = $subject;
             $mail->Body = $htmlBody;
             $mail->AltBody = $this->htmlToPlainText($htmlBody);
+
+            foreach ($attachments as $attachment) {
+                if (is_array($attachment) && !empty($attachment['path']) && is_string($attachment['path'])) {
+                    $mail->addAttachment(
+                        $attachment['path'],
+                        (string)($attachment['name'] ?? basename($attachment['path']))
+                    );
+                }
+            }
 
             return $mail->send();
         } catch (PHPMailerException $e) {
