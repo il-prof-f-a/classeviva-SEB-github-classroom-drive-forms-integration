@@ -20,6 +20,14 @@ foreach (['GradeImportStudentService', 'resolveByName', 'id_gruppo', 'id_student
         $failures[] = "riferimento provider-neutral assente: {$required}";
     }
 }
+foreach (['display_name', "'student_name' =>"] as $required) {
+    if (strpos($source, $required) === false) {
+        $failures[] = "nome studente del roster non visualizzato: {$required}";
+    }
+}
+if (strpos($source, "'student_name' => (\$studentId !== null && \$studentId !== '') ? 'ID: '") !== false) {
+    $failures[] = 'la pagina visualizza ancora l’id interno al posto del nome';
+}
 if ($failures !== []) {
     foreach ($failures as $failure) {
         fwrite(STDERR, "FAIL: {$failure}\n");

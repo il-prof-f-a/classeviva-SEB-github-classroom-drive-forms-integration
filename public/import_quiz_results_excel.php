@@ -287,13 +287,14 @@ if ($step === 'upload' && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES
         foreach ($rows as $rowIdx => $row) {
             $match = $resolution['matches'][$row['username']] ?? null;
             $studentId = ($match['id_studente'] ?? null);
+            $studentName = trim((string)($match['display_name'] ?? ''));
             $matchedRows[] = [
                 'username' => $row['username'],
                 'punteggio_label' => $row['punteggio_label'],
                 'percentuale' => $row['percentuale'],
                 'voto' => $row['voto'],
                 'student_id' => $studentId,
-                'student_name' => ($studentId !== null && $studentId !== '') ? 'ID: ' . $studentId : null,
+                'student_name' => $studentName !== '' ? $studentName : null,
                 'matched' => ($studentId !== null && $studentId !== ''),
             ];
         }
@@ -662,7 +663,7 @@ $progressWidth = $currentStep === 1 ? '33%' : ($currentStep === 2 ? '66%' : '100
                                                         <td>
                                                             <?php if ($row['student_id']): ?>
                                                                 <input type="hidden" name="student_id[<?= $idx ?>]" value="<?= htmlspecialchars($row['student_id']) ?>">
-                                                                <span class="badge bg-success"><i class="bi bi-check-circle"></i> ID: <?= htmlspecialchars($row['student_id']) ?></span>
+                                                                <span class="badge bg-success"><i class="bi bi-check-circle"></i> <?= htmlspecialchars((string)$row['student_name']) ?></span>
                                                             <?php else: ?>
                                                                 <span class="badge bg-warning text-dark">Non mappato</span>
                                                             <?php endif; ?>

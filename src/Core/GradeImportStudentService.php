@@ -215,7 +215,10 @@ final class GradeImportStudentService
                     'external_user_id' => $best['external_user_id'],
                     'display_name' => $best['display_name'],
                 ];
-                $matches[$name] = ['external_user_id' => $best['external_user_id']];
+                $matches[$name] = [
+                    'external_user_id' => $best['external_user_id'],
+                    'display_name' => $best['display_name'],
+                ];
             } else {
                 $unmatched[] = $name;
             }

@@ -67,6 +67,9 @@ try {
     if (!is_array($m1) || ($m1['external_user_id'] ?? '') !== 'GC_USER_1' || ($m1['id_studente'] ?? '') === '') {
         $failures[] = 'match esatto nome non risolto';
     }
+    if (($m1['display_name'] ?? '') !== 'Mario Rossi') {
+        $failures[] = 'nome roster non restituito nel match';
+    }
     if (!is_array($m2) || ($m2['external_user_id'] ?? '') !== 'GC_USER_2' || ($m2['id_studente'] ?? '') === '') {
         $failures[] = 'match case-insensitive nome non risolto';
     }
