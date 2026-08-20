@@ -23,7 +23,8 @@ try {
     $idUda = $_POST['id_uda'] ?? '';
     $idMateriaCV = $_POST['id_materia_cv'] ?? '';
     $idClasseCV = $_POST['id_classe_cv'] ?? '';
-    $idStudenteCV = $_POST['id_studente_cv'] ?? '';
+    $idStudenteInternal = trim((string)($_POST['id_studente'] ?? ''));
+    $idStudenteCV = trim((string)($_POST['id_studente_cv'] ?? ''));
     $idIndicatore = $_POST['id_indicatore'] ?? '';
     $nomeIndicatore = $_POST['nome_indicatore'] ?? '';
     $valore = $_POST['valore'] ?? '';
@@ -37,8 +38,8 @@ try {
     }
 
     // Validazione
-    if (empty($idUda) || empty($idStudenteCV) || empty($idIndicatore) || empty($valore)) {
-        throw new Exception('Parametri mancanti: id_uda, id_studente_cv, id_indicatore, valore sono obbligatori');
+    if (empty($idUda) || (empty($idStudenteInternal) && empty($idStudenteCV)) || empty($idIndicatore) || empty($valore)) {
+        throw new Exception('Parametri mancanti: id_uda, id_studente, id_indicatore, valore sono obbligatori');
     }
 
     if (!in_array($valore, ['+', '-'])) {
@@ -57,7 +58,6 @@ try {
         'id_uda' => $idUda,
         'id_materia_cv' => $idMateriaCV,
         'id_classe_cv' => $idClasseCV,
-        'id_studente_cv' => $idStudenteCV,
         'id_indicatore' => $idIndicatore,
         'nome_indicatore' => $nomeIndicatore,
         'valore' => $valore,
@@ -68,6 +68,12 @@ try {
         'commento' => $commento,
         'prof' => $prof
     ];
+    // L'ID interno viene passato così com'è; l'ID ClasseViva viene risolto dal gateway.
+    if ($idStudenteInternal !== '') {
+        $datiEvidenza['id_studente'] = $idStudenteInternal;
+    } else {
+        $datiEvidenza['id_studente_cv'] = $idStudenteCV;
+    }
 
     // Inserisci nel database
     $success = $dbAdapter->insertRow('PLUSMINUS_QUEUE', $datiEvidenza);

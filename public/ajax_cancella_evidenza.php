@@ -19,13 +19,14 @@ try {
     }
 
     // Estrai parametri
-    $idStudenteCV = $_POST['id_studente_cv'] ?? '';
+    $idStudenteInternal = trim((string)($_POST['id_studente'] ?? ''));
+    $idStudenteCV = trim((string)($_POST['id_studente_cv'] ?? ''));
     $idIndicatore = $_POST['id_indicatore'] ?? '';
     $valore = $_POST['valore'] ?? '';
 
     // Validazione
-    if (empty($idStudenteCV) || empty($idIndicatore) || empty($valore)) {
-        throw new Exception('Parametri mancanti: id_studente_cv, id_indicatore, valore');
+    if ((empty($idStudenteInternal) && empty($idStudenteCV)) || empty($idIndicatore) || empty($valore)) {
+        throw new Exception('Parametri mancanti: id_studente, id_indicatore, valore');
     }
 
     if (!in_array($valore, ['+', '-'])) {
@@ -36,11 +37,16 @@ try {
     $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 
     // Trova l'evidenza in coda (non registrata) che corrisponde
-    $tutteEvidenze = $dbAdapter->findWhere('PLUSMINUS_QUEUE', [
-        'id_studente_cv' => $idStudenteCV,
+    $where = [
         'id_indicatore' => $idIndicatore,
         'valore' => $valore
-    ]);
+    ];
+    if ($idStudenteInternal !== '') {
+        $where['id_studente'] = $idStudenteInternal;
+    } else {
+        $where['id_studente_cv'] = $idStudenteCV;
+    }
+    $tutteEvidenze = $dbAdapter->findWhere('PLUSMINUS_QUEUE', $where);
 
     if (empty($tutteEvidenze)) {
         throw new Exception('Evidenza non trovata in coda (nessun match studente/indicatore/valore)');

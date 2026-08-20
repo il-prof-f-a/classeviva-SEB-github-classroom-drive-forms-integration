@@ -1509,7 +1509,7 @@ try {
             }
 
             pendingVoto = {
-                id_studente_cv: idStudente,
+                id_studente: idStudente,
                 id_indicatore: idIndicatore,
                 nome_indicatore: nomeIndicatore,
                 valore: valore,
@@ -1555,7 +1555,7 @@ try {
                     id_uda: udaId,
                     id_classe_cv: idClasseCV,
                     id_materia_cv: idMateriaCV,
-                    id_studente_cv: pendingVoto.id_studente_cv,
+                    id_studente: pendingVoto.id_studente,
                     id_indicatore: pendingVoto.id_indicatore,
                     nome_indicatore: pendingVoto.nome_indicatore,
                     valore: valore,
@@ -1638,7 +1638,7 @@ try {
                 type: 'POST',
                 dataType: 'json',
                 data: {
-                    id_studente_cv: idStudente,
+                    id_studente: idStudente,
                     id_indicatore: idIndicatore,
                     valore: valore
                 },
@@ -1693,7 +1693,7 @@ try {
                 type: 'POST',
                 dataType: 'json',
                 data: {
-                    id_studente_cv: idStudente,
+                    id_studente: idStudente,
                     id_indicatore: idIndicatore,
                     valore: valore
                 },

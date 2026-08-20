@@ -154,6 +154,9 @@ foreach ($queue as $ev) {
         $idCls = $ev['id_classe_cv'] ?? '';
     $idMat = $ev['id_materia_cv'] ?? '';
     $idUda = $ev['id_uda'] ?? '';
+    $idGruppoInternal = trim((string)($ev['id_gruppo'] ?? ''));
+    $idStudenteInternal = trim((string)($ev['id_studente'] ?? ''));
+    $idUtenteEvidenza = trim((string)($ev['id_utente'] ?? '')) ?: 'system';
     $val = $ev['valore'] ?? '';
     $indInfo = $indMap[$ev['id_indicatore'] ?? ''] ?? null;
     $indNome = $indInfo['nome'] ?? ($ev['nome_indicatore'] ?? ($ev['id_indicatore'] ?? 'Indicatore'));
@@ -195,19 +198,17 @@ foreach ($queue as $ev) {
     $insertOk = $db->insertRow('VALUTAZIONI_LABORATORIO', $filterValutazioniData([
         'id_valutazione' => $valId,
         'id_uda' => $idUda,
-        'id_materia_cv' => $idMat,
-        'id_classe_cv' => $idCls,
-        'id_studente_cv' => $idStud,
+        'id_gruppo' => $idGruppoInternal,
+        'id_studente' => $idStudenteInternal,
         'id_indicatore' => $ev['id_indicatore'] ?? '',
         'nome_indicatore' => $indNome,
-        'valore' => $val, // '+' o '-'
+        'valore' => $val,
         'data_inserimento' => $dataIns,
         'data_registrazione' => null,
         'id_annotazione_cv' => null,
         'commento' => $commentoVal,
         'prof' => $prof,
-        'data_pubblicazione' => null,
-        'pubblicato' => 0
+        'id_utente' => $idUtenteEvidenza
     ]));
     if (!$insertOk) {
         $errors[] = "Studente {$idStud}: errore inserimento VALUTAZIONI_LABORATORIO";
@@ -248,8 +249,7 @@ foreach ($queue as $ev) {
         // Aggiorna la bozza come pubblicata, aggiungendo ID annotazione e data
         $db->updateRow('VALUTAZIONI_LABORATORIO', 'id_valutazione', $valId, $filterValutazioniData([
             'id_annotazione_cv' => $idAnnot,
-            'data_pubblicazione' => $now,
-            'pubblicato' => 1
+            'id_utente' => $idUtenteEvidenza
         ]));
 
         // Rimuovi dalla coda solo se pubblicato
