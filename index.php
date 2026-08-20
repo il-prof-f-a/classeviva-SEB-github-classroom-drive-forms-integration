@@ -6,6 +6,57 @@
 
 require_once __DIR__ . '/bootstrap.php';
 
+use App\Core\NotificationManager;
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+$testAccessError = null;
+$testAccessSuccess = null;
+if (empty($_SESSION['test_access_csrf'])) {
+    $_SESSION['test_access_csrf'] = bin2hex(random_bytes(32));
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'request_test_update') {
+    $csrf = (string)($_POST['test_access_csrf'] ?? '');
+    $subscriberEmail = strtolower(trim((string)($_POST['subscriber_email'] ?? '')));
+    $privacyAccepted = ($_POST['updates_privacy_consent'] ?? '') === '1';
+
+    if (!hash_equals((string)$_SESSION['test_access_csrf'], $csrf)) {
+        $testAccessError = 'La richiesta è scaduta. Ricarica la pagina e riprova.';
+    } elseif (!filter_var($subscriberEmail, FILTER_VALIDATE_EMAIL)) {
+        $testAccessError = 'Inserisci un indirizzo email valido.';
+    } elseif (!$privacyAccepted) {
+        $testAccessError = 'Devi leggere e accettare l’informativa privacy per restare aggiornato.';
+    } else {
+        $notificationEmail = trim((string)($config['security']['test_access']['notification_email'] ?? ''));
+        if ($notificationEmail === '') {
+            $notificationEmail = trim((string)($config['notifications']['email']['test_recipient'] ?? ''));
+        }
+        if ($notificationEmail === '') {
+            $notificationEmail = trim((string)($config['notifications']['email']['from_address'] ?? ''));
+        }
+
+        if (!filter_var($notificationEmail, FILTER_VALIDATE_EMAIL)) {
+            $testAccessError = 'Il servizio email non è ancora configurato.';
+        } else {
+            $safeEmail = htmlspecialchars($subscriberEmail, ENT_QUOTES, 'UTF-8');
+            $htmlBody = '<h2>Nuova iscrizione agli aggiornamenti UDA System</h2>'
+                . '<p>Email: <strong>' . $safeEmail . '</strong></p>'
+                . '<p>Consenso informativa privacy: sì</p>'
+                . '<p>Data: ' . date('d/m/Y H:i:s') . '</p>';
+            $mailer = new NotificationManager($config);
+            if ($mailer->sendHtmlEmail($notificationEmail, 'Iscrizione aggiornamenti UDA System', $htmlBody)) {
+                $testAccessSuccess = 'Grazie! Abbiamo registrato la tua richiesta di aggiornamento.';
+                $_SESSION['test_access_csrf'] = bin2hex(random_bytes(32));
+            } else {
+                $testAccessError = 'Non è stato possibile inviare la richiesta. Riprova più tardi.';
+            }
+        }
+    }
+}
+
 // Se l'utente è già loggato, manda direttamente alla dashboard
 if (isset($_SESSION['user_id'])) {
     header('Location: public/index.php');
@@ -41,6 +92,41 @@ if (isset($_SESSION['user_id'])) {
                             <div class="alert alert-danger">
                                 <i class="bi bi-exclamation-triangle"></i>
                                 <?= htmlspecialchars($_GET['error']) ?>
+                            </div>
+                        <?php endif; ?>
+
+                        <?php if (($_GET['access'] ?? '') === 'testing' || $testAccessError !== null || $testAccessSuccess !== null): ?>
+                            <div class="alert alert-warning">
+                                <h6><i class="bi bi-hourglass-split"></i> Software in fase di test</h6>
+                                <p class="mb-2">
+                                    Questo software è in fase di test e verrà presto pubblicato su <strong>uda-smart.it</strong>.
+                                </p>
+                                <p class="mb-3">Inserisci qui la tua email per rimanere aggiornato:</p>
+
+                                <?php if ($testAccessError !== null): ?>
+                                    <div class="alert alert-danger py-2"><?= htmlspecialchars($testAccessError) ?></div>
+                                <?php endif; ?>
+                                <?php if ($testAccessSuccess !== null): ?>
+                                    <div class="alert alert-success py-2"><?= htmlspecialchars($testAccessSuccess) ?></div>
+                                <?php endif; ?>
+
+                                <form method="post" action="index.php" class="mt-3">
+                                    <input type="hidden" name="action" value="request_test_update">
+                                    <input type="hidden" name="test_access_csrf" value="<?= htmlspecialchars((string)$_SESSION['test_access_csrf']) ?>">
+                                    <div class="mb-2">
+                                        <label for="subscriber_email" class="form-label">Email</label>
+                                        <input type="email" id="subscriber_email" name="subscriber_email" class="form-control" required autocomplete="email">
+                                    </div>
+                                    <div class="form-check mb-3">
+                                        <input class="form-check-input" type="checkbox" id="updates_privacy_consent" name="updates_privacy_consent" value="1" required>
+                                        <label class="form-check-label small" for="updates_privacy_consent">
+                                            Ho letto l'<a href="privacy-policy.html" target="_blank" rel="noopener">Informativa Privacy</a> e acconsento all'invio della richiesta di aggiornamento.
+                                        </label>
+                                    </div>
+                                    <button type="submit" class="btn btn-outline-primary">
+                                        <i class="bi bi-envelope"></i> Rimani aggiornato
+                                    </button>
+                                </form>
                             </div>
                         <?php endif; ?>
 

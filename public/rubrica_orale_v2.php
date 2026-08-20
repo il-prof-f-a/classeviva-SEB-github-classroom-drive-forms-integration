@@ -21,6 +21,7 @@ use App\Core\TeachingGroupRepository;
 use App\Core\UDAManager;
 use App\Core\UdaGroupRepository;
 use App\Core\RubricManager;
+use App\Core\RuntimeStudentNameResolver;
 use App\Integration\ClasseVivaAPI;
 use App\Integration\GoogleClassroomAPI;
 use App\Integration\GoogleDriveAPI;
@@ -49,6 +50,7 @@ $domandeUDA = [];
 $subjectNameById = [];
 $classiUda = [];
 $studentiProvider = 'classeviva';
+$runtimeNames = [];
 $idUdaDaGet = $_GET['id_uda'] ?? null;
 $idClasseDaGet = $_GET['id_classe'] ?? null;
 $idGruppoDaGet = trim((string)($_GET['id_gruppo'] ?? ''));
@@ -1542,7 +1544,56 @@ if ($idClasseDaGet) {
     // sempre l'id interno dello studente per le successive scritture.
     if (empty($studenti) && $gruppoSelezionatoId !== '') {
         try {
-            foreach ($groupStudentRepository->listForGroup($gruppoSelezionatoId) as $membership) {
+            $runtimeMemberships = $groupStudentRepository->listForGroup($gruppoSelezionatoId);
+            $runtimeIdentitiesByStudent = [];
+            foreach ($runtimeMemberships as $membership) {
+                $internalId = trim((string)($membership['id_studente'] ?? ''));
+                if ($internalId !== '') {
+                    $runtimeIdentitiesByStudent[$internalId] = $studentIdentityRepository->listForStudent($internalId);
+                }
+            }
+
+            // Il nome viene richiesto a runtime dal primo provider collegato
+            // al gruppo, senza salvarlo nelle tabelle locali.
+            $integrations = array_values(array_filter(
+                $teachingGroupIntegrationRepository->listForGroup($gruppoSelezionatoId),
+                static fn(array $integration): bool => ($integration['stato'] ?? 'attivo') !== 'disattivo'
+            ));
+            $providerOrder = array_flip(RuntimeStudentNameResolver::PROVIDER_PRIORITY);
+            usort($integrations, static function (array $left, array $right) use ($providerOrder): int {
+                $leftOrder = $providerOrder[(string)($left['provider'] ?? '')] ?? PHP_INT_MAX;
+                $rightOrder = $providerOrder[(string)($right['provider'] ?? '')] ?? PHP_INT_MAX;
+                return $leftOrder <=> $rightOrder;
+            });
+
+            $providerRosters = [];
+            foreach ($integrations as $integration) {
+                $provider = (string)($integration['provider'] ?? '');
+                $contextId = trim((string)($integration['external_context_id'] ?? ''));
+                if ($provider === '' || $contextId === '') {
+                    continue;
+                }
+                try {
+                    if ($provider === 'classeviva' && $cvReady) {
+                        $providerRosters[$provider] = $cvAPI->getStudentiClasse($contextId);
+                    } elseif ($provider === 'google_classroom') {
+                        $providerRosters[$provider] = (new GoogleClassroomAPI($config))->getCourseStudents($contextId);
+                    }
+                } catch (Throwable $providerError) {
+                    error_log('Errore roster runtime ' . $provider . ': ' . $providerError->getMessage());
+                    continue;
+                }
+                if (!empty($providerRosters[$provider])) {
+                    break;
+                }
+            }
+            $runtimeNames = RuntimeStudentNameResolver::resolveNames(
+                $runtimeMemberships,
+                $runtimeIdentitiesByStudent,
+                $providerRosters
+            );
+
+            foreach ($runtimeMemberships as $membership) {
                 $internalId = trim((string)($membership['id_studente'] ?? ''));
                 if ($internalId === '') {
                     continue;
@@ -1565,6 +1616,9 @@ if ($idClasseDaGet) {
                     if ($displayName !== '') {
                         break;
                     }
+                }
+                if (isset($runtimeNames[$internalId])) {
+                    $displayName = $runtimeNames[$internalId];
                 }
                 $studenti[] = [
                     'id' => $internalId,
@@ -1818,6 +1872,11 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                     <i class="bi bi-lock"></i> Rubrica Bloccata
                 </button>
             <?php endif; ?>
+        <?php endif; ?>
+        <?php if ($idUdaDaGet): ?>
+            <a href="uda_view.php?id=<?= urlencode((string)$idUdaDaGet) ?>" class="btn btn-outline-light btn-sm">
+                <i class="bi bi-arrow-left"></i> Torna all'UDA
+            </a>
         <?php endif; ?>
         <a href="index.php" class="btn btn-outline-light btn-sm">
             <i class="bi bi-house"></i> Dashboard
