@@ -1786,6 +1786,97 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                 </div>
             </div>
 
+            <!-- Tabella Riepilogo Voti Salvati -->
+            <?php if (!empty($valutazioniPerStudente)): ?>
+            <div class="card mb-4">
+                <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-check-circle"></i> Riepilogo Voti Salvati (<?= count($valutazioniPerStudente) ?>)</h6>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-sm btn-outline-danger" onclick="apriPopupCancellaVoti()">
+                            <i class="bi bi-x-circle"></i> Cancella voti registrati (solo DB)
+                        </button>
+                        <button type="button" class="btn btn-sm btn-light" onclick="apriPopupPubblicaVoti()">
+                            <i class="bi bi-save"></i> Salva voti
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Studente</th>
+                                    <th>Voto originale</th>
+                                    <th>Voto finale</th>
+                                    <th>Data</th>
+                                    <th>Azioni</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($valutazioniPerStudente as $idStud => $val): ?>
+                                    <tr class="js-studente-row" data-studente-id="<?= htmlspecialchars($idStud) ?>">
+                                        <td><?= htmlspecialchars($val['nome_studente']) ?></td>
+                                        <td><strong><?= htmlspecialchars(formatVotoLabel($val['voto_originale'], 2)) ?></strong></td>
+                                        <td>
+                                            <?php
+                                            $votoFinaleSelezionatoRaw = $val['voto_finale'] ?? null;
+                                            if (is_string($votoFinaleSelezionatoRaw)) {
+                                                $votoFinaleSelezionatoRaw = str_replace(',', '.', $votoFinaleSelezionatoRaw);
+                                            }
+                                            $votoFinaleManuale = !empty($val['voto_finale_manual']);
+                                            $votoFinaleSelezionato = $votoFinaleManuale
+                                                ? $votoFinaleSelezionatoRaw
+                                                : normalizeVotoFinaleDefault($val['voto_originale']);
+                                        ?>
+                                            <select class="form-select form-select-sm voto-finale-select"
+                                                    style="width: 120px; font-weight: bold;"
+                                                    onchange="aggiornaVotoFinale(this, '<?= htmlspecialchars($idStud) ?>')">
+                                                <?php
+                                                $selectedA = ($votoFinaleSelezionato === 'a') ? 'selected' : '';
+                                                $selectedI = ($votoFinaleSelezionato === 'i') ? 'selected' : '';
+                                                echo "<option value=\"a\" $selectedA>a (Assente)</option>";
+                                                echo "<option value=\"i\" $selectedI>i (Impreparato)</option>";
+                                                for ($v = 1.0; $v <= 10.0; $v += 0.5) {
+                                                    $isSelected = '';
+                                                    if ($votoFinaleSelezionato !== null && $votoFinaleSelezionato !== '' && is_numeric($votoFinaleSelezionato)) {
+                                                        if (abs(floatval($votoFinaleSelezionato) - $v) < 0.01) {
+                                                            $isSelected = 'selected';
+                                                        }
+                                                    }
+                                                    $label = number_format($v, 1, '.', '');
+                                                    echo "<option value=\"{$label}\" {$isSelected}>{$label}</option>";
+                                                }
+                                                ?>
+                                            </select>
+                                        </td>
+                                        <td><small><?= htmlspecialchars($val['data_valutazione']) ?></small></td>
+                                        <td>
+                                            <?php if (!$val['registrato']): ?>
+                                                <button type="button" class="btn btn-sm btn-outline-primary"
+                                                        onclick="caricaSuRegistro('<?= htmlspecialchars($idStud) ?>')">
+                                                    <i class="bi bi-save"></i> Salva voto
+                                                </button>
+                                            <?php else: ?>
+                                                <span class="badge bg-success"><i class="bi bi-check-circle"></i> Salvato</span>
+                                            <?php endif; ?>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary"
+                                                    onclick="modificaVoto('<?= htmlspecialchars($idStud) ?>')">
+                                                <i class="bi bi-pencil"></i>
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-outline-danger"
+                                                    onclick="eliminaValutazione('<?= htmlspecialchars($idStud) ?>', '<?= htmlspecialchars($val['nome_studente']) ?>')">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <?php endif; ?>
+
             <!-- Form Valutazione Studente -->
             <form method="POST" action="" id="formValutazione">
                 <input type="hidden" name="action" value="salva_valutazione_studente">
@@ -1889,96 +1980,6 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                             </select>
                         </div>
 
-                        <!-- Tabella Riepilogo Voti Salvati -->
-                        <?php if (!empty($valutazioniPerStudente)): ?>
-                        <div class="card mb-4">
-                            <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
-                                <h6 class="mb-0"><i class="bi bi-check-circle"></i> Riepilogo Voti Salvati (<?= count($valutazioniPerStudente) ?>)</h6>
-                                <div class="d-flex gap-2">
-                                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="apriPopupCancellaVoti()">
-                                        <i class="bi bi-x-circle"></i> Cancella voti registrati (solo DB)
-                                    </button>
-                                    <button type="button" class="btn btn-sm btn-light" onclick="apriPopupPubblicaVoti()">
-                                        <i class="bi bi-save"></i> Salva voti
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="card-body">
-                                <div class="table-responsive">
-                                    <table class="table table-sm table-hover">
-                                        <thead>
-                                            <tr>
-                                                <th>Studente</th>
-                                                <th>Voto originale</th>
-                                                <th>Voto finale</th>
-                                                <th>Data</th>
-                                                <th>Azioni</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php foreach ($valutazioniPerStudente as $idStud => $val): ?>
-                                                <tr class="js-studente-row" data-studente-id="<?= htmlspecialchars($idStud) ?>">
-                                                    <td><?= htmlspecialchars($val['nome_studente']) ?></td>
-                                                    <td><strong><?= htmlspecialchars(formatVotoLabel($val['voto_originale'], 2)) ?></strong></td>
-                                                    <td>
-                                                        <?php
-                                                        $votoFinaleSelezionatoRaw = $val['voto_finale'] ?? null;
-                                                        if (is_string($votoFinaleSelezionatoRaw)) {
-                                                            $votoFinaleSelezionatoRaw = str_replace(',', '.', $votoFinaleSelezionatoRaw);
-                                                        }
-                                                        $votoFinaleManuale = !empty($val['voto_finale_manual']);
-                                                        $votoFinaleSelezionato = $votoFinaleManuale
-                                                            ? $votoFinaleSelezionatoRaw
-                                                            : normalizeVotoFinaleDefault($val['voto_originale']);
-                                                    ?>
-                                                        <select class="form-select form-select-sm voto-finale-select"
-                                                                style="width: 120px; font-weight: bold;"
-                                                                onchange="aggiornaVotoFinale(this, '<?= htmlspecialchars($idStud) ?>')">
-                                                            <?php
-                                                            $selectedA = ($votoFinaleSelezionato === 'a') ? 'selected' : '';
-                                                            $selectedI = ($votoFinaleSelezionato === 'i') ? 'selected' : '';
-                                                            echo "<option value=\"a\" $selectedA>a (Assente)</option>";
-                                                            echo "<option value=\"i\" $selectedI>i (Impreparato)</option>";
-                                                            for ($v = 1.0; $v <= 10.0; $v += 0.5) {
-                                                                $isSelected = '';
-                                                                if ($votoFinaleSelezionato !== null && $votoFinaleSelezionato !== '' && is_numeric($votoFinaleSelezionato)) {
-                                                                    if (abs(floatval($votoFinaleSelezionato) - $v) < 0.01) {
-                                                                        $isSelected = 'selected';
-                                                                    }
-                                                                }
-                                                                $label = number_format($v, 1, '.', '');
-                                                                echo "<option value=\"{$label}\" {$isSelected}>{$label}</option>";
-                                                            }
-                                                            ?>
-                                                        </select>
-                                                    </td>
-                                                    <td><small><?= htmlspecialchars($val['data_valutazione']) ?></small></td>
-                                                    <td>
-                                                        <?php if (!$val['registrato']): ?>
-                                                            <button type="button" class="btn btn-sm btn-outline-primary"
-                                                                    onclick="caricaSuRegistro('<?= htmlspecialchars($idStud) ?>')">
-                                                                <i class="bi bi-save"></i> Salva voto
-                                                            </button>
-                                                        <?php else: ?>
-                                                            <span class="badge bg-success"><i class="bi bi-check-circle"></i> Salvato</span>
-                                                        <?php endif; ?>
-                                                        <button type="button" class="btn btn-sm btn-outline-secondary"
-                                                                onclick="modificaVoto('<?= htmlspecialchars($idStud) ?>')">
-                                                            <i class="bi bi-pencil"></i>
-                                                        </button>
-                                                        <button type="button" class="btn btn-sm btn-outline-danger"
-                                                                onclick="eliminaValutazione('<?= htmlspecialchars($idStud) ?>', '<?= htmlspecialchars($val['nome_studente']) ?>')">
-                                                            <i class="bi bi-trash"></i>
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            <?php endforeach; ?>
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
-                        <?php endif; ?>
                         <?php endif; ?>
 
                         <div id="areaValutazione" style="display: none;">
