@@ -643,24 +643,71 @@ if ($step === 'read_responses' && $testId) {
             ];
         }
 
-        // Risoluzione provider-neutral: gruppo e identità studenti dal roster Classroom vivo.
+        // Risoluzione provider-neutral: mappa ogni email rispondente all'id
+        // Google Classroom (userId) tramite courses.students.get, poi risolve
+        // l'id Google verso lo studente interno e l'id ClasseViva. Nessuno scope
+        // classroom.profile.emails: l'email resta solo una chiave di lookup.
         $gradeImportService = new GradeImportStudentService($dbAdapter, $currentUserId);
         $courseId = trim((string)($test['classroom_course_id'] ?? ''));
         $resolution = ['group_id' => null, 'matches' => [], 'unmatched' => []];
         if ($courseId !== '') {
             try {
                 $classroomAPI = new GoogleClassroomAPI($config);
-                $courseStudents = $classroomAPI->getCourseStudents($courseId);
-                $roster = [];
-                foreach ($courseStudents as $courseStudent) {
-                    $roster[] = [
-                        'external_user_id' => (string)($courseStudent['id'] ?? ''),
-                        'email' => (string)($courseStudent['email'] ?? ''),
-                        'display_name' => (string)($courseStudent['name'] ?? ''),
+                $externalRows = [];
+                $emailToExternal = [];
+                $respondentNames = [];
+                $unmatched = [];
+                foreach ($formResponses as $resp) {
+                    $rawEmail = trim((string)($resp['email'] ?? ''));
+                    if ($rawEmail === '') {
+                        continue;
+                    }
+                    $emailKey = strtolower($rawEmail);
+                    try {
+                        // courses.students.get accetta l'email come studentId e
+                        // restituisce l'id utente anche senza lo scope emails.
+                        $student = $classroomAPI->getStudente($courseId, $rawEmail);
+                        $googleId = trim((string)($student['id'] ?? ''));
+                        if ($googleId === '') {
+                            $unmatched[] = $emailKey;
+                            continue;
+                        }
+                        $externalRows[] = [
+                            'external_user_id' => $googleId,
+                            'display_name' => (string)($student['name'] ?? ''),
+                        ];
+                        $emailToExternal[$emailKey] = $googleId;
+                        $respondentNames[$emailKey] = (string)($student['name'] ?? '');
+                    } catch (Exception $e) {
+                        $unmatched[] = $emailKey;
+                    }
+                }
+
+                $resolved = $gradeImportService->resolve('google_classroom', $courseId, $externalRows);
+                $byExternal = [];
+                foreach ($resolved['rows'] as $row) {
+                    $externalId = trim((string)($row['external_user_id'] ?? ''));
+                    if ($externalId !== '') {
+                        $byExternal[$externalId] = $row;
+                    }
+                }
+
+                $matches = [];
+                foreach ($emailToExternal as $emailKey => $externalId) {
+                    $row = $byExternal[$externalId] ?? null;
+                    $matches[$emailKey] = [
+                        'external_user_id' => $externalId,
+                        'id_studente' => $row['id_studente'] ?? null,
+                        'cv_id' => $row['cv_id'] ?? null,
+                        'display_name' => $respondentNames[$emailKey] ?? '',
                     ];
                 }
-                $respondentEmails = array_map(static fn(array $resp): string => (string)($resp['email'] ?? ''), $formResponses);
-                $resolution = $gradeImportService->resolveByEmail('google_classroom', $courseId, $roster, $respondentEmails);
+
+                $resolution = [
+                    'group_id' => $resolved['group_id'],
+                    'matches' => $matches,
+                    'unmatched' => array_values(array_unique($unmatched)),
+                ];
             } catch (Exception $e) {
                 $resolution = ['group_id' => null, 'matches' => [], 'unmatched' => [], 'error' => $e->getMessage()];
             }

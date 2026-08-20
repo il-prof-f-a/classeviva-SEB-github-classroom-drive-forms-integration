@@ -83,8 +83,7 @@ if (isset($_GET['code'])) {
         $client->addScope(\Google\Service\Classroom::CLASSROOM_ROSTERS_READONLY);
         $client->addScope(\Google\Service\Classroom::CLASSROOM_TOPICS);
         // Necessario per risolvere le email degli studenti nel roster Classroom
-        $client->addScope(\Google\Service\Classroom::CLASSROOM_PROFILE_EMAILS);
-        $client->addScope(\Google\Service\Forms::FORMS_BODY);
+                $client->addScope(\Google\Service\Forms::FORMS_BODY);
         $client->addScope(\Google\Service\Forms::FORMS_RESPONSES_READONLY);
         $client->addScope(\Google\Service\Forms::DRIVE_FILE);
 
@@ -206,8 +205,7 @@ if (!$error_message) {
         $client->addScope(\Google\Service\Classroom::CLASSROOM_ROSTERS_READONLY);
         $client->addScope(\Google\Service\Classroom::CLASSROOM_TOPICS);
         // Necessario per risolvere le email degli studenti nel roster Classroom
-        $client->addScope(\Google\Service\Classroom::CLASSROOM_PROFILE_EMAILS);
-        $client->addScope(\Google\Service\Forms::FORMS_BODY);
+                $client->addScope(\Google\Service\Forms::FORMS_BODY);
         $client->addScope(\Google\Service\Forms::FORMS_RESPONSES_READONLY);
         $client->addScope(\Google\Service\Forms::DRIVE_FILE);
 

@@ -28,7 +28,7 @@ use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupRepository;
 use App\Core\TeachingGroupService;
 
-$relativeDb = 'storage/temp/grade-import-premapped-' . bin2hex(random_bytes(6)) . '.db';
+$relativeDb = 'storage/temp/grade-import-google-id-' . bin2hex(random_bytes(6)) . '.db';
 $absoluteDb = $root . '/' . $relativeDb;
 $failures = [];
 
@@ -51,8 +51,7 @@ try {
         'external_name' => 'TPSIT 4L',
     ]);
 
-    // Studente già mappato (identità classeviva + google) e membership con
-    // provider_origine=classeviva (come la conversione / il gruppo reale).
+    // Studente premappato: identità classeviva + google, membership classeviva.
     $students = new StudentRepository($adapter, $userId);
     $identities = new StudentIdentityRepository($adapter, $userId);
     $memberships = new GroupStudentRepository($adapter, $userId);
@@ -66,34 +65,51 @@ try {
     $memberships->add($groupId, $studentId, ['provider_origine' => 'classeviva', 'external_context_id' => '2153414']);
 
     $service = new GradeImportStudentService($adapter, $userId);
-    $roster = [
-        ['external_user_id' => '109919865179305355257', 'email' => 'email@email.it', 'display_name' => 'Maria Bianchi'],
-        ['external_user_id' => 'OTHER_GC_USER', 'email' => 'email@email.it', 'display_name' => 'Altro Studente'],
-    ];
-    $result = $service->resolveByEmail('google_classroom', '874780791029', $roster, [
-        'email@email.it',
-        'email@email.it',
+    $result = $service->resolve('google_classroom', '874780791029', [
+        ['external_user_id' => '109919865179305355257', 'display_name' => 'maria bianchi'],
+        ['external_user_id' => 'GC_UNKNOWN', 'display_name' => 'Sconosciuto'],
     ]);
 
-    $match = $result['matches']['email@email.it'] ?? null;
-    if (!is_array($match) || ($match['external_user_id'] ?? '') !== '109919865179305355257') {
-        $failures[] = 'studente premappato non matchato per email';
-    } elseif (($match['id_studente'] ?? '') !== $studentId) {
-        $failures[] = 'email matchata ma risolta a id_studente sbagliato: ' . ($match['id_studente'] ?? 'null') . ' (atteso ' . $studentId . ')';
+    if (($result['group_id'] ?? '') !== $groupId) {
+        $failures[] = 'gruppo risolto diverso da quello collegato';
     }
-    if (!in_array('email@email.it', $result['unmatched'] ?? [], true)) {
-        $failures[] = 'email non mappata assente da unmatched';
+
+    $byExternal = [];
+    foreach ($result['rows'] as $row) {
+        $byExternal[(string)($row['external_user_id'] ?? '')] = $row;
+    }
+
+    $mapped = $byExternal['109919865179305355257'] ?? null;
+    if (!is_array($mapped) || ($mapped['id_studente'] ?? '') !== $studentId) {
+        $failures[] = 'id Google non risolto verso lo studente premappato';
+    }
+    if (($mapped['cv_id'] ?? null) !== '14941281') {
+        $failures[] = 'cv_id mancante o errato: ' . var_export($mapped['cv_id'] ?? null, true);
+    }
+
+    $unknown = $byExternal['GC_UNKNOWN'] ?? null;
+    if (!is_array($unknown)) {
+        $failures[] = 'riga per id Google sconosciuto assente';
+    } else {
+        // Lo studente viene sincronizzato (identità google) ma non è mappato in ClasseViva.
+        if (($unknown['cv_id'] ?? null) !== null) {
+            $failures[] = 'id Google sconosciuto con cv_id valorizzato';
+        }
     }
 } catch (Throwable $exception) {
     $failures[] = 'errore inatteso: ' . $exception->getMessage();
 } finally {
+    unset($service, $adapter, $group);
+    gc_collect_cycles();
     @unlink($absoluteDb); @unlink($absoluteDb . '-wal'); @unlink($absoluteDb . '-shm');
 }
 
 if ($failures !== []) {
     foreach ($failures as $failure) {
-        fwrite(STDERR, "FAIL: {$failure}\n");
+        fwrite(STDERR, "FAIL: {$failure}
+");
     }
     exit(1);
 }
-fwrite(STDOUT, "PASS: risoluzione email -> studente premappato (identità google già esistente + membership classeviva).\n");
+fwrite(STDOUT, "PASS: risoluzione id Google -> studente interno + id ClasseViva (senza email).
+");

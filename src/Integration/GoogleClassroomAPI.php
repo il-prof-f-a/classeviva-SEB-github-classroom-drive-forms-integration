@@ -41,8 +41,7 @@ class GoogleClassroomAPI
             Classroom::CLASSROOM_COURSEWORK_STUDENTS,
             Classroom::CLASSROOM_COURSEWORKMATERIALS,
             Classroom::CLASSROOM_ROSTERS_READONLY,
-            Classroom::CLASSROOM_TOPICS,
-            Classroom::CLASSROOM_PROFILE_EMAILS
+            Classroom::CLASSROOM_TOPICS
         ]);
         $this->client->setAuthConfig(ROOT_PATH . '/' . $this->config['credentials_file']);
         $this->client->setAccessType('offline');

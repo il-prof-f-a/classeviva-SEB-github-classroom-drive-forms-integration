@@ -19,6 +19,7 @@ final class GradeImportStudentService
 {
     private TeachingGroupStudentService $students;
     private TeachingGroupIntegrationRepository $integrations;
+    private StudentIdentityRepository $identities;
 
     public function __construct(
         private DatabaseAdapterInterface $db,
@@ -27,6 +28,7 @@ final class GradeImportStudentService
         $this->userId = trim($this->userId) !== '' ? trim($this->userId) : 'system';
         $this->students = new TeachingGroupStudentService($this->db, $this->userId);
         $this->integrations = new TeachingGroupIntegrationRepository($this->db, $this->userId);
+        $this->identities = new StudentIdentityRepository($this->db, $this->userId);
     }
 
     /**
@@ -93,7 +95,11 @@ final class GradeImportStudentService
                 continue;
             }
             $out = $row;
-            $out['id_studente'] = $map[$externalId] ?? null;
+            $studentId = $map[$externalId] ?? null;
+            $out['id_studente'] = $studentId;
+            $out['cv_id'] = is_string($studentId) && $studentId !== ''
+                ? $this->classeVivaIdForStudent($studentId)
+                : null;
             $rows[] = $out;
         }
 
@@ -101,72 +107,22 @@ final class GradeImportStudentService
     }
 
     /**
-     * Risolve le email dei rispondenti (es. Google Forms) verso id_studente
-     * interni, usando un roster provider vivo (email -> external_user_id)
-     * senza persistere alcuna email.
-     *
-     * @param list<array<string,mixed>> $roster  righe con external_user_id, email, display_name
-     * @param list<string> $emails  email dei rispondenti
-     * @return array{group_id:string, matches:array<string,array{external_user_id:string,id_studente:string|null}>, unmatched:list<string>}
+     * Restituisce l'id ClasseViva (external_user_id classeviva) di uno studente
+     * interno già risolto, oppure null quando lo studente non è mappato in
+     * ClasseViva.
      */
-    public function resolveByEmail(string $provider, string $contextId, array $roster, array $emails): array
+    private function classeVivaIdForStudent(string $studentId): ?string
     {
-        $byEmail = [];
-        foreach ($roster as $row) {
-            if (!is_array($row)) {
-                continue;
+        foreach ($this->identities->listForStudent($studentId) as $identity) {
+            if (($identity['provider'] ?? '') === 'classeviva') {
+                $cvId = trim((string)($identity['external_user_id'] ?? ''));
+                if ($cvId !== '') {
+                    return $cvId;
+                }
             }
-            $email = strtolower(trim((string)($row['email'] ?? '')));
-            $externalId = trim((string)($row['external_user_id'] ?? ''));
-            if ($email === '' || $externalId === '') {
-                continue;
-            }
-            $byEmail[$email] = $row;
         }
 
-        $externalRows = [];
-        $matches = [];
-        $unmatched = [];
-        foreach ($emails as $rawEmail) {
-            if (!is_scalar($rawEmail)) {
-                continue;
-            }
-            $email = strtolower(trim((string)$rawEmail));
-            if ($email === '') {
-                continue;
-            }
-            $rosterRow = $byEmail[$email] ?? null;
-            if ($rosterRow === null) {
-                $unmatched[] = $email;
-                continue;
-            }
-            $externalId = trim((string)($rosterRow['external_user_id'] ?? ''));
-            $externalRows[] = [
-                'external_user_id' => $externalId,
-                'display_name' => (string)($rosterRow['display_name'] ?? ''),
-                'email' => (string)($rosterRow['email'] ?? $email),
-            ];
-            $matches[$email] = ['external_user_id' => $externalId];
-        }
-
-        $resolved = $this->resolve($provider, $contextId, $externalRows);
-        $byExternal = [];
-        foreach ($resolved['rows'] as $row) {
-            $externalId = trim((string)($row['external_user_id'] ?? ''));
-            $studentId = trim((string)($row['id_studente'] ?? ''));
-            if ($externalId !== '' && $studentId !== '') {
-                $byExternal[$externalId] = $studentId;
-            }
-        }
-        foreach ($matches as $email => $match) {
-            $matches[$email]['id_studente'] = $byExternal[$match['external_user_id']] ?? null;
-        }
-
-        return [
-            'group_id' => $resolved['group_id'],
-            'matches' => $matches,
-            'unmatched' => array_values(array_unique($unmatched)),
-        ];
+        return null;
     }
 
     /**

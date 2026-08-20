@@ -100,13 +100,17 @@ $studentiMappati = 0;
 foreach ($formResponses as &$response) {
     $studentEmail = strtolower(trim((string)($response['email'] ?? '')));
     $match = $resolutionMatches[$studentEmail] ?? null;
-    if ($match !== null && ($match['id_studente'] ?? '') !== '') {
+    // Mappato = studente nel gruppo didattico E con identità ClasseViva.
+    if ($match !== null && ($match['id_studente'] ?? '') !== '' && ($match['cv_id'] ?? '') !== '') {
         $response['mapped'] = true;
         $response['internal_student_id'] = (string)$match['id_studente'];
+        $response['cv_id'] = (string)$match['cv_id'];
+        $response['student_name'] = (string)($match['display_name'] ?? '');
         $studentiMappati++;
     } else {
         $response['mapped'] = false;
         $response['internal_student_id'] = null;
+        $response['cv_id'] = null;
         $studentiNonMappati[] = (string)($response['email'] ?? '');
     }
 }
@@ -269,7 +273,8 @@ $mediaVoti = $totaleRisposte > 0 ? array_sum(array_column($formResponses, 'voto_
                                             <td>
                                                 <?php if ($isMapped): ?>
                                                     <input type="hidden" name="student_mapping[<?= htmlspecialchars($response['response_id']) ?>]" value="<?= htmlspecialchars($response['internal_student_id'] ?? '') ?>">
-                                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> ID: <?= htmlspecialchars($response['internal_student_id'] ?? '') ?></span>
+                                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> <?= htmlspecialchars($response['student_name'] ?? '') !== '' ? htmlspecialchars($response['student_name'] ?? '') : 'Mappato' ?></span>
+                                                    <small class="text-muted d-block">CV: <?= htmlspecialchars($response['cv_id'] ?? '') ?></small>
                                                 <?php else: ?>
                                                     <span class="badge bg-warning text-dark">Non mappato</span>
                                                 <?php endif; ?>
