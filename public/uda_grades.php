@@ -4,6 +4,7 @@ define('REQUIRES_CLASSEVIVA', true);
 require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\UDAManager;
+use App\Core\GradeImportStudentService;
 use App\Integration\KahootAPI;
 use App\Integration\ClasseVivaAPI;
 use App\Core\Database\DatabaseFactory;
@@ -66,27 +67,47 @@ try {
     $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
     $votiRaw = $dbAdapter->findWhere('VOTI', ['id_uda' => $udaId]);
 
-    // Arricchisci i voti con i dati degli studenti (nome/cognome) usando le API ClasseViva
+    // Arricchisci i voti con nome/cognome via ClasseViva, risolvendo in modo
+    // provider-neutral gruppo didattico + studente interno -> id ClasseViva.
     $voti = [];
     $classeVivaAPI = $cvReady ? new ClasseVivaAPI($config) : null;
+    $currentUserId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
+    $gradeImportService = new GradeImportStudentService($dbAdapter, $currentUserId);
     $studentCachePerClasse = [];
 
     foreach ($votiRaw as $voto) {
-        // ID studente/classe come usati da ClasseViva
-        $idStudenteCv = $voto['id_studente_cv'] ?? $voto['id_studente'] ?? null;
-        $idClasseCv = $voto['id_classe_cv'] ?? $voto['id_classe'] ?? null;
+        $groupId = (string)($voto['id_gruppo'] ?? '');
+        $internalStudentId = (string)($voto['id_studente'] ?? '');
 
-        // Se possibile, recupera nome/cognome live da ClasseViva (con cache per classe)
-        if ($idStudenteCv && $idClasseCv) {
-            $classKey = (string)$idClasseCv;
-            $studKey = (string)$idStudenteCv;
+        $voto['nome_studente'] = '';
+        $voto['cognome_studente'] = '';
+        $voto['internal_student_id'] = $internalStudentId;
+        $voto['mapping_missing'] = false;
+        $voto['cv_student_id'] = null;
+        $voto['cv_class_id'] = null;
+        $voto['cv_subject_id'] = null;
+        $voto['cv_subject_name'] = null;
+
+        $registerTarget = $gradeImportService->resolveClasseVivaForRegister($groupId, $internalStudentId);
+
+        if ($registerTarget === null) {
+            // Gruppo senza mapping ClasseViva, studente senza identità CV, o voto senza gruppo.
+            $voto['mapping_missing'] = true;
+        } else {
+            $voto['cv_student_id'] = $registerTarget['student_id'];
+            $voto['cv_class_id'] = $registerTarget['class_id'];
+            $voto['cv_subject_id'] = $registerTarget['subject_id'];
+            $voto['cv_subject_name'] = $registerTarget['subject_name'];
+
+            $classKey = $registerTarget['class_id'];
+            $cvStudentId = $registerTarget['student_id'];
 
             if (!isset($studentCachePerClasse[$classKey])) {
-                if ($classeVivaAPI && $cvReady) {
+                if ($classeVivaAPI) {
                     try {
-                        $studentiClasse = $classeVivaAPI->getStudentiClasse($classKey);
+                        $list = $classeVivaAPI->getStudentiClasse($classKey);
                         $map = [];
-                        foreach ($studentiClasse as $s) {
+                        foreach ($list as $s) {
                             $map[(string)($s['id'] ?? '')] = $s;
                         }
                         $studentCachePerClasse[$classKey] = $map;
@@ -98,25 +119,20 @@ try {
                 }
             }
 
-            $studenteInfo = $studentCachePerClasse[$classKey][$studKey] ?? null;
-            if ($studenteInfo) {
-                $voto['nome_studente'] = $studenteInfo['nome'] ?? '';
-                $voto['cognome_studente'] = $studenteInfo['cognome'] ?? '';
+            $info = $studentCachePerClasse[$classKey][$cvStudentId] ?? null;
+            if ($info) {
+                $voto['nome_studente'] = (string)($info['nome'] ?? '');
+                $voto['cognome_studente'] = (string)($info['cognome'] ?? '');
             }
-        }
-
-        // Fallback: se ancora vuoto, lascia almeno l'ID visibile
-        if (empty($voto['nome_studente'] ?? '') && empty($voto['cognome_studente'] ?? '')) {
-            $voto['nome_studente'] = '';
-            $voto['cognome_studente'] = '[ID: ' . ($idStudenteCv ?? $voto['id_studente_cv'] ?? $voto['id_studente'] ?? 'N/D') . ']';
         }
 
         // Rinomina tipo_voto in tipo_valutazione per compatibilità
         $voto['tipo_valutazione'] = $voto['tipo_voto'] ?? '';
-        // Allinea ID per publishGrade
-        $voto['id_studente'] = $voto['id_studente_cv'] ?? ($voto['id_studente'] ?? '');
-        $voto['id_classe'] = $voto['id_classe_cv'] ?? ($voto['id_classe'] ?? '');
-        $voto['id_materia'] = $voto['id_materia_cv'] ?? ($voto['id_materia'] ?? '');
+        // Allinea ID per publishGrade (usa i riferimenti ClasseViva risolti)
+        $voto['id_studente'] = $voto['cv_student_id'] ?? $internalStudentId;
+        $voto['id_classe'] = $voto['cv_class_id'] ?? '';
+        $voto['id_materia'] = $voto['cv_subject_id'] ?? '';
+        $voto['nome_materia'] = $voto['cv_subject_name'] ?? 'Materia';
 
         $voti[] = $voto;
     }
@@ -500,8 +516,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_registro']
                                         <?php foreach ($voti as $voto): ?>
                                             <tr>
                                                 <td>
-                                                    <?= htmlspecialchars($voto['cognome_studente'] ?? '') ?>
-                                                    <?= htmlspecialchars($voto['nome_studente'] ?? '') ?>
+                                                    <?php $nomeCompleto = trim((string)($voto['cognome_studente'] ?? '') . ' ' . (string)($voto['nome_studente'] ?? '')); ?>
+                                                    <?php if ($nomeCompleto !== ''): ?>
+                                                        <?= htmlspecialchars($nomeCompleto) ?>
+                                                    <?php else: ?>
+                                                        <span class="text-muted">ID: <?= htmlspecialchars($voto['internal_student_id'] ?? 'N/D') ?></span>
+                                                    <?php endif; ?>
                                                 </td>
                                                 <td>
                                             <span class="badge bg-secondary">
@@ -515,6 +535,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_registro']
                                                 </a>
                                             <?php else: ?>
                                                 <strong><?= htmlspecialchars(formatGradeValue($voto['voto'])) ?></strong>
+                                            <?php endif; ?>
+                                            <?php if (!empty($voto['mapping_missing'])): ?>
+                                                <span class="badge bg-warning text-dark ms-1" tabindex="0" role="button"
+                                                      data-bs-toggle="popover" data-bs-trigger="focus" data-bs-placement="top"
+                                                      data-bs-title="Pubblicazione registro non disponibile"
+                                                      data-bs-content="Lo studente appartiene a un gruppo didattico senza mapping ClasseViva (o senza identità ClasseViva). Per pubblicare i voti sul registro elettronico il gruppo deve essere collegato a una classe/materia ClasseViva: Gruppi didattici &amp; Mappature.">
+                                                    <i class="bi bi-exclamation-triangle"></i>
+                                                </span>
                                             <?php endif; ?>
                                         </td>
                                         <td>
@@ -647,7 +675,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_registro']
                         <div class="modal-body">
                             <div class="mb-3">
                                 <label class="form-label">Studente</label>
-                                <input type="text" class="form-control" value="<?= htmlspecialchars(($voto['cognome'] ?? '') . ' ' . ($voto['nome'] ?? '')) ?>" disabled>
+                                <input type="text" class="form-control" value="<?= htmlspecialchars(trim((string)($voto['cognome_studente'] ?? '') . ' ' . (string)($voto['nome_studente'] ?? ''))) ?>" disabled>
                             </div>
 
                             <div class="mb-3">
@@ -712,7 +740,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_registro']
                         <div class="modal-body">
                             <p>Sei sicuro di voler eliminare questo voto?</p>
                             <div class="alert alert-warning">
-                                <strong>Studente:</strong> <?= htmlspecialchars(($voto['cognome'] ?? '') . ' ' . ($voto['nome'] ?? '')) ?><br>
+                                <strong>Studente:</strong> <?= htmlspecialchars(trim((string)($voto['cognome_studente'] ?? '') . ' ' . (string)($voto['nome_studente'] ?? ''))) ?: htmlspecialchars($voto['internal_student_id'] ?? 'N/D') ?><br>
                                 <strong>Voto:</strong> <?= htmlspecialchars($voto['voto'] ?? '') ?><br>
                                 <strong>Tipo:</strong> <?= htmlspecialchars($voto['tipo_voto'] ?? '') ?><br>
                                 <strong>Data:</strong> <?= htmlspecialchars($voto['data_valutazione'] ?? '') ?>
@@ -796,6 +824,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_registro']
     </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        document.querySelectorAll('[data-bs-toggle="popover"]').forEach(el => new bootstrap.Popover(el));
         (function () {
             const master = document.getElementById('selectAllPublish');
             if (!master) return;

@@ -126,6 +126,40 @@ final class GradeImportStudentService
     }
 
     /**
+     * Risolve i riferimenti ClasseViva (student_id, class_id, subject_id) per
+     * pubblicare un voto sul registro elettronico, a partire dal gruppo
+     * didattico e dallo studente interno. Restituisce null quando il gruppo non
+     * ha un mapping ClasseViva o lo studente non ha un'identità ClasseViva.
+     *
+     * @return array{student_id:string,class_id:string,subject_id:string,subject_name:string}|null
+     */
+    public function resolveClasseVivaForRegister(string $groupId, string $studentId): ?array
+    {
+        $groupId = trim($groupId);
+        $studentId = trim($studentId);
+        if ($groupId === '' || $studentId === '') {
+            return null;
+        }
+
+        $integration = $this->integrations->findForGroupProvider($groupId, 'classeviva');
+        if ($integration === null) {
+            return null;
+        }
+
+        $cvId = $this->classeVivaIdForStudent($studentId);
+        if ($cvId === null) {
+            return null;
+        }
+
+        return [
+            'student_id' => $cvId,
+            'class_id' => (string)($integration['external_context_id'] ?? ''),
+            'subject_id' => (string)($integration['external_subject_id'] ?? ''),
+            'subject_name' => (string)($integration['external_name'] ?? 'Materia'),
+        ];
+    }
+
+    /**
      * Risolve nomi (es. giocatori Kahoot) verso id_studente interni, matchando
      * i nomi contro un roster provider vivo (normalizzazione + levenshtein <= 3).
      *
