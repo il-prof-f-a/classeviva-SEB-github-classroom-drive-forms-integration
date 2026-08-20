@@ -1497,6 +1497,17 @@ if ($idClasseDaGet) {
 // Carica valutazioni salvate dal DATABASE per questa UDA e classe
 $valutazioniSalvate = [];
 $valutazioniPerStudente = [];
+
+// I nomi non sono persistiti (PII): ricostruiscili dalla lista studenti caricata.
+$nomePerStudente = [];
+foreach ($studenti as $st) {
+    $sid = (string)($st['id'] ?? '');
+    $nomeSt = trim((string)($st['nome_completo'] ?? ''));
+    if ($sid !== '' && $nomeSt !== '') {
+        $nomePerStudente[$sid] = $nomeSt;
+    }
+}
+
 if ($idUdaSelezionata && $idClasseDaGet) {
 	    $where = [
 	        'id_uda' => $idUdaSelezionata,
@@ -1528,7 +1539,7 @@ if ($idUdaSelezionata && $idClasseDaGet) {
         $votoFinale = resolveVotoFinale($val, $datiJson, $votoOriginale);
 
         $valutazioniPerStudente[$idStud] = [
-            'nome_studente' => $val['nome_studente'] ?? ($extra['nome_studente'] ?? 'N/A'),
+            'nome_studente' => $nomePerStudente[$idStud] ?? ($val['nome_studente'] ?? ($extra['nome_studente'] ?? 'N/A')),
             'voto_originale' => $votoOriginale,
             'voto_finale' => $votoFinale,
             'voto_finale_manual' => $manualFinale,
