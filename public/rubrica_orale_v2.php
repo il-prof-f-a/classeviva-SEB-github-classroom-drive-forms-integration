@@ -14,6 +14,7 @@
 
 use App\Core\ClasseVivaTokenGuard;
 use App\Core\Database\DatabaseFactory;
+use App\Core\GroupStudentRepository;
 use App\Core\StudentIdentityRepository;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupRepository;
@@ -232,7 +233,8 @@ try {
     $udaGroupRepository = new UdaGroupRepository($dbAdapter, $userId);
     $teachingGroupRepository = new TeachingGroupRepository($dbAdapter, $userId);
     $teachingGroupIntegrationRepository = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
-$studentIdentityRepository = new StudentIdentityRepository($dbAdapter, $userId);
+    $groupStudentRepository = new GroupStudentRepository($dbAdapter, $userId);
+    $studentIdentityRepository = new StudentIdentityRepository($dbAdapter, $userId);
     $udaManager = new UDAManager($config);
     $rubricManager = new RubricManager($dbAdapter, $config);
     $colsValRubrica = [];
@@ -1611,6 +1613,101 @@ if ($idClasseDaGet) {
             $error = 'Impossibile risolvere i nomi degli studenti del gruppo didattico.';
         }
     }
+
+    // Roster provider-neutral: non richiede alcuna mappatura ClasseViva e usa
+    // sempre l'id interno dello studente per le successive scritture.
+    if (empty($studenti) && $gruppoSelezionatoId !== '') {
+        try {
+            $runtimeMemberships = $groupStudentRepository->listForGroup($gruppoSelezionatoId);
+            $runtimeIdentitiesByStudent = [];
+            foreach ($runtimeMemberships as $membership) {
+                $internalId = trim((string)($membership['id_studente'] ?? ''));
+                if ($internalId !== '') {
+                    $runtimeIdentitiesByStudent[$internalId] = $studentIdentityRepository->listForStudent($internalId);
+                }
+            }
+
+            // Il nome viene richiesto a runtime dal primo provider collegato
+            // al gruppo, senza salvarlo nelle tabelle locali.
+            $integrations = array_values(array_filter(
+                $teachingGroupIntegrationRepository->listForGroup($gruppoSelezionatoId),
+                static fn(array $integration): bool => ($integration['stato'] ?? 'attivo') !== 'disattivo'
+            ));
+            $providerOrder = array_flip(RuntimeStudentNameResolver::PROVIDER_PRIORITY);
+            usort($integrations, static function (array $left, array $right) use ($providerOrder): int {
+                $leftOrder = $providerOrder[(string)($left['provider'] ?? '')] ?? PHP_INT_MAX;
+                $rightOrder = $providerOrder[(string)($right['provider'] ?? '')] ?? PHP_INT_MAX;
+                return $leftOrder <=> $rightOrder;
+            });
+
+            $providerRosters = [];
+            $runtimeNameService = new RuntimeStudentNameService($dbAdapter, $userId, $config);
+            foreach ($integrations as $integration) {
+                $provider = (string)($integration['provider'] ?? '');
+                $contextId = trim((string)($integration['external_context_id'] ?? ''));
+                if ($provider === '' || $contextId === '') {
+                    continue;
+                }
+                try {
+                    $providerRosters[$provider] = $runtimeNameService->providerRoster($provider, $contextId);
+                } catch (Throwable $providerError) {
+                    error_log('Errore roster runtime ' . $provider . ': ' . $providerError->getMessage());
+                    continue;
+                }
+                if (!empty($providerRosters[$provider])) {
+                    break;
+                }
+            }
+            $runtimeNames = RuntimeStudentNameResolver::resolveNames(
+                $runtimeMemberships,
+                $runtimeIdentitiesByStudent,
+                $providerRosters
+            );
+
+            foreach ($runtimeMemberships as $membership) {
+                $internalId = trim((string)($membership['id_studente'] ?? ''));
+                if ($internalId === '') {
+                    continue;
+                }
+                $displayName = '';
+                $provider = 'internal';
+                foreach ($studentIdentityRepository->listForStudent($internalId) as $identity) {
+                    $providerCandidate = trim((string)($identity['provider'] ?? ''));
+                    $metadata = json_decode((string)($identity['metadata_json'] ?? '{}'), true);
+                    if (!is_array($metadata)) {
+                        $metadata = [];
+                    }
+                    $candidateName = trim((string)($metadata['display_name'] ?? ($metadata['name'] ?? '')));
+                    if ($candidateName !== '') {
+                        $displayName = $candidateName;
+                    }
+                    if ($providerCandidate !== '') {
+                        $provider = $providerCandidate;
+                    }
+                    if ($displayName !== '') {
+                        break;
+                    }
+                }
+                if (isset($runtimeNames[$internalId])) {
+                    $displayName = $runtimeNames[$internalId];
+                }
+                $studenti[] = [
+                    'id' => $internalId,
+                    'id_studente_internal' => $internalId,
+                    'provider' => $provider,
+                    'nome_completo' => $displayName !== '' ? $displayName : $internalId,
+                    'cognome' => '',
+                    'nome' => $displayName !== '' ? $displayName : $internalId,
+                ];
+            }
+            if ($studenti !== []) {
+                $studentiProvider = 'internal';
+            }
+        } catch (Exception $e) {
+            error_log('Errore caricamento roster provider-neutral: ' . $e->getMessage());
+        }
+    }
+
 }
 
 // Carica valutazioni salvate dal DATABASE per questa UDA e classe
