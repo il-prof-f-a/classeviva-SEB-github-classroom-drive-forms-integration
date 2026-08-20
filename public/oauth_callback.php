@@ -5,6 +5,7 @@ require_once __DIR__ . '/../bootstrap.php';
 use Google\Client;
 use App\Core\GoogleIdTokenVerifier;
 use App\Core\Database\DatabaseFactory;
+use App\Core\TestAccessPolicy;
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -66,8 +67,14 @@ try {
         throw new Exception('Google non ha fornito un indirizzo email valido.');
     }
 
-    // TODO: opzionale - filtra per dominio (es. @miascuola.it)
-    // if (!str_ends_with($email, '@miascuola.it')) { ... }
+    // Durante la fase di test nessun account non autorizzato deve arrivare
+    // alla persistenza locale o alla creazione della sessione applicativa.
+    if (!TestAccessPolicy::isAllowed((string)$email, $config)) {
+        $_SESSION = [];
+        session_regenerate_id(true);
+        header('Location: ../index.php?access=testing');
+        exit;
+    }
 
     // Crea/aggiorna record utente in tabella UTENTI
     $db = DatabaseFactory::createWithInitialization($config, true);
