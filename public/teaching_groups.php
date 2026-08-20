@@ -638,9 +638,6 @@ if ($selectedGroupRecord !== null) {
         }
         try {
             $roster = $fetchRoster($provider, $contextId);
-            if ($roster !== []) {
-                $studentService->syncRoster($selectedGroupId, $provider, $contextId, $roster);
-            }
             $rosters[$provider] = $roster;
         } catch (Throwable $exception) {
             $rosterErrors[$provider] = 'Roster ' . ($providerLabels[$provider] ?? $provider) . ' non disponibile: ' . $exception->getMessage();

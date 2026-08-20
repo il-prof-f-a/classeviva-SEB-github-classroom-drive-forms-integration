@@ -327,14 +327,50 @@ final class TeachingGroupStudentService
                             throw new RuntimeException('impossibile riassegnare la identita candidata');
                         }
                         $count++;
-                        if ($this->identities->listForStudent($sourceStudentId) === []) {
-                            $this->students->delete($sourceStudentId);
-                        }
+                        $this->cleanupSourceMemberships($groupId, $sourceStudentId, $anchorStudentId);
                     }
                 }
             }
         });
         return $count;
+    }
+
+    /**
+     * Remove the source student's membership from this group once all of its
+     * external identities have been moved. Historical student data (grades,
+     * resources and memberships in other groups) is intentionally preserved.
+     */
+    private function cleanupSourceMemberships(string $groupId, string $sourceStudentId, string $targetStudentId): void
+    {
+        if ($this->identities->listForStudent($sourceStudentId) !== []) {
+            return;
+        }
+
+        $groupMemberships = $this->memberships->listForGroup($groupId);
+        $targetHasMembership = false;
+        foreach ($groupMemberships as $membership) {
+            if ((string)($membership['id_studente'] ?? '') === $targetStudentId) {
+                $targetHasMembership = true;
+                break;
+            }
+        }
+
+        foreach ($this->memberships->listForStudent($sourceStudentId) as $membership) {
+            if ((string)($membership['id_gruppo'] ?? '') !== $groupId) {
+                continue;
+            }
+            $membershipId = trim((string)($membership['id_iscrizione'] ?? ''));
+            if ($membershipId === '') {
+                continue;
+            }
+            if ($targetHasMembership) {
+                $this->memberships->delete($membershipId);
+                continue;
+            }
+            if ($this->memberships->reassign($membershipId, $targetStudentId)) {
+                $targetHasMembership = true;
+            }
+        }
     }
 
     public function unlinkIdentity(string $studentId, string $provider, string $externalUserId): bool
