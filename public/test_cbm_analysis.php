@@ -5,6 +5,7 @@
 require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
+use App\Core\GoogleFormScoreNormalizer;
 use App\Core\GoogleTokenProvider;
 use App\Integration\ClasseVivaAPI;
 use Google\Client;
@@ -32,7 +33,7 @@ if (!$cbmEnabled) {
     exit;
 }
 
-$punteggioMax = floatval($test['punteggio_max'] ?? 100);
+$punteggioMax = floatval($test['punteggio_max'] ?? 0);
 $cbmParams = [
     1 => ['correct' => 1, 'wrong' => 0],
     2 => ['correct' => 2, 'wrong' => -2],
@@ -45,31 +46,39 @@ $cbmFetchInfo = null;
 $responsesCount = 0;
 $confidenceIds = [];
 $itemTitles = [];
+$mappingRows = $dbAdapter->findWhere('TEST_CBM_MAPPING', ['id_test' => $testId]);
+$mapping = [];
+$questionWeights = GoogleFormScoreNormalizer::extractPersistedWeights($mappingRows);
+foreach ($mappingRows as $mappingRow) {
+    $questionId = trim((string)($mappingRow['form_item_id'] ?? ''));
+    if ($questionId === '') {
+        $questionId = trim((string)($mappingRow['id_domanda'] ?? ''));
+    }
+    $confidenceId = trim((string)($mappingRow['confidence_item_id'] ?? ''));
+    if ($questionId !== '' && $confidenceId !== '') {
+        $mapping[$questionId] = $confidenceId;
+    }
+}
+if (empty($mapping) && !empty($test['cbm_form_config_json'])) {
+    $cfg = json_decode($test['cbm_form_config_json'], true);
+    if (is_array($cfg['mapping'] ?? null)) {
+        foreach ($cfg['mapping'] as $questionId => $confidenceId) {
+            if ($questionId && $confidenceId) {
+                $mapping[(string)$questionId] = (string)$confidenceId;
+            }
+        }
+    }
+}
+$missingQuestionWeights = array_diff(array_keys($mapping), array_keys($questionWeights));
+$needsFormMetadata = empty($rows) || empty($mapping)
+    || $questionWeights === [] || $missingQuestionWeights !== [];
 
 /**
- * Se non ci sono risposte salvate, prova a leggere le risposte dal Google Form
- * e calcolare CBM al volo (senza salvare) per permettere l'analisi anche prima dell'import.
+ * Legge il Form quando mancano risposte salvate oppure quando i mapping storici
+ * non contengono ancora i punti configurati per domanda.
  */
-if (empty($rows) && $cbmEnabled && !empty($test['id_esterno'])) {
+if ($needsFormMetadata && $cbmEnabled && !empty($test['id_esterno'])) {
     try {
-        // Mapping da tabella o da config JSON
-        $mappingRows = $dbAdapter->findWhere('TEST_CBM_MAPPING', ['id_test' => $testId]);
-        $mapping = [];
-        foreach ($mappingRows as $row) {
-            if (!empty($row['form_item_id']) && !empty($row['confidence_item_id'])) {
-                $mapping[$row['form_item_id']] = $row['confidence_item_id'];
-            }
-        }
-        if (empty($mapping) && !empty($test['cbm_form_config_json'])) {
-            $cfg = json_decode($test['cbm_form_config_json'], true);
-            if (is_array($cfg['mapping'] ?? null)) {
-                foreach ($cfg['mapping'] as $q => $c) {
-                    if ($q && $c) {
-                        $mapping[$q] = $c;
-                    }
-                }
-            }
-        }
         // Fallback: deduci mapping dal form (domanda seguita da confidenza)
         $client = new Client();
         $client->setApplicationName('UDA System');
@@ -86,6 +95,7 @@ if (empty($rows) && $cbmEnabled && !empty($test['id_esterno'])) {
         $form = $service->forms->get($test['id_esterno']);
         $items = $form->getItems() ?? [];
         $mappingFromForm = [];
+        $questionIdByItemId = [];
         $prevQuestionId = null;
         $keywords = ['sicuro', 'sure', 'conf', 'fiducia', 'confidence'];
         foreach ($items as $item) {
@@ -94,6 +104,9 @@ if (empty($rows) && $cbmEnabled && !empty($test['id_esterno'])) {
             $questionItem = $item->getQuestionItem();
             $questionObj = $questionItem ? $questionItem->getQuestion() : null;
             $questionId = $questionObj ? $questionObj->getQuestionId() : $itemId;
+            if ($questionObj && $questionId) {
+                $questionIdByItemId[(string)$itemId] = (string)$questionId;
+            }
             $itemTitles[$questionId] = $item->getTitle() ?? '';
             $isConfidence = false;
             foreach ($keywords as $kw) {
@@ -118,50 +131,92 @@ if (empty($rows) && $cbmEnabled && !empty($test['id_esterno'])) {
             }
         }
 
-        // Usa mapping dal form se trovato, altrimenti quello salvato
+        $normalizedStoredMapping = [];
+        foreach ($mapping as $questionId => $confidenceId) {
+            $canonicalQuestionId = $questionIdByItemId[(string)$questionId] ?? (string)$questionId;
+            $canonicalConfidenceId = $questionIdByItemId[(string)$confidenceId] ?? (string)$confidenceId;
+            $normalizedStoredMapping[$canonicalQuestionId] = $canonicalConfidenceId;
+        }
+        $mapping = $normalizedStoredMapping;
+
+        // Usa mapping dal form se trovato, altrimenti quello salvato.
         if (!empty($mappingFromForm)) {
             $mapping = $mappingFromForm;
-            // Persisti per le analisi future
-            $cbmLevelsPersist = [
-                'c1' => ['label' => 'Poco sicuro', 'correct' => 1, 'wrong' => 0],
-                'c2' => ['label' => 'Abbastanza sicuro', 'correct' => 2, 'wrong' => -2],
-                'c3' => ['label' => 'Molto sicuro', 'correct' => 3, 'wrong' => -6],
+        }
+        $confidenceIds = array_values($mapping);
+        $questionWeights = GoogleFormScoreNormalizer::extractQuestionWeights($items, $confidenceIds);
+        $classicMax = GoogleFormScoreNormalizer::totalPoints($questionWeights);
+        $punteggioMax = $classicMax;
+        $dbAdapter->updateRow('TEST', 'id_test', $testId, ['punteggio_max' => $classicMax]);
+
+        $cbmLevelsPersist = [
+            'c1' => ['label' => 'Poco sicuro', 'correct' => 1, 'wrong' => 0],
+            'c2' => ['label' => 'Abbastanza sicuro', 'correct' => 2, 'wrong' => -2],
+            'c3' => ['label' => 'Molto sicuro', 'correct' => 3, 'wrong' => -6],
+        ];
+        $existingRowsByQuestion = [];
+        foreach ($mappingRows as $mappingRow) {
+            $storedQuestionId = trim((string)($mappingRow['form_item_id'] ?? ''));
+            if ($storedQuestionId === '') {
+                $storedQuestionId = trim((string)($mappingRow['id_domanda'] ?? ''));
+            }
+            $canonicalQuestionId = $questionIdByItemId[$storedQuestionId] ?? $storedQuestionId;
+            if ($canonicalQuestionId !== '') {
+                $existingRowsByQuestion[$canonicalQuestionId][] = $mappingRow;
+            }
+        }
+        foreach ($mapping as $questionId => $confidenceId) {
+            $weight = $questionWeights[$questionId] ?? null;
+            if ($weight === null) {
+                continue;
+            }
+            $mappingData = [
+                'id_domanda' => $questionId,
+                'form_item_id' => $questionId,
+                'confidence_item_id' => $confidenceId,
+                'punteggio_domanda' => $weight,
+                'max_score' => $weight,
+                'config_json' => json_encode($cbmLevelsPersist),
+                'id_utente' => $test['id_utente'] ?? null,
             ];
-            $existingMap = $dbAdapter->findWhere('TEST_CBM_MAPPING', ['id_test' => $testId]);
-            foreach ($existingMap as $row) {
-                if (!empty($row['id_mapping'])) {
-                    $dbAdapter->deleteRow('TEST_CBM_MAPPING', $row['id_mapping'], 'id_mapping');
+            $existingRows = $existingRowsByQuestion[$questionId] ?? [];
+            if ($existingRows === []) {
+                $dbAdapter->insertRow('TEST_CBM_MAPPING', array_merge([
+                    'id_mapping' => 'CBMMAP_' . uniqid(),
+                    'id_test' => $testId,
+                ], $mappingData));
+                continue;
+            }
+            foreach ($existingRows as $existingRow) {
+                if (!empty($existingRow['id_mapping'])) {
+                    $dbAdapter->updateRow(
+                        'TEST_CBM_MAPPING',
+                        'id_mapping',
+                        (string)$existingRow['id_mapping'],
+                        $mappingData
+                    );
                 }
             }
-            foreach ($mapping as $q => $c) {
-                $dbAdapter->insertRow('TEST_CBM_MAPPING', [
-                    'id_test' => $testId,
-                    'form_item_id' => $q,
-                    'confidence_item_id' => $c,
-                    'config_json' => json_encode($cbmLevelsPersist),
-                    'id_utente' => $test['id_utente'] ?? null,
-                ]);
-            }
+        }
+
+        if (!empty($mappingFromForm)) {
             $newCfg = [
                 'mapping' => $mapping,
                 'levels' => $cbmLevelsPersist,
             ];
             $dbAdapter->updateRow('TEST', 'id_test', $testId, ['cbm_form_config_json' => json_encode($newCfg)]);
         }
-        $confidenceIds = array_values($mapping);
 
-        if (!empty($mapping)) {
+        if (empty($mapping)) {
+            $cbmFetchError = "Mapping domanda/confidenza non disponibile. Completa l'import CBM o rigenera il Form CBM.";
+        } elseif (empty($rows)) {
             $cbmLevels = json_decode($test['cbm_levels_json'] ?? '[]', true);
             if (!is_array($cbmLevels) || empty($cbmLevels)) {
                 $cfgLevels = json_decode($test['cbm_form_config_json'] ?? '[]', true);
                 $cbmLevels = is_array($cfgLevels['levels'] ?? null) ? $cfgLevels['levels'] : [];
             }
             if (!is_array($cbmLevels) || empty($cbmLevels)) {
-                $cbmLevels = [
-                    'c1' => ['label' => 'Poco sicuro', 'correct' => 1, 'wrong' => 0],
-                    'c2' => ['label' => 'Abbastanza sicuro', 'correct' => 2, 'wrong' => -2],
-                    'c3' => ['label' => 'Molto sicuro', 'correct' => 3, 'wrong' => -6],
-                ];
+                $cbmLevels = $cbmLevelsPersist;
             }
             $cbmParams = [
                 1 => ['correct' => $cbmLevels['c1']['correct'] ?? 1, 'wrong' => $cbmLevels['c1']['wrong'] ?? 0],
@@ -170,59 +225,63 @@ if (empty($rows) && $cbmEnabled && !empty($test['id_esterno'])) {
             ];
 
             $responsesObj = $service->forms_responses->listFormsResponses($test['id_esterno']);
-        $responses = $responsesObj->getResponses() ?? [];
-        foreach ($responses as $response) {
-            $answers = $response->getAnswers();
-            if (!$answers) {
-                continue;
-            }
-            $responsesCount++;
-            foreach ($answers as $qId => $answer) {
-                // Salta le risposte alle domande di confidenza: verranno lette tramite la domanda principale
-                if (!empty($confidenceIds) && in_array($qId, $confidenceIds, true)) {
+            $responses = $responsesObj->getResponses() ?? [];
+            foreach ($responses as $response) {
+                $answers = $response->getAnswers();
+                if (!$answers) {
                     continue;
                 }
-
-                $confId = $mapping[$qId] ?? null;
-                $confLevel = 1;
-                $confVal = null;
-                if ($confId && isset($answers[$confId])) {
-                    $textAns = $answers[$confId]->getTextAnswers();
-                    if ($textAns && $textAns->getAnswers()) {
-                        $confVal = $textAns->getAnswers()[0]->getValue();
-                        $v = strtolower((string)$confVal);
-                        if (in_array($v, ['3','c3','molto sicuro','molto'], true)) $confLevel = 3;
-                        elseif (in_array($v, ['2','c2','abbastanza sicuro','abbastanza'], true)) $confLevel = 2;
+                $responsesCount++;
+                foreach ($answers as $qId => $answer) {
+                    if (in_array($qId, $confidenceIds, true)) {
+                        continue;
                     }
-                }
-                $scoreClassic = ($answer->getGrade()?->getScore()) ?? 0;
-                // se manca confidenza, considera livello minimo
-                $scoreCbm = $scoreClassic > 0
-                    ? ($cbmParams[$confLevel]['correct'] ?? 1)
-                    : ($cbmParams[$confLevel]['wrong'] ?? 0);
 
-                $rows[] = [
-                    'id_test' => $testId,
-                    'id_domanda' => $qId,
-                    'id_studente_cv' => $response->getRespondentEmail() ?? 'resp',
-                    'google_response_id' => $response->getResponseId(),
-                    'domanda_label' => $itemTitles[$qId] ?? '',
-                    'confidenza_livello' => $confLevel,
-                    'confidenza_valore' => $confVal,
-                    'corretta' => $scoreClassic > 0 ? 'SI' : 'NO',
-                    'score_cba' => $scoreCbm,
-                    'score_classico' => $scoreClassic,
+                    $confId = $mapping[$qId] ?? null;
+                    if ($confId === null) {
+                        continue;
+                    }
+                    $confLevel = 1;
+                    $confVal = null;
+                    if (isset($answers[$confId])) {
+                        $textAns = $answers[$confId]->getTextAnswers();
+                        if ($textAns && $textAns->getAnswers()) {
+                            $confVal = $textAns->getAnswers()[0]->getValue();
+                            $value = strtolower((string)$confVal);
+                            if (in_array($value, ['3', 'c3', 'molto sicuro', 'molto'], true)) {
+                                $confLevel = 3;
+                            } elseif (in_array($value, ['2', 'c2', 'abbastanza sicuro', 'abbastanza'], true)) {
+                                $confLevel = 2;
+                            }
+                        }
+                    }
+                    $scoreClassic = ($answer->getGrade()?->getScore()) ?? 0;
+                    $scoreCbm = $scoreClassic > 0
+                        ? ($cbmParams[$confLevel]['correct'] ?? 1)
+                        : ($cbmParams[$confLevel]['wrong'] ?? 0);
+
+                    $rows[] = [
+                        'id_test' => $testId,
+                        'id_domanda' => $qId,
+                        'id_studente_cv' => $response->getRespondentEmail() ?? 'resp',
+                        'google_response_id' => $response->getResponseId(),
+                        'domanda_label' => $itemTitles[$qId] ?? '',
+                        'confidenza_livello' => $confLevel,
+                        'confidenza_valore' => $confVal,
+                        'corretta' => $scoreClassic > 0 ? 'SI' : 'NO',
+                        'score_cba' => $scoreCbm,
+                        'score_classico' => $scoreClassic,
                         'penalita' => $scoreCbm < 0 ? abs($scoreCbm) : 0,
                         'punteggio_normalizzato' => null,
                         'timestamp_risposta' => $response->getLastSubmittedTime() ?? $response->getCreateTime(),
                         'raw_json' => null,
-                        'id_utente' => ''
+                        'id_utente' => '',
                     ];
                 }
             }
             $cbmFetchInfo = "Letti {$responsesCount} invii direttamente dal form (non salvati).";
         } else {
-            $cbmFetchError = "Mapping domanda/confidenza non disponibile. Completa l'import CBM o rigenera il Form CBM.";
+            $cbmFetchInfo = 'Pesi delle domande aggiornati dalla configurazione del Google Form.';
         }
     } catch (Exception $e) {
         $cbmFetchError = $e->getMessage();
@@ -231,7 +290,6 @@ if (empty($rows) && $cbmEnabled && !empty($test['id_esterno'])) {
 
 $studentStats = [];
 $questionStats = [];
-$questionWeights = [];
 $studentNameMap = [];
 
 // Prova a risolvere i nomi studenti (ClasseViva) per mostrare nomi invece di ID
@@ -321,15 +379,12 @@ foreach ($rows as $row) {
         $qLabel = $row['id_domanda'] ?? '';
     }
     $qId = $row['id_domanda'] ?? $qLabel;
-    // Registra il peso massimo per domanda (rank)
     $scoreClassic = floatval($row['score_classico'] ?? 0);
-    if (!isset($questionWeights[$qId]) || $scoreClassic > $questionWeights[$qId]) {
-        $questionWeights[$qId] = $scoreClassic;
+    $w = $questionWeights[$qId] ?? null;
+    if ($w === null || $w <= 0.0) {
+        $cbmFetchError = 'Pesi configurati incompleti: impossibile calcolare correttamente l’analisi CBM.';
+        continue;
     }
-    if (($questionWeights[$qId] ?? 0) <= 0) {
-        $questionWeights[$qId] = 1.0;
-    }
-    $w = $questionWeights[$qId];
 
     if (!isset($studentStats[$sid])) {
         $studentStats[$sid] = [
@@ -379,20 +434,16 @@ foreach ($rows as $row) {
 
 // Calcola percentuali per studenti usando rank totale (somma pesi)
 $studentSeries = [];
-$classicMax = max(1, array_sum($questionWeights));
-$maxCbmPerQuestion = max(
-    $cbmParams[1]['correct'] ?? 1,
-    $cbmParams[2]['correct'] ?? 2,
-    $cbmParams[3]['correct'] ?? 3
-);
+$classicMax = 0.0;
+if ($questionWeights !== []) {
+    $classicMax = GoogleFormScoreNormalizer::totalPoints($questionWeights);
+} elseif ($cbmFetchError === null) {
+    $cbmFetchError = 'Pesi configurati non disponibili per questo test CBM.';
+}
 foreach ($studentStats as $sid => $s) {
     // accuracy = punteggio classico / rank totale
     $classicPct = $classicMax > 0 ? ($s['classic_total'] / $classicMax) * 100 : 0;
-    // cbm_total va pesato coi pesi per domanda
-    //$cbmPct = $classicMax > 0 ? ($s['cbm_total'] / $classicMax) * 100 : 0;
     $cbmPct = $classicMax > 0 ? ($s['cbm_total'] / $classicMax) * 100 : 0;
-    //if ($cbmPct < 0) $cbmPct = 0;
-    //if ($cbmPct > 300) $cbmPct = 300;
     $bonus = $cbmPct - $classicPct;
     $malus = round($s['malus'] ?? 0, 2);
     $acc = $classicPct;
@@ -412,7 +463,10 @@ foreach ($studentStats as $sid => $s) {
 // Calcola stats domande
 $questionSeries = [];
 foreach ($questionStats as $label => $q) {
-    $w = $questionWeights[$q['id']] ?? 1;
+    $w = $questionWeights[$q['id']] ?? null;
+    if ($w === null || $w <= 0.0) {
+        continue;
+    }
     $count = max(1, $q['count']);
     $accuracy = ($w > 0) ? ($q['classic_total'] / ($count * $w)) * 100 : 0;
     $avgConf = $q['count'] > 0 ? $q['avg_conf'] / $q['count'] : 1;
@@ -462,12 +516,16 @@ foreach ($questionStats as $label => $q) {
         </a>
     </div>
 
+    <?php if (!empty($cbmFetchError)): ?>
+        <div class="alert alert-warning">
+            Impossibile completare l’analisi CBM: <?= htmlspecialchars($cbmFetchError) ?>
+        </div>
+    <?php endif; ?>
+
     <?php if (empty($rows)): ?>
         <div class="alert alert-info">
             Non ci sono risposte CBM registrate per questo test.
-            <?php if (!empty($cbmFetchError)): ?>
-                <br><small class="text-danger">Tentativo di lettura dal form fallito: <?= htmlspecialchars($cbmFetchError) ?></small>
-            <?php elseif (!empty($cbmFetchInfo)): ?>
+            <?php if (empty($cbmFetchError) && !empty($cbmFetchInfo)): ?>
                 <br><small class="text-muted"><?= htmlspecialchars($cbmFetchInfo) ?></small>
             <?php endif; ?>
         </div>
@@ -723,7 +781,6 @@ document.querySelectorAll('tr.student-row').forEach(row => {
 </script>
 </body>
 </html>
-
 
 
 

@@ -69,6 +69,35 @@ final class GoogleFormScoreNormalizer
     }
 
     /**
+     * @param array<int, array<string, mixed>> $mappingRows
+     * @return array<string, float>
+     */
+    public static function extractPersistedWeights(array $mappingRows): array
+    {
+        $weights = [];
+
+        foreach ($mappingRows as $mappingRow) {
+            $questionId = trim((string)($mappingRow['form_item_id'] ?? ''));
+            if ($questionId === '') {
+                $questionId = trim((string)($mappingRow['id_domanda'] ?? ''));
+            }
+            if ($questionId === '') {
+                continue;
+            }
+
+            $weight = (float)($mappingRow['max_score'] ?? 0);
+            if ($weight <= 0.0) {
+                $weight = (float)($mappingRow['punteggio_domanda'] ?? 0);
+            }
+            if ($weight > 0.0) {
+                $weights[$questionId] = $weight;
+            }
+        }
+
+        return $weights;
+    }
+
+    /**
      * @param array<string, float|int|string> $weights
      * @return array{form_max: float, classic_percent: float, cbm_percent: float}
      */

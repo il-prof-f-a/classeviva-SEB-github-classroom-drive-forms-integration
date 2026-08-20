@@ -32,19 +32,25 @@ foreach ($formResponses as $r) {
 $studentSeries = [];
 $questionSeries = [];
 $questionWeights = [];
-$classicMaxGraph = 0;
+$classicMaxGraph = 0.0;
 if ($cbmAvailable) {
     // Aggrega studenti
-    foreach ($formResponses as $r) {
+    foreach ($formResponses as $response) {
+        $candidateMax = floatval($response['max_score'] ?? 0);
+        if ($candidateMax > $classicMaxGraph) {
+            $classicMaxGraph = $candidateMax;
+        }
         // ricava pesi max per domanda
-        foreach (($r['cbm_details'] ?? []) as $qId => $detail) {
-            $w = floatval($detail['weight'] ?? 1);
+        foreach (($response['cbm_details'] ?? []) as $qId => $detail) {
+            $w = floatval($detail['weight'] ?? 0);
+            if ($w <= 0.0) {
+                continue;
+            }
             if (!isset($questionWeights[$qId]) || $w > $questionWeights[$qId]) {
                 $questionWeights[$qId] = $w;
             }
         }
     }
-    $classicMaxGraph = max(1e-9, array_sum($questionWeights));
 
     foreach ($formResponses as $r) {
         $accPct = ($classicMaxGraph > 0) ? ($r['total_score'] / $classicMaxGraph) * 100 : 0;
@@ -58,7 +64,10 @@ if ($cbmAvailable) {
         // Aggrega domande da cbm_details
         foreach (($r['cbm_details'] ?? []) as $qId => $detail) {
             $label = $detail['question_label'] ?: $qId;
-            $w = floatval($detail['weight'] ?? 1);
+            $w = floatval($detail['weight'] ?? 0);
+            if ($w <= 0.0) {
+                continue;
+            }
             if (!isset($questionSeries[$qId])) {
                 $questionSeries[$qId] = [
                     'id' => $qId,
@@ -74,7 +83,7 @@ if ($cbmAvailable) {
             $questionSeries[$qId]['count']++;
             $questionSeries[$qId]['weight_total'] += $w;
             $questionSeries[$qId]['cbm_total'] += floatval($detail['cbm_score']) * $w;
-            $questionSeries[$qId]['classic_total'] += floatval($detail['classic_score']) * $w;
+            $questionSeries[$qId]['classic_total'] += floatval($detail['classic_score']);
             $questionSeries[$qId]['avg_conf'] += intval($detail['conf_level']);
             if (floatval($detail['classic_score']) > 0) {
                 $questionSeries[$qId]['correct']++;
@@ -817,4 +826,3 @@ function showStudentLevels(email) {
 
 
 </script>
-

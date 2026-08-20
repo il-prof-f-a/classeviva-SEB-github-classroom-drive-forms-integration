@@ -170,6 +170,17 @@ try {
         'confidenza esclusa tramite itemId storico'
     );
 
+    checkSame(
+        ['q1' => 1.0, 'q2' => 2.0, 'q3' => 3.0],
+        GoogleFormScoreNormalizer::extractPersistedWeights([
+            ['form_item_id' => 'q1', 'max_score' => '', 'punteggio_domanda' => '1'],
+            ['form_item_id' => 'q2', 'max_score' => '2', 'punteggio_domanda' => ''],
+            ['form_item_id' => 'q2', 'max_score' => '', 'punteggio_domanda' => ''],
+            ['form_item_id' => '', 'id_domanda' => 'q3', 'max_score' => '3'],
+        ]),
+        'pesi persistiti riusati con fallback e righe duplicate'
+    );
+
     $negative = GoogleFormScoreNormalizer::normalize(2.0, -6.0, ['q' => 2.0]);
     checkSame(-300.0, $negative['cbm_percent'], 'CBM negativo non troncato');
     $aboveHundred = GoogleFormScoreNormalizer::normalize(2.0, 6.0, ['q' => 2.0]);
