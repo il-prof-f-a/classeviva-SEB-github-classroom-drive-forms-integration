@@ -207,14 +207,12 @@ try {
                 $idEvidenza = $ev['id_evidenza'] ?? null;
                 if ($idEvidenza) {
                     logMessage("  - Aggiorno evidenza ID: $idEvidenza");
-                    $dbAdapter->updateRow('PLUSMINUS_QUEUE',
-                        ['id_evidenza' => $idEvidenza],
-                        [
-                            'registrato' => 1,
-                            'data_registrazione' => $dataRegistrazione,
-                            'id_annotazione_cv' => $idAnnotazioneCV
-                        ]
-                    );
+                    $dbAdapter->updateRow('PLUSMINUS_QUEUE', 'id_evidenza', $idEvidenza, [
+                        'registrato' => 1,
+                        'data_registrazione' => $dataRegistrazione,
+                        'id_annotazione_cv' => $idAnnotazioneCV,
+                        'id_utente' => (string)($ev['id_utente'] ?? 'system')
+                    ]);
                     logMessage("  ✓ Evidenza $idEvidenza aggiornata");
                 }
             }
