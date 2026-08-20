@@ -486,6 +486,7 @@ const studentIndexByKey = new Map();
 // Inizializzazione al caricamento
 window.addEventListener('DOMContentLoaded', function() {
     updateSelectedCount();
+    checkPublishButton();
     renderScatter(null);
 
     // Highlight on row click
