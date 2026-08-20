@@ -30,6 +30,7 @@ use App\Core\Database\DatabaseFactory;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupRepository;
 use App\Core\UdaGroupRepository;
+use App\Core\UdaClassroomPublishService;
 use App\Integration\GoogleClassroomAPI;
 use App\Integration\GoogleDriveAPI;
 $udaManager = new UDAManager($config);
@@ -196,10 +197,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
                 // Se c'è mapping, pubblica realmente
                 if ($mapping) {
-                    // 1. Trova o crea argomento su Classroom
-                    $publishLog[] = "  📚 Verifica argomento su Classroom: " . $uda->titolo;
+                    // 1. Trova o crea argomento su Classroom (usa l'argomento dell'UDA)
+                    $topicName = !empty($uda->argomento) ? $uda->argomento : $uda->titolo;
+                    $publishLog[] = "  📚 Verifica argomento su Classroom: " . $topicName;
                     try {
-                        $topicName = !empty($uda->argomento) ? $uda->argomento : $uda->titolo;
                         $topic = $googleClassroomAPI->findOrCreateTopic($courseId, $topicName);
                         $topicId = $topic['id'];
                         $publishLog[] = "    ✅ Argomento pronto (ID: {$topicId})";
@@ -213,37 +214,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         $publishLog[] = "  📚 Pubblicazione materiale UDA principale...";
 
                         // Crea descrizione dettagliata (SENZA i link, ora vanno come allegati)
-                        $udaDescription = "Descrizione:\n" . ($uda->descrizione ?? 'N/A') . "\n\n";
+                        $udaDescription = UdaClassroomPublishService::materialDescription(
+                            (string)($uda->descrizione ?? 'N/A'),
+                            (string)($uda->note ?? ''),
+                            $obiettivi
+                        );
 
-                        if (!empty($uda->note)) {
-                            $udaDescription .= "Note:\n" . $uda->note . "\n\n";
-                        }
-
-                        // Prepara array di materiali da allegare
-                        $materialsToAttach = [];
-
-                        if (!empty($materiali)) {
-                            foreach ($materiali as $mat) {
-                                $matUrl = $mat['url_drive'] ?? $mat['url'] ?? '';
-
-                                if (!empty($matUrl)) {
-                                    // Determina se è un file Drive o un link generico
-                                    if (!empty($mat['drive_file_id'])) {
-                                        // File Drive
-                                        $materialsToAttach[] = [
-                                            'type' => 'drive_file',
-                                            'drive_file_id' => $mat['drive_file_id'],
-                                            'title' => $mat['nome'] ?? 'Documento'
-                                        ];
-                                    } else {
-                                        // Link generico
-                                        $materialsToAttach[] = [
-                                            'url' => $matUrl
-                                        ];
-                                    }
-                                }
-                            }
-                        }
+                        // Prepara array di materiali da allegare (solo "Materiale classroom")
+                        $materialsToAttach = UdaClassroomPublishService::attachableMaterials($materiali);
 
                         // Se non ci sono materiali, aggiungi un link placeholder
                         if (empty($materialsToAttach)) {
@@ -262,7 +240,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                             ];
 
                             $result = $googleClassroomAPI->createMaterial($courseId, $udaMaterialData);
-                            $publishLog[] = "    ✅ Materiale UDA pubblicato come BOZZA con " . count($materialsToAttach) . " allegati: " . $uda->titolo;
+                            $materialLink = trim((string)($result['link'] ?? ''));
+                            $materialLog = "    ✅ Materiale UDA pubblicato come BOZZA con " . count($materialsToAttach) . " allegati";
+                            if ($materialLink !== '') {
+                                $publishLog[] = ['html' => $materialLog . ': <a href="' . htmlspecialchars($materialLink, ENT_QUOTES) . '" target="_blank" rel="noopener">' . htmlspecialchars((string)$uda->titolo, ENT_QUOTES) . ' <i class="bi bi-box-arrow-up-right"></i></a>'];
+                            } else {
+                                $publishLog[] = $materialLog . ': ' . $uda->titolo;
+                            }
                         } catch (Exception $e) {
                             $publishLog[] = "    ⚠️  Errore pubblicazione materiale UDA: " . $e->getMessage();
                         }
@@ -284,18 +268,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
                             if (!$test) continue;
 
-                            // Determina il titolo del test
-                            $tipoTest = strtolower($test['tipo_test'] ?? 'test');
-                            $testTitle = "";
-                            if ($tipoTest === 'prerequisiti') {
-                                $testTitle = "Test Prerequisiti";
-                            } elseif ($tipoTest === 'intermedio') {
-                                $testTitle = "Test Intermedio";
-                            } elseif ($tipoTest === 'finale') {
-                                $testTitle = "Test Finale";
-                            } else {
-                                $testTitle = "Test " . ucfirst($tipoTest);
-                            }
+                            // Titolo del test: nome reale ("Test classroom")
+                            $testTitle = UdaClassroomPublishService::testTitle($test);
+                            $piattaforma = strtolower(trim((string)($test['piattaforma'] ?? '')));
 
                             $testDescription = $test['descrizione'] ?? '';
                             if (!empty($test['num_domande'])) {
@@ -329,15 +304,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 $result = $googleClassroomAPI->createAssignment($courseId, $testAssignmentData);
 
                                 // Aggiorna il test nel database con i dati della pubblicazione
-                                $test['classroom_course_id'] = $courseId;
-                                $test['classroom_assignment_id'] = $result['id'] ?? '';
-                                $test['classroom_topic_id'] = $topicId;
-                                $test['pubblicato'] = 'NO';  // Bozza
-                                $test['url_docente'] = $result['link'] ?? '';
+                                $updateFields = [
+                                    'classroom_course_id' => $courseId,
+                                    'classroom_assignment_id' => $result['id'] ?? '',
+                                    'classroom_topic_id' => $topicId,
+                                    'pubblicato' => 'NO',  // Bozza
+                                ];
 
-                                $dbAdapter->updateRow('TEST', 'id_test', $test['id_test'], $test);
+                                // Preimposta "Importa voti" per i Google Form.
+                                if ($piattaforma === 'google-forms') {
+                                    $urlDocente = UdaClassroomPublishService::googleFormDocenteUrl($test);
+                                    if ($urlDocente !== '') {
+                                        $updateFields['url_docente'] = $urlDocente;
+                                    }
+                                }
 
-                                $publishLog[] = "    ✅ Test pubblicato come BOZZA: $testTitle (ID: {$result['id']})";
+                                $dbAdapter->updateRow('TEST', 'id_test', $test['id_test'], $updateFields);
+
+                                $testLink = trim((string)($result['link'] ?? ''));
+                                $testLog = "    ✅ Test pubblicato come BOZZA";
+                                if ($testLink !== '') {
+                                    $publishLog[] = ['html' => $testLog . ': <a href="' . htmlspecialchars($testLink, ENT_QUOTES) . '" target="_blank" rel="noopener">' . htmlspecialchars($testTitle, ENT_QUOTES) . ' <i class="bi bi-box-arrow-up-right"></i></a>'];
+                                } else {
+                                    $publishLog[] = $testLog . ': ' . $testTitle;
+                                }
+
+                                // Link diretto "Importa voti" per i Google Form
+                                if ($piattaforma === 'google-forms') {
+                                    $importUrl = 'import_form_results.php?test_id=' . urlencode((string)$test['id_test']) . '&step=read_responses';
+                                    $publishLog[] = ['html' => '        <a href="' . htmlspecialchars($importUrl, ENT_QUOTES) . '" target="_blank" rel="noopener"><i class="bi bi-cloud-upload"></i> Importa voti</a>'];
+                                }
                             } catch (Exception $e) {
                                 $publishLog[] = "    ⚠️  Errore pubblicazione test '$testTitle': " . $e->getMessage();
                                 error_log("Errore pubblicazione test: " . $e->getMessage());
@@ -491,7 +487,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 <div class="card-body">
                     <div class="publish-log">
                         <?php foreach ($publishLog as $log): ?>
-                            <?php echo htmlspecialchars($log); ?><br>
+                            <?php if (is_array($log) && isset($log['html'])): ?>
+                                <?php echo $log['html']; ?><br>
+                            <?php else: ?>
+                                <?php echo htmlspecialchars((string)$log); ?><br>
+                            <?php endif; ?>
                         <?php endforeach; ?>
                     </div>
                 </div>
@@ -604,9 +604,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                     <div class="form-check mb-3">
                                         <input class="form-check-input" type="checkbox" name="publish_uda_material" id="publish_uda_material" value="1" checked>
                                         <label class="form-check-label" for="publish_uda_material">
-                                            <strong><i class="bi bi-file-earmark-text"></i> Materiale UDA Principale</strong>
+                                            <strong><i class="bi bi-file-earmark-text"></i> Materiale Classroom</strong>
                                             <small class="d-block text-muted">
-                                                Titolo: "<?= htmlspecialchars($uda->titolo) ?>" | Include: descrizione, note + link a <?= count($materiali) ?> materiali
+                                                Pubblica insieme i materiali collegabili (Drive/link) con descrizione, note e obiettivi didattici
                                             </small>
                                         </label>
                                     </div>
@@ -618,17 +618,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                         </div>
                                         <?php foreach ($tests as $test): ?>
                                             <?php
-                                            $tipoTest = strtolower($test['tipo_test'] ?? 'test');
-                                            $testName = "";
-                                            if ($tipoTest === 'prerequisiti') {
-                                                $testName = "Test Prerequisiti";
-                                            } elseif ($tipoTest === 'intermedio') {
-                                                $testName = "Test Intermedio";
-                                            } elseif ($tipoTest === 'finale') {
-                                                $testName = "Test Finale";
-                                            } else {
-                                                $testName = "Test " . ucfirst($tipoTest);
-                                            }
+                                            $testName = UdaClassroomPublishService::testTitle($test);
                                             ?>
                                             <div class="form-check mb-2 ms-4">
                                                 <input class="form-check-input" type="checkbox" name="tests[]" value="<?= htmlspecialchars($test['id_test']) ?>" id="test_<?= htmlspecialchars($test['id_test']) ?>">
@@ -659,10 +649,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                             <div class="alert alert-success">
                                 <strong><i class="bi bi-info-circle"></i> Importante:</strong>
                                 <ul class="mb-0 mt-2">
-                                    <li>Verrà creato l'argomento "<strong><?= htmlspecialchars($uda->titolo) ?></strong>" in Classroom</li>
+                                    <li>Verrà usato l'argomento "<strong><?= htmlspecialchars(!empty($uda->argomento) ? $uda->argomento : $uda->titolo) ?></strong>" in Classroom</li>
                                     <li>Tutti i contenuti verranno salvati come <strong>BOZZA</strong></li>
-                                    <li>I materiali UDA includeranno descrizione completa con tutti i dettagli</li>
-                                    <li>I test verranno creati come <strong>Compiti</strong> con i link ai Google Forms</li>
+                                    <li>I materiali verranno pubblicati insieme come <strong>Materiale classroom</strong>, con descrizione e obiettivi didattici</li>
+                                    <li>I test verranno creati singolarmente come <strong>Test classroom</strong> (Compiti) con i link ai Google Forms</li>
+                                    <li>Per i Google Form verrà preimpostato <strong>Importa voti</strong></li>
                                     <li>Potrai rivedere e pubblicare manualmente da Google Classroom</li>
                                 </ul>
                             </div>
@@ -741,7 +732,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             </div>
             <div class="card-body">
                 <ul class="mb-0">
-                    <li>La pubblicazione creerà un nuovo <strong>argomento (topic)</strong> in ciascuna classe selezionata</li>
+                    <li>La pubblicazione userà l'<strong>argomento</strong> dell'UDA in ciascuna classe selezionata</li>
                     <li>I materiali verranno caricati su <strong>Google Drive</strong> e condivisi con gli studenti</li>
                     <li>Gli studenti riceveranno una <strong>notifica</strong> sulla piattaforma Classroom</li>
                     <li>Puoi ripubblicare per aggiornare i contenuti già pubblicati</li>

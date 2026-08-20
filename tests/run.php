@@ -411,6 +411,7 @@ $architectureTests = [
     'kahoot import provider-neutral' => __DIR__ . '/public/kahoot_import_provider_neutral.php',
     'excel import provider-neutral' => __DIR__ . '/public/excel_import_provider_neutral.php',
     'publish provider-neutral' => __DIR__ . '/public/publish_provider_neutral.php',
+    'UDA classroom publish service' => __DIR__ . '/domain/uda_classroom_publish.php',
     'uda view groups' => __DIR__ . '/public/uda_view_groups.php',
     'uda assign groups' => __DIR__ . '/public/uda_assign_groups.php',
     'github assignment provider-neutral' => __DIR__ . '/public/github_assignment_provider_neutral.php',
