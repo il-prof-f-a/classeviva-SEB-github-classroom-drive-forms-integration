@@ -10,10 +10,10 @@ define('REQUIRES_CLASSEVIVA', true);
 
 use App\Core\Database\DatabaseFactory;
 use App\Core\ProviderNeutralMappingService;
+use App\Core\RuntimeStudentNameService;
 use App\Core\StudentProviderMappingService;
 use App\Core\TeachingGroupCatalogService;
 use App\Integration\ClasseVivaAPI;
-use App\Integration\GoogleClassroomAPI;
 use App\Utils\LocalReturnUrl;
 
 error_reporting(E_ALL);
@@ -44,6 +44,7 @@ if (!$cvReady) {
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 $userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
 $teachingGroupCatalog = new TeachingGroupCatalogService($dbAdapter, $userId);
+$runtimeNameService = new RuntimeStudentNameService($dbAdapter, $userId, $config);
 $csrfSessionKey = 'map_students_csrf';
 if (session_status() !== PHP_SESSION_ACTIVE) {
     session_start();
@@ -98,7 +99,6 @@ if ($requestedGroupId !== '') {
 $mappingService = new ProviderNeutralMappingService($dbAdapter, $userId);
 $studentMappingService = new StudentProviderMappingService($dbAdapter, $userId);
 $classeVivaAPI = $cvReady ? new ClasseVivaAPI($config) : null;
-$googleClassroomAPI = new GoogleClassroomAPI($config);
 
 $mappingId = $requestScalar($_GET, 'mapping_id') ?: null;
 $action = $requestScalar($_POST, 'action') ?: null;
@@ -285,7 +285,7 @@ try {
     // ClasseViva studenti - usa $idClasseCV già estratto dal mapping sopra
     if (!empty($idClasseCV)) {
         if ($classeVivaAPI) {
-            $studentiCV = $classeVivaAPI->getStudentiClasse($idClasseCV);
+            $studentiCV = $runtimeNameService->providerRoster('classeviva', (string)$idClasseCV);
         } else {
             $error_loading = $cvTokenNotice ?? 'Token ClasseViva non disponibile per caricare gli studenti.';
         }
@@ -293,7 +293,7 @@ try {
 
     // Google Classroom studenti - usa $courseId già estratto dal mapping sopra
     if (!empty($courseId)) {
-        $studentiGC = $googleClassroomAPI->getCourseStudents($courseId);
+        $studentiGC = $runtimeNameService->providerRoster('google_classroom', (string)$courseId);
     }
 
 } catch (Exception $e) {

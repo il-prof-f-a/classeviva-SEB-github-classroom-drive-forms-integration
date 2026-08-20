@@ -25,7 +25,7 @@ use App\Core\Database\DatabaseFactory;
 use App\Core\UDAManager;
 use App\Core\NotificationManager;
 use App\Core\GradeImportStudentService;
-use App\Integration\GoogleClassroomAPI;
+use App\Core\RuntimeStudentNameService;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use Google\Client;
 use Google\Service\Forms;
@@ -652,7 +652,14 @@ if ($step === 'read_responses' && $testId) {
         $resolution = ['group_id' => null, 'matches' => [], 'unmatched' => []];
         if ($courseId !== '') {
             try {
-                $classroomAPI = new GoogleClassroomAPI($config);
+                $nameService = new RuntimeStudentNameService($dbAdapter, $currentUserId, $config);
+                $rosterByEmail = [];
+                foreach ($nameService->providerRoster('google_classroom', $courseId) as $rosterStudent) {
+                    $email = strtolower(trim((string)($rosterStudent['email'] ?? '')));
+                    if ($email !== '') {
+                        $rosterByEmail[$email] = $rosterStudent;
+                    }
+                }
                 $externalRows = [];
                 $emailToExternal = [];
                 $respondentNames = [];
@@ -663,24 +670,18 @@ if ($step === 'read_responses' && $testId) {
                         continue;
                     }
                     $emailKey = strtolower($rawEmail);
-                    try {
-                        // courses.students.get accetta l'email come studentId e
-                        // restituisce l'id utente anche senza lo scope emails.
-                        $student = $classroomAPI->getStudente($courseId, $rawEmail);
-                        $googleId = trim((string)($student['id'] ?? ''));
-                        if ($googleId === '') {
-                            $unmatched[] = $emailKey;
-                            continue;
-                        }
-                        $externalRows[] = [
-                            'external_user_id' => $googleId,
-                            'display_name' => (string)($student['name'] ?? ''),
-                        ];
-                        $emailToExternal[$emailKey] = $googleId;
-                        $respondentNames[$emailKey] = (string)($student['name'] ?? '');
-                    } catch (Exception $e) {
+                    $student = $rosterByEmail[$emailKey] ?? null;
+                    $googleId = trim((string)($student['external_user_id'] ?? ''));
+                    if ($googleId === '') {
                         $unmatched[] = $emailKey;
+                        continue;
                     }
+                    $externalRows[] = [
+                        'external_user_id' => $googleId,
+                        'display_name' => (string)($student['display_name'] ?? ''),
+                    ];
+                    $emailToExternal[$emailKey] = $googleId;
+                    $respondentNames[$emailKey] = (string)($student['display_name'] ?? '');
                 }
 
                 $resolved = $gradeImportService->resolve('google_classroom', $courseId, $externalRows);
@@ -931,9 +932,9 @@ if ($step === 'publish_grades' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $resolutionMatches = $_SESSION['resolution']['matches'] ?? [];
-            $studentName = (string)($resolutionMatches[strtolower($studentEmail)]['display_name'] ?? $studentEmail);
+            $studentName = trim((string)($resolutionMatches[strtolower($studentEmail)]['display_name'] ?? ''));
             if ($studentName === '') {
-                $studentName = $studentEmail;
+                $studentName = 'Nome non disponibile';
             }
 
             $pubblicati[] = [

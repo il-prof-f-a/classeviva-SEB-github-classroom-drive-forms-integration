@@ -2,9 +2,8 @@
 
 declare(strict_types=1);
 
-// Verifica statica che la rubrica orale non dipenda più esclusivamente da ClasseViva
-// per generare i voti: i nomi studenti possono arrivare da Google Classroom tramite
-// il gruppo mappato, e il salvataggio instrada l'ID provider corretto.
+// Verifica statica che la rubrica orale usi il resolver centralizzato del gruppo
+// e non percorsi provider-specifici duplicati.
 $file = dirname(__DIR__, 2) . '/public/rubrica_orale_v2.php';
 $source = file_get_contents($file);
 $failures = [];
@@ -17,9 +16,14 @@ if ($source === false) {
 if (strpos($source, 'if (!$cvReady) {') !== false) {
     $failures[] = 'gate rigido su $cvReady ancora presente';
 }
-foreach (['GoogleClassroomAPI', 'getCourseStudents', 'id_studente_provider', 'id_studente_gc', 'findForGroupProvider'] as $required) {
+foreach (['RuntimeStudentNameService', 'resolveGroupStudents', 'id_studente_internal', 'findForGroupProvider'] as $required) {
     if (strpos($source, $required) === false) {
         $failures[] = "fallback provider-neutrale assente: {$required}";
+    }
+}
+foreach (['GoogleClassroomAPI', 'getCourseStudents'] as $forbidden) {
+    if (strpos($source, $forbidden) !== false) {
+        $failures[] = "chiamata provider-specifica duplicata ancora presente: {$forbidden}";
     }
 }
 if ($failures !== []) {
@@ -28,4 +32,4 @@ if ($failures !== []) {
     }
     exit(1);
 }
-fwrite(STDOUT, "PASS: rubrica orale genera voti senza dipendere esclusivamente da ClasseViva (fallback Google Classroom).\n");
+fwrite(STDOUT, "PASS: rubrica orale usa la risoluzione centralizzata dei nomi.\n");

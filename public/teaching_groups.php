@@ -13,6 +13,7 @@ use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupRepository;
 use App\Core\TeachingGroupService;
 use App\Core\TeachingGroupStudentService;
+use App\Core\RuntimeStudentNameService;
 use App\Integration\ClasseVivaAPI;
 use App\Integration\GitHubIntegration;
 use App\Integration\GoogleClassroomAPI;
@@ -34,6 +35,7 @@ $integrationRepository = new TeachingGroupIntegrationRepository($dbAdapter, $use
 $groupService = new TeachingGroupService($groupRepository, $integrationRepository);
 $catalogService = new TeachingGroupCatalogService($dbAdapter, $userId);
 $studentService = new TeachingGroupStudentService($dbAdapter, $userId);
+$runtimeNameService = new RuntimeStudentNameService($dbAdapter, $userId, $config);
 
 $rawReturnTo = $_GET['return_to'] ?? $_POST['return_to'] ?? null;
 $rawReturnTo = is_scalar($rawReturnTo) ? (string)$rawReturnTo : null;
@@ -420,87 +422,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 if ($provider_context === '') {
                     throw new RuntimeException('Contesto provider non disponibile.');
                 }
-                $roster = [];
-                if ($provider === 'classeviva') {
-                    $students = (new ClasseVivaAPI($config))->getStudents($provider_context);
-                    if (!is_array($students)) {
-                        throw new RuntimeException('Roster ClasseViva non disponibile.');
-                    }
-                    foreach ($students as $entry) {
-                        if (!is_array($entry)) {
-                            continue;
-                        }
-                        $externalRaw = $entry['id'] ?? $entry['studentId'] ?? '';
-                        if (!is_scalar($externalRaw)) {
-                            continue;
-                        }
-                        $externalId = trim((string)$externalRaw);
-                        if ($externalId !== '') {
-                            $firstName = is_scalar($entry['nome'] ?? null) ? (string)$entry['nome'] : '';
-                            $lastName = is_scalar($entry['cognome'] ?? null) ? (string)$entry['cognome'] : '';
-                            $roster[] = ['external_user_id' => $externalId, 'display_name' => trim($firstName . ' ' . $lastName)];
-                        }
-                    }
-                } elseif ($provider === 'google_classroom') {
-                    $students = (new GoogleClassroomAPI($config))->getCourseStudents($provider_context);
-                    if (!is_array($students)) {
-                        throw new RuntimeException('Roster Google Classroom non disponibile.');
-                    }
-                    foreach ($students as $entry) {
-                        if (!is_array($entry)) {
-                            continue;
-                        }
-                        $externalRaw = $entry['id'] ?? $entry['userId'] ?? '';
-                        if (!is_scalar($externalRaw)) {
-                            continue;
-                        }
-                        $externalId = trim((string)$externalRaw);
-                        if ($externalId !== '') {
-                            $displayName = is_scalar($entry['name'] ?? null) ? (string)$entry['name'] : '';
-                            $roster[] = ['external_user_id' => $externalId, 'display_name' => $displayName];
-                        }
-                    }
-                } else {
-                    $githubRoster = [];
-                    $githubRosterSeen = [];
-                    $githubApi = new GitHubIntegration($config);
-                    $assignments = $githubApi->listAssignments($provider_context);
-                    if (!is_array($assignments)) {
-                        throw new RuntimeException('Roster GitHub Classroom non disponibile.');
-                    }
-                    $assignments = isset($assignments['assignments']) && is_array($assignments['assignments']) ? $assignments['assignments'] : $assignments;
-                    foreach ($assignments as $assignment) {
-                        if (!is_array($assignment)) {
-                            continue;
-                        }
-                        $assignmentId = trim((string)($assignment['id'] ?? $assignment['assignment_id'] ?? ''));
-                        if ($assignmentId === '') {
-                            continue;
-                        }
-                        $accepted = $githubApi->listAcceptedAssignments($assignmentId);
-                        if (!is_array($accepted)) {
-                            throw new RuntimeException('Roster GitHub Classroom non disponibile.');
-                        }
-                        $accepted = isset($accepted['accepted_assignments']) && is_array($accepted['accepted_assignments']) ? $accepted['accepted_assignments'] : $accepted;
-                        foreach ($accepted as $entry) {
-                            if (!is_array($entry)) {
-                                continue;
-                            }
-                            $entryStudents = is_array($entry['students'] ?? null) ? $entry['students'] : [];
-                            $entryFirstStudent = is_array($entryStudents[0] ?? null) ? $entryStudents[0] : [];
-                            $entrySingleStudent = is_array($entry['student'] ?? null) ? $entry['student'] : [];
-                            $externalRaw = $entryFirstStudent['login'] ?? $entrySingleStudent['login'] ?? $entry['github_username'] ?? $entry['user_id'] ?? $entry['username'] ?? '';
-                            if (!is_scalar($externalRaw)) {
-                                continue;
-                            }
-                            $externalId = trim((string)$externalRaw);
-                            if ($externalId !== '' && !isset($githubRosterSeen[$externalId])) {
-                                $githubRosterSeen[$externalId] = true;
-                                $githubRoster[] = ['external_user_id' => $externalId, 'display_name' => ''];
-                            }
-                        }
-                    }
-                    $roster = $githubRoster;
+                $roster = $runtimeNameService->providerRoster($provider, $provider_context);
+                if ($roster === []) {
+                    throw new RuntimeException('Roster provider non disponibile o vuoto.');
                 }
                 $syncedRows = $studentService->syncRoster($groupId, $provider, $provider_context, $roster);
                 $syncedCount = count($syncedRows);
@@ -681,153 +605,10 @@ $nameSimilarity = static function (string $a, string $b): float {
     return 1 - (levenshtein($a, $b) / $maxLength);
 };
 $githubFetchDebug = ['assignments' => 0, 'accepted' => 0, 'first_keys' => [], 'assignment_accepted' => -1, 'assignment_submissions' => -1, 'accepted_raw' => ''];
-$fetchRoster = static function (string $provider, string $contextId) use ($config, $github, &$githubFetchDebug): array {
-    $roster = [];
-    if ($provider === 'classeviva') {
-        $students = (new ClasseVivaAPI($config))->getStudents($contextId);
-        if (is_array($students)) {
-            foreach ($students as $entry) {
-                if (!is_array($entry)) {
-                    continue;
-                }
-                $externalId = trim((string)($entry['id'] ?? $entry['studentId'] ?? ''));
-                if ($externalId === '') {
-                    continue;
-                }
-                $firstName = is_scalar($entry['nome'] ?? null) ? (string)$entry['nome'] : '';
-                $lastName = is_scalar($entry['cognome'] ?? null) ? (string)$entry['cognome'] : '';
-                $roster[] = ['external_user_id' => $externalId, 'display_name' => trim($firstName . ' ' . $lastName)];
-            }
-        }
-    } elseif ($provider === 'google_classroom') {
-        $students = (new GoogleClassroomAPI($config))->getCourseStudents($contextId);
-        if (is_array($students)) {
-            foreach ($students as $entry) {
-                if (!is_array($entry)) {
-                    continue;
-                }
-                $externalId = trim((string)($entry['id'] ?? $entry['userId'] ?? ''));
-                if ($externalId === '') {
-                    continue;
-                }
-                $roster[] = ['external_user_id' => $externalId, 'display_name' => is_scalar($entry['name'] ?? null) ? (string)$entry['name'] : ''];
-            }
-        }
-    } elseif (isset($github)) {
-        $githubAssignments = [];
-        $githubPage = 1;
-        while ($githubPage <= 10) {
-            $githubPageAssignments = $github->listAssignments($contextId, $githubPage, 100);
-            $githubPageAssignments = is_array($githubPageAssignments)
-                ? ($githubPageAssignments['assignments'] ?? ($githubPageAssignments['data'] ?? $githubPageAssignments))
-                : [];
-            if (!is_array($githubPageAssignments) || $githubPageAssignments === []) {
-                break;
-            }
-            $githubAssignments = array_merge($githubAssignments, $githubPageAssignments);
-            if (count($githubPageAssignments) < 100) {
-                break;
-            }
-            $githubPage++;
-        }
-        $githubFetchDebug['assignments'] = count($githubAssignments);
-        $githubSample = $githubAssignments !== [] ? reset($githubAssignments) : null;
-        $githubFetchDebug['first_keys'] = is_array($githubSample) ? array_keys($githubSample) : [];
-        $githubFetchDebug['assignment_accepted'] = is_array($githubSample) ? (int)($githubSample['accepted'] ?? -1) : -1;
-        $githubFetchDebug['assignment_submissions'] = is_array($githubSample) ? (int)($githubSample['submissions'] ?? -1) : -1;
-        $githubSeen = [];
-        $githubNameCache = $_SESSION['github_display_names'] ?? [];
-        if (!is_array($githubNameCache)) {
-            $githubNameCache = [];
-        }
-        foreach ($githubAssignments as $githubAssignment) {
-            if (!is_array($githubAssignment)) {
-                continue;
-            }
-            $githubAssignmentId = trim((string)($githubAssignment['id'] ?? $githubAssignment['assignment_id'] ?? ''));
-            if ($githubAssignmentId === '') {
-                continue;
-            }
-            $githubGrades = $github->getAssignmentGrades($githubAssignmentId);
-            $githubGrades = is_array($githubGrades)
-                ? ($githubGrades['grades'] ?? ($githubGrades['data'] ?? $githubGrades))
-                : [];
-            foreach ($githubGrades as $githubGrade) {
-                if (!is_array($githubGrade)) {
-                    continue;
-                }
-                $githubExternal = trim((string)($githubGrade['github_username'] ?? $githubGrade['username'] ?? ''));
-                if ($githubExternal === '' || isset($githubSeen[$githubExternal])) {
-                    continue;
-                }
-                $githubSeen[$githubExternal] = true;
-                $githubName = trim((string)($githubGrade['roster_identifier'] ?? ''));
-                if ($githubName === '') {
-                    if (!isset($githubNameCache[$githubExternal])) {
-                        $githubNameCache[$githubExternal] = $githubExternal;
-                        try {
-                            $githubProfile = $github->getUserByLogin($githubExternal);
-                            if (is_array($githubProfile) && is_scalar($githubProfile['name'] ?? null) && (string)$githubProfile['name'] !== '') {
-                                $githubNameCache[$githubExternal] = (string)$githubProfile['name'];
-                            }
-                        } catch (Throwable $ignored) {
-                        }
-                    }
-                    $githubName = (string)$githubNameCache[$githubExternal];
-                }
-                $roster[] = ['external_user_id' => $githubExternal, 'display_name' => $githubName];
-            }
-            $githubAcceptedRaw = $github->listAcceptedAssignments($githubAssignmentId);
-            if ($githubFetchDebug['accepted_raw'] === '') {
-                $githubFetchDebug['accepted_raw'] = json_encode($githubAcceptedRaw);
-                if (strlen($githubFetchDebug['accepted_raw']) > 400) {
-                    $githubFetchDebug['accepted_raw'] = substr($githubFetchDebug['accepted_raw'], 0, 400) . '…';
-                }
-            }
-            $githubAccepted = $githubAcceptedRaw;
-            $githubAccepted = is_array($githubAccepted) && isset($githubAccepted['accepted_assignments']) && is_array($githubAccepted['accepted_assignments'])
-                ? $githubAccepted['accepted_assignments']
-                : (is_array($githubAccepted) && isset($githubAccepted['data']) && is_array($githubAccepted['data'])
-                    ? $githubAccepted['data']
-                    : (is_array($githubAccepted) ? $githubAccepted : []));
-            $githubFetchDebug['accepted'] += count($githubAccepted);
-            foreach ($githubAccepted as $githubEntry) {
-                if (!is_array($githubEntry)) {
-                    continue;
-                }
-                $githubStudents = is_array($githubEntry['students'] ?? null) ? $githubEntry['students'] : [];
-                $githubFirstStudent = is_array($githubStudents[0] ?? null) ? $githubStudents[0] : [];
-                $githubSingleStudent = is_array($githubEntry['student'] ?? null) ? $githubEntry['student'] : [];
-                $githubExternal = trim((string)($githubFirstStudent['login'] ?? $githubSingleStudent['login'] ?? $githubEntry['github_username'] ?? $githubEntry['user_id'] ?? $githubEntry['username'] ?? ''));
-                if ($githubExternal === '' || isset($githubSeen[$githubExternal])) {
-                    continue;
-                }
-                $githubSeen[$githubExternal] = true;
-                if (!isset($githubNameCache[$githubExternal])) {
-                    $githubName = '';
-                    try {
-                        $githubProfile = $github->getUserByLogin($githubExternal);
-                        if (is_array($githubProfile)) {
-                            $githubName = is_scalar($githubProfile['name'] ?? null) ? (string)$githubProfile['name'] : '';
-                            if ($githubName === '' && is_scalar($githubProfile['login'] ?? null)) {
-                                $githubName = (string)$githubProfile['login'];
-                            }
-                        }
-                    } catch (Throwable $ignored) {
-                        $githubName = '';
-                    }
-                    if ($githubName === '') {
-                        $githubName = $githubExternal;
-                    }
-                    $githubNameCache[$githubExternal] = $githubName;
-                }
-                $roster[] = ['external_user_id' => $githubExternal, 'display_name' => (string)$githubNameCache[$githubExternal]];
-            }
-        }
-        $_SESSION['github_display_names'] = $githubNameCache;
-    }
-    return $roster;
+$fetchRoster = static function (string $provider, string $contextId) use ($runtimeNameService): array {
+    return $runtimeNameService->providerRoster($provider, $contextId);
 };
+
 
 $configuredProviders = [];
 $selectedGroupName = '';

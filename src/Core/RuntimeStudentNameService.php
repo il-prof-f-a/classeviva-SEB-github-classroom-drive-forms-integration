@@ -1,0 +1,298 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Core;
+
+use App\Core\Database\DatabaseAdapterInterface;
+use App\Integration\ClasseVivaAPI;
+use App\Integration\GitHubIntegration;
+use App\Integration\GoogleClassroomAPI;
+
+/**
+ * Single entry point for runtime student names in a teaching group.
+ * Names are read from active provider rosters and are never persisted.
+ */
+final class RuntimeStudentNameService
+{
+    /** @var array<string,list<array<string,mixed>>> */
+    private static array $requestRosterCache = [];
+
+    /** @var callable(string,string):list<array<string,mixed>> */
+    private $rosterLoader;
+
+    /** @param callable(string,string):list<array<string,mixed>>|array<string,mixed>|null $source */
+    public function __construct(
+        private DatabaseAdapterInterface $db,
+        private string $userId,
+        callable|array|null $source = null
+    ) {
+        $this->userId = trim($this->userId) !== '' ? trim($this->userId) : 'system';
+        if (is_callable($source)) {
+            $this->rosterLoader = $source;
+        } else {
+            $config = is_array($source) ? $source : [];
+            $this->rosterLoader = function (string $provider, string $contextId) use ($config): array {
+                return $this->loadProviderRoster($provider, $contextId, $config);
+            };
+        }
+    }
+
+    /**
+     * @return list<array{id_studente:string,nome:string,cognome:string,nome_completo:string,provider:string}>
+     */
+    public function resolveGroupStudents(string $groupId): array
+    {
+        $groupId = trim($groupId);
+        if ($groupId === '') {
+            return [];
+        }
+
+        $memberships = (new GroupStudentRepository($this->db, $this->userId))->listForGroup($groupId);
+        if ($memberships === []) {
+            return [];
+        }
+
+        $identities = new StudentIdentityRepository($this->db, $this->userId);
+        $identitiesByStudent = [];
+        foreach ($memberships as $membership) {
+            $studentId = trim((string)($membership['id_studente'] ?? ''));
+            if ($studentId !== '') {
+                $identitiesByStudent[$studentId] = $identities->listForStudent($studentId);
+            }
+        }
+
+        $integrations = array_values(array_filter(
+            (new TeachingGroupIntegrationRepository($this->db, $this->userId))->listForGroup($groupId),
+            static fn(array $integration): bool => ($integration['stato'] ?? 'attivo') !== 'disattivo'
+        ));
+        $providerPriority = $this->providerPriority($integrations);
+        $providerRosters = [];
+        $loadedContexts = [];
+        foreach ($integrations as $integration) {
+            $provider = trim((string)($integration['provider'] ?? ''));
+            $contextId = trim((string)($integration['external_context_id'] ?? ''));
+            if ($provider === '' || $contextId === '' || isset($loadedContexts[$provider][$contextId])) {
+                continue;
+            }
+            $loadedContexts[$provider][$contextId] = true;
+            try {
+                $providerRosters[$provider] = array_merge(
+                    $providerRosters[$provider] ?? [],
+                    $this->providerRoster($provider, $contextId)
+                );
+            } catch (\Throwable $exception) {
+                error_log('Errore roster runtime ' . $provider . ': ' . $exception->getMessage());
+            }
+        }
+
+        $details = RuntimeStudentNameResolver::resolveDetails(
+            $memberships,
+            $identitiesByStudent,
+            $providerRosters,
+            $providerPriority
+        );
+        $result = [];
+        foreach ($memberships as $membership) {
+            $studentId = trim((string)($membership['id_studente'] ?? ''));
+            if ($studentId === '') {
+                continue;
+            }
+            $detail = $details[$studentId] ?? null;
+            $name = is_array($detail) ? trim((string)($detail['name'] ?? '')) : '';
+            $provider = is_array($detail) ? trim((string)($detail['provider'] ?? '')) : '';
+            $result[] = [
+                'id_studente' => $studentId,
+                'nome' => $name,
+                'cognome' => '',
+                'nome_completo' => $name,
+                'provider' => $provider,
+            ];
+        }
+        return $result;
+    }
+
+    /** @return list<array<string,mixed>> */
+    public function providerRoster(string $provider, string $contextId): array
+    {
+        $provider = trim($provider);
+        $contextId = trim($contextId);
+        if ($provider === '' || $contextId === '') {
+            return [];
+        }
+        $cacheKey = $provider . ':' . $contextId;
+        if (array_key_exists($cacheKey, self::$requestRosterCache)) {
+            return self::$requestRosterCache[$cacheKey];
+        }
+        try {
+            $roster = ($this->rosterLoader)($provider, $contextId);
+            return self::$requestRosterCache[$cacheKey] = is_array($roster) ? $roster : [];
+        } catch (\Throwable $exception) {
+            error_log('Errore roster runtime ' . $provider . ': ' . $exception->getMessage());
+            return self::$requestRosterCache[$cacheKey] = [];
+        }
+    }
+
+    /** @param list<array<string,mixed>> $integrations @return list<string> */
+    private function providerPriority(array $integrations): array
+    {
+        $known = RuntimeStudentNameResolver::PROVIDER_PRIORITY;
+        $seen = [];
+        $ordered = [];
+        foreach ($known as $provider) {
+            foreach ($integrations as $integration) {
+                if ((string)($integration['provider'] ?? '') === $provider && !isset($seen[$provider])) {
+                    $ordered[] = $provider;
+                    $seen[$provider] = true;
+                    break;
+                }
+            }
+        }
+        foreach ($integrations as $integration) {
+            $provider = trim((string)($integration['provider'] ?? ''));
+            if ($provider !== '' && !isset($seen[$provider])) {
+                $ordered[] = $provider;
+                $seen[$provider] = true;
+            }
+        }
+        return $ordered;
+    }
+
+    /** @return list<array<string,mixed>> */
+    private static function loadProviderRoster(string $provider, string $contextId, array $config): array
+    {
+        return match ($provider) {
+            'classeviva' => self::loadClasseVivaRoster($config, $contextId),
+            'google_classroom' => self::loadGoogleRoster($config, $contextId),
+            'github_classroom' => self::loadGitHubRoster($config, $contextId),
+            default => [],
+        };
+    }
+
+    /** @return list<array<string,mixed>> */
+    private static function loadClasseVivaRoster(array $config, string $contextId): array
+    {
+        $result = [];
+        foreach ((new ClasseVivaAPI($config))->getStudentiClasse($contextId) as $student) {
+            if (!is_array($student)) {
+                continue;
+            }
+            $id = trim((string)($student['id'] ?? $student['studentId'] ?? ''));
+            if ($id === '') {
+                continue;
+            }
+            $result[] = [
+                'external_user_id' => $id,
+                'display_name' => trim((string)($student['cognome'] ?? $student['lastName'] ?? '') . ' ' . (string)($student['nome'] ?? $student['firstName'] ?? '')),
+                'id' => $id,
+                'nome' => (string)($student['nome'] ?? $student['firstName'] ?? ''),
+                'cognome' => (string)($student['cognome'] ?? $student['lastName'] ?? ''),
+            ];
+        }
+        return $result;
+    }
+
+    /** @return list<array<string,mixed>> */
+    private static function loadGoogleRoster(array $config, string $contextId): array
+    {
+        $result = [];
+        foreach ((new GoogleClassroomAPI($config))->getCourseStudents($contextId) as $student) {
+            if (!is_array($student)) {
+                continue;
+            }
+            $id = trim((string)($student['id'] ?? $student['userId'] ?? ''));
+            $name = trim((string)($student['name'] ?? ''));
+            if ($id !== '' && $name !== '') {
+                $result[] = [
+                    'external_user_id' => $id,
+                    'display_name' => $name,
+                    'name' => $name,
+                    'id' => $id,
+                    'email' => trim((string)($student['email'] ?? '')),
+                ];
+            }
+        }
+        return $result;
+    }
+
+    /** @return list<array<string,mixed>> */
+    private static function loadGitHubRoster(array $config, string $contextId): array
+    {
+        $github = new GitHubIntegration($config);
+        if (!$github->loadTokenFromSession() || !$github->isAuthenticated()) {
+            return [];
+        }
+        $result = [];
+        $seen = [];
+        $assignments = [];
+        for ($page = 1; $page <= 10; $page++) {
+            $pageRows = $github->listAssignments($contextId, $page, 100);
+            $pageRows = is_array($pageRows) ? ($pageRows['assignments'] ?? ($pageRows['data'] ?? $pageRows)) : [];
+            if (!is_array($pageRows) || $pageRows === []) {
+                break;
+            }
+            $assignments = array_merge($assignments, $pageRows);
+            if (count($pageRows) < 100) {
+                break;
+            }
+        }
+        foreach ($assignments as $assignment) {
+            if (!is_array($assignment)) {
+                continue;
+            }
+            $assignmentId = trim((string)($assignment['id'] ?? $assignment['assignment_id'] ?? ''));
+            if ($assignmentId === '') {
+                continue;
+            }
+            $grades = $github->getAssignmentGrades($assignmentId);
+            $grades = is_array($grades) ? ($grades['grades'] ?? ($grades['data'] ?? $grades)) : [];
+            foreach (is_array($grades) ? $grades : [] as $grade) {
+                if (!is_array($grade)) {
+                    continue;
+                }
+                $login = trim((string)($grade['github_username'] ?? $grade['username'] ?? ''));
+                if ($login === '' || isset($seen[strtolower($login)])) {
+                    continue;
+                }
+                $seen[strtolower($login)] = true;
+                $name = trim((string)($grade['roster_identifier'] ?? ''));
+                if ($name === '') {
+                    try {
+                        $profile = $github->getUserByLogin($login);
+                        $name = is_array($profile) ? trim((string)($profile['name'] ?? '')) : '';
+                    } catch (\Throwable) {
+                        $name = '';
+                    }
+                }
+                if ($name !== '') {
+                    $result[] = ['external_user_id' => $login, 'display_name' => $name];
+                }
+            }
+            $accepted = $github->listAcceptedAssignments($assignmentId);
+            $accepted = is_array($accepted) ? ($accepted['accepted_assignments'] ?? ($accepted['data'] ?? $accepted)) : [];
+            foreach (is_array($accepted) ? $accepted : [] as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $students = is_array($entry['students'] ?? null) ? $entry['students'] : [];
+                $first = is_array($students[0] ?? null) ? $students[0] : [];
+                $single = is_array($entry['student'] ?? null) ? $entry['student'] : [];
+                $login = trim((string)($first['login'] ?? $single['login'] ?? $entry['github_username'] ?? $entry['username'] ?? ''));
+                if ($login === '' || isset($seen[strtolower($login)])) {
+                    continue;
+                }
+                $seen[strtolower($login)] = true;
+                $name = '';
+                try {
+                    $profile = $github->getUserByLogin($login);
+                    $name = is_array($profile) ? trim((string)($profile['name'] ?? '')) : '';
+                } catch (\Throwable) {
+                }
+                if ($name !== '') {
+                    $result[] = ['external_user_id' => $login, 'display_name' => $name];
+                }
+            }
+        }
+        return $result;
+    }
+}

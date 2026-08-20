@@ -20,9 +20,8 @@ use App\Core\ClasseVivaTokenGuard;
 use App\Core\Database\DatabaseFactory;
 use App\Core\GroupStudentRepository;
 use App\Core\ProviderCapabilityResolver;
-use App\Core\StudentIdentityRepository;
+use App\Core\RuntimeStudentNameService;
 use App\Core\UDAManager;
-use App\Core\StudentiManager;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\UdaGroupRepository;
 use App\Integration\ClasseVivaAPI;
@@ -36,7 +35,6 @@ $classeVivaState = ClasseVivaTokenGuard::getTokenState($config);
 $cvReady = $classeVivaState['ready'];
 $cvAuthError = $cvReady ? null : ($classeVivaState['notice'] ?? 'Token ClasseViva non valido o assente.');
 $cvAPI = new ClasseVivaAPI($config);
-$studentiManager = new StudentiManager($dbAdapter, $cvAPI, $config);
 
 $message = null;
 $error = null;
@@ -50,7 +48,6 @@ $idMateriaCV = $_GET['id_materia_cv'] ?? $_POST['id_materia_cv'] ?? null;
 $integrationRepo = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
 $udaGroupRepo = new UdaGroupRepository($dbAdapter, $userId);
 $groupStudentRepo = new GroupStudentRepository($dbAdapter, $userId);
-$studentIdentityRepo = new StudentIdentityRepository($dbAdapter, $userId);
 $groupId = null;
 if ($idClasseCV && $idMateriaCV) {
     $cvIntegration = $integrationRepo->findByExternal('classeviva', (string)$idClasseCV, (string)$idMateriaCV);
@@ -431,45 +428,15 @@ try {
     });
 
     // ============================================
-    // STEP 3: CARICA STUDENTI CLASSE (da API)
+    // STEP 3: CARICA STUDENTI DAL SERVIZIO CENTRALE
     // ============================================
-    $studenti = [];
-    if ($idClasseCV) {
-        if (!$cvReady) {
-            $error = $error ?? null;
-        } else {
-            try {
-                $studenti = $studentiManager->getStudentiClasse($idClasseCV);
-            } catch (Exception $e) {
-                $error = "Impossibile caricare studenti: " . $e->getMessage();
-            }
-        }
+    $studenti = $groupId !== null && $groupId !== ''
+        ? (new RuntimeStudentNameService($dbAdapter, $userId, $config))->resolveGroupStudents((string)$groupId)
+        : [];
+    foreach ($studenti as &$student) {
+        $student['id'] = $student['id_studente'];
     }
-    if (empty($studenti) && $groupId) {
-        foreach ($groupStudentRepo->listForGroup((string)$groupId) as $membership) {
-            $internalId = trim((string)($membership['id_studente'] ?? ''));
-            if ($internalId === '') {
-                continue;
-            }
-            $displayName = '';
-            foreach ($studentIdentityRepo->listForStudent($internalId) as $identity) {
-                $metadata = json_decode((string)($identity['metadata_json'] ?? '{}'), true);
-                if (is_array($metadata)) {
-                    $displayName = trim((string)($metadata['display_name'] ?? ($metadata['name'] ?? '')));
-                }
-                if ($displayName !== '') {
-                    break;
-                }
-            }
-            $studenti[] = [
-                'id_studente' => $internalId,
-                'id' => $internalId,
-                'nome_completo' => $displayName !== '' ? $displayName : $internalId,
-                'cognome' => '',
-                'nome' => $displayName !== '' ? $displayName : $internalId,
-            ];
-        }
-    }
+    unset($student);
 
     // ============================================
     // STEP 4: CARICA VOTI IN CODA (max 50 righe)

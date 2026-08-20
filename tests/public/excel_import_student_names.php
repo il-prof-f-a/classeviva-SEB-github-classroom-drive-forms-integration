@@ -14,7 +14,7 @@ $require = static function (bool $condition, string $message) use (&$failures): 
     }
 };
 
-foreach (['resolveQuizStudentNames', 'getCourseStudents', 'listForStudent', 'student_name'] as $required) {
+foreach (['resolveQuizStudentNames', 'RuntimeStudentNameService', 'providerRoster', 'student_name'] as $required) {
     $require(str_contains($source, $required), "risoluzione nome runtime assente: {$required}");
 }
 $require(!str_contains($source, "'student_name' => (\$studentId !== null && \$studentId !== '') ? 'ID: '")

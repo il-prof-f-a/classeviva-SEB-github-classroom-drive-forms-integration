@@ -28,7 +28,7 @@ foreach (['teaching_groups_flash', 'student_sync', 'display_names', 'Roster sinc
         $failures[] = "flash roster mancante: {$flashNeedle}";
     }
 }
-foreach (['githubRosterSeen', 'Nessuna selezione: mappatura invariata.', 'teaching_groups.php?tab=students&id='] as $studentsRegressionNeedle) {
+foreach (['providerRoster', 'Nessuna selezione: mappatura invariata.', 'teaching_groups.php?tab=students&id='] as $studentsRegressionNeedle) {
     if (!str_contains($markup, $studentsRegressionNeedle)) {
         $failures[] = "regressione studenti mancante: {$studentsRegressionNeedle}";
     }

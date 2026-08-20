@@ -14,7 +14,6 @@
 
 use App\Core\ClasseVivaTokenGuard;
 use App\Core\Database\DatabaseFactory;
-use App\Core\GroupStudentRepository;
 use App\Core\StudentIdentityRepository;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupRepository;
@@ -22,8 +21,8 @@ use App\Core\UDAManager;
 use App\Core\UdaGroupRepository;
 use App\Core\RubricManager;
 use App\Core\RuntimeStudentNameResolver;
+use App\Core\RuntimeStudentNameService;
 use App\Integration\ClasseVivaAPI;
-use App\Integration\GoogleClassroomAPI;
 use App\Integration\GoogleDriveAPI;
 
 $config = require_once __DIR__ . '/../bootstrap.php';
@@ -233,8 +232,7 @@ try {
     $udaGroupRepository = new UdaGroupRepository($dbAdapter, $userId);
     $teachingGroupRepository = new TeachingGroupRepository($dbAdapter, $userId);
     $teachingGroupIntegrationRepository = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
-    $groupStudentRepository = new GroupStudentRepository($dbAdapter, $userId);
-    $studentIdentityRepository = new StudentIdentityRepository($dbAdapter, $userId);
+$studentIdentityRepository = new StudentIdentityRepository($dbAdapter, $userId);
     $udaManager = new UDAManager($config);
     $rubricManager = new RubricManager($dbAdapter, $config);
     $colsValRubrica = [];
@@ -1591,208 +1589,26 @@ if ($idClasseDaGet) {
         $materiaSelezionataNome = $materieDisponibiliMap[(string)$materiaSelezionataId]['nome_materia'] ?? $materiaSelezionataNome;
     }
 
-    // Prima prova: usa i dati studenti gia presenti nell'elenco classi (se disponibili)
-    if (!empty($classi)) {
+    // Unica risoluzione runtime: il servizio legge il gruppo didattico e prova
+    // i provider nell'ordine ClasseViva, Google Classroom, GitHub Classroom.
+    if ($gruppoSelezionatoId !== '') {
         try {
-            foreach ($classi as $classe) {
-                if (($classe['classId'] ?? null) == $idClasseDaGet && isset($classe['students'])) {
-                    foreach (($classe['students'] ?? []) as $st) {
-                        $studenti[] = [
-                            'id' => $st['studentId'] ?? null,
-                            'nome_completo' => ($st['lastName'] ?? '') . ' ' . ($st['firstName'] ?? ''),
-                            'cognome' => $st['lastName'] ?? '',
-                            'nome' => $st['firstName'] ?? ''
-                        ];
-                    }
-                    break;
-                }
-            }
-        } catch (Exception $e) {
-            // fallback sotto
-        }
-    }
-
-    // Roster provider-neutral: non richiede alcuna mappatura ClasseViva e usa
-    // sempre l'id interno dello studente per le successive scritture.
-    if (empty($studenti) && $gruppoSelezionatoId !== '') {
-        try {
-            $runtimeMemberships = $groupStudentRepository->listForGroup($gruppoSelezionatoId);
-            $runtimeIdentitiesByStudent = [];
-            foreach ($runtimeMemberships as $membership) {
-                $internalId = trim((string)($membership['id_studente'] ?? ''));
-                if ($internalId !== '') {
-                    $runtimeIdentitiesByStudent[$internalId] = $studentIdentityRepository->listForStudent($internalId);
-                }
-            }
-
-            // Il nome viene richiesto a runtime dal primo provider collegato
-            // al gruppo, senza salvarlo nelle tabelle locali.
-            $integrations = array_values(array_filter(
-                $teachingGroupIntegrationRepository->listForGroup($gruppoSelezionatoId),
-                static fn(array $integration): bool => ($integration['stato'] ?? 'attivo') !== 'disattivo'
-            ));
-            $providerOrder = array_flip(RuntimeStudentNameResolver::PROVIDER_PRIORITY);
-            usort($integrations, static function (array $left, array $right) use ($providerOrder): int {
-                $leftOrder = $providerOrder[(string)($left['provider'] ?? '')] ?? PHP_INT_MAX;
-                $rightOrder = $providerOrder[(string)($right['provider'] ?? '')] ?? PHP_INT_MAX;
-                return $leftOrder <=> $rightOrder;
-            });
-
-            $providerRosters = [];
-            foreach ($integrations as $integration) {
-                $provider = (string)($integration['provider'] ?? '');
-                $contextId = trim((string)($integration['external_context_id'] ?? ''));
-                if ($provider === '' || $contextId === '') {
-                    continue;
-                }
-                try {
-                    if ($provider === 'classeviva' && $cvReady) {
-                        $providerRosters[$provider] = $cvAPI->getStudentiClasse($contextId);
-                    } elseif ($provider === 'google_classroom') {
-                        $providerRosters[$provider] = (new GoogleClassroomAPI($config))->getCourseStudents($contextId);
-                    }
-                } catch (Throwable $providerError) {
-                    error_log('Errore roster runtime ' . $provider . ': ' . $providerError->getMessage());
-                    continue;
-                }
-                if (!empty($providerRosters[$provider])) {
-                    break;
-                }
-            }
-            $runtimeNames = RuntimeStudentNameResolver::resolveNames(
-                $runtimeMemberships,
-                $runtimeIdentitiesByStudent,
-                $providerRosters
-            );
-
-            foreach ($runtimeMemberships as $membership) {
-                $internalId = trim((string)($membership['id_studente'] ?? ''));
-                if ($internalId === '') {
-                    continue;
-                }
-                $displayName = '';
-                $provider = 'internal';
-                foreach ($studentIdentityRepository->listForStudent($internalId) as $identity) {
-                    $providerCandidate = trim((string)($identity['provider'] ?? ''));
-                    $metadata = json_decode((string)($identity['metadata_json'] ?? '{}'), true);
-                    if (!is_array($metadata)) {
-                        $metadata = [];
-                    }
-                    $candidateName = trim((string)($metadata['display_name'] ?? ($metadata['name'] ?? '')));
-                    if ($candidateName !== '') {
-                        $displayName = $candidateName;
-                    }
-                    if ($providerCandidate !== '') {
-                        $provider = $providerCandidate;
-                    }
-                    if ($displayName !== '') {
-                        break;
-                    }
-                }
-                if (isset($runtimeNames[$internalId])) {
-                    $displayName = $runtimeNames[$internalId];
-                }
+            $runtimeStudents = (new RuntimeStudentNameService($dbAdapter, $userId, $config))
+                ->resolveGroupStudents($gruppoSelezionatoId);
+            foreach ($runtimeStudents as $runtimeStudent) {
                 $studenti[] = [
-                    'id' => $internalId,
-                    'id_studente_internal' => $internalId,
-                    'provider' => $provider,
-                    'nome_completo' => $displayName !== '' ? $displayName : $internalId,
-                    'cognome' => '',
-                    'nome' => $displayName !== '' ? $displayName : $internalId,
+                    'id' => $runtimeStudent['id_studente'],
+                    'id_studente_internal' => $runtimeStudent['id_studente'],
+                    'provider' => $runtimeStudent['provider'],
+                    'nome_completo' => $runtimeStudent['nome_completo'],
+                    'cognome' => $runtimeStudent['cognome'],
+                    'nome' => $runtimeStudent['nome'],
                 ];
             }
-            if ($studenti !== []) {
-                $studentiProvider = 'internal';
-            }
-        } catch (Exception $e) {
-            error_log('Errore caricamento roster provider-neutral: ' . $e->getMessage());
-        }
-    }
-
-    // Fallback: carica studenti direttamente da ClasseViva (API)
-    if (empty($studenti) && $cvReady) {
-        try {
-            $studentsCv = $cvAPI->getStudentiClasse((string)$idClasseDaGet);
-            foreach ($studentsCv as $st) {
-                $nome = $st['nome'] ?? '';
-                $cognome = $st['cognome'] ?? '';
-                $studenti[] = [
-                    'id' => $st['id'] ?? null,
-                    'nome_completo' => trim($cognome . ' ' . $nome),
-                    'cognome' => $cognome,
-                    'nome' => $nome
-                ];
-            }
-        } catch (Exception $e) {
-            error_log("Errore caricamento studenti: " . $e->getMessage());
-            $error = "Impossibile caricare gli studenti.";
-        }
-    }
-
-    // Fallback provider-neutrale: recupera i nomi da Google Classroom quando il gruppo
-    // mappato ha un corso collegato (generare il voto non dipende da ClasseViva).
-    if (empty($studenti)) {
-        $classiUdaFallback = $classiUda;
-        if ($classiUdaFallback === [] && $udaSelezionata) {
-            $classiUdaFallback = array_filter(
-                $dbAdapter->findAll('CLASSI_ASSEGNATE'),
-                static fn(array $ca): bool => ($ca['id_uda'] ?? '') === $udaSelezionata->id_uda
-            );
-        }
-        foreach ($classiUdaFallback as $ca) {
-            if ((string)($ca['id_classe'] ?? '') !== (string)$idClasseDaGet) {
-                continue;
-            }
-            $groupIdFallback = trim((string)($ca['id_gruppo'] ?? ''));
-            $ownerId = trim((string)($ca['id_utente'] ?? 'system')) ?: 'system';
-            if ($groupIdFallback === '') {
-                continue;
-            }
-            try {
-                $integrationRepo = new TeachingGroupIntegrationRepository($dbAdapter, $ownerId);
-                $gcIntegration = $integrationRepo->findForGroupProvider($groupIdFallback, 'google_classroom');
-                if ($gcIntegration === null || empty($gcIntegration['external_context_id'])) {
-                    continue;
-                }
-                $gcApi = new GoogleClassroomAPI($config);
-                $gcStudents = $gcApi->getCourseStudents((string)$gcIntegration['external_context_id']);
-                $identityRepo = new \App\Core\StudentIdentityRepository($dbAdapter, $ownerId);
-                foreach ($gcStudents as $st) {
-                    $nomeCompletoGc = trim((string)($st['name'] ?? ''));
-                    $gcStudentId = (string)($st['id'] ?? '');
-                    if ($nomeCompletoGc === '' || $gcStudentId === '') {
-                        continue;
-                    }
-                    // Se lo studente è già fuso con un'identità ClasseViva, usa l'ID CV
-                    // così il resto della pagina continua a funzionare invariato.
-                    $gcIdentity = $identityRepo->findByExternal('google_classroom', $gcStudentId);
-                    $idDaUsare = $gcStudentId;
-                    $providerDaUsare = 'google_classroom';
-                    if ($gcIdentity !== null) {
-                        foreach ($identityRepo->listForStudent((string)$gcIdentity['id_studente']) as $idn) {
-                            if (($idn['provider'] ?? '') === 'classeviva' && !empty($idn['external_user_id'])) {
-                                $idDaUsare = (string)$idn['external_user_id'];
-                                $providerDaUsare = 'classeviva';
-                                break;
-                            }
-                        }
-                    }
-                    $studenti[] = [
-                        'id' => $idDaUsare,
-                        'provider' => $providerDaUsare,
-                        'nome_completo' => $nomeCompletoGc,
-                        'cognome' => '',
-                        'nome' => $nomeCompletoGc,
-                    ];
-                }
-                if (!empty($studenti)) {
-                    // Provider effettivo del primo studente caricato (l'elenco è omogeneo).
-                    $studentiProvider = (string)($studenti[0]['provider'] ?? 'classeviva');
-                }
-                break;
-            } catch (Exception $e) {
-                error_log('Errore caricamento studenti Google Classroom: ' . $e->getMessage());
-            }
+            $studentiProvider = 'internal';
+        } catch (Throwable $exception) {
+            error_log('Errore caricamento nomi studenti centralizzato: ' . $exception->getMessage());
+            $error = 'Impossibile risolvere i nomi degli studenti del gruppo didattico.';
         }
     }
 }
@@ -1874,7 +1690,9 @@ if ($idUdaSelezionata && $idClasseDaGet) {
         $votoFinale = resolveVotoFinale($val, $datiJson, $votoOriginale);
 
         $valutazioniPerStudente[$idStud] = [
-            'nome_studente' => $nomePerStudente[$idStud] ?? ($val['nome_studente'] ?? ($extra['nome_studente'] ?? 'N/A')),
+            // Il nome visualizzato è sempre quello risolto a runtime dal
+            // servizio centralizzato; non ricadere su PII persistite o ID.
+            'nome_studente' => $nomePerStudente[$idStud] ?? 'Nome non disponibile',
             'voto_originale' => $votoOriginale,
             'voto_finale' => $votoFinale,
             'voto_finale_manual' => $manualFinale,
@@ -2951,7 +2769,7 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
             const items = Object.entries(valutazioniStudenti)
                 .map(([id, val]) => ({
                     id,
-                    nome: val.nome_studente || `Studente ${id}`,
+                    nome: val.nome_studente || 'Nome non disponibile',
                     votoFinale: getVotoFinaleEffettivo(val),
                     data: val.data_valutazione || '',
                     valutazione: val.valutazione_testuale || '',
@@ -3067,7 +2885,7 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
             const items = Object.entries(valutazioniStudenti)
                 .map(([id, val]) => ({
                     id,
-                    nome: val.nome_studente || `Studente ${id}`,
+                    nome: val.nome_studente || 'Nome non disponibile',
                     votoFinale: getVotoFinaleEffettivo(val),
                     data: val.data_valutazione || '',
                     valutazione: val.valutazione_testuale || '',

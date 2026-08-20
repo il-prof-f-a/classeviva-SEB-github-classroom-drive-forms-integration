@@ -5,7 +5,7 @@ declare(strict_types=1);
 // Verifica statica che l'import Google Forms non dipenda più da ClasseViva.
 $root = dirname(__DIR__, 2);
 $files = [
-    $root . '/public/import_form_results.php' => ['GradeImportStudentService', 'getStudente', 'resolve(', 'id_gruppo', 'id_studente', 'cv_id'],
+    $root . '/public/import_form_results.php' => ['GradeImportStudentService', 'RuntimeStudentNameService', 'providerRoster', 'resolve(', 'id_gruppo', 'id_studente', 'cv_id'],
     $root . '/public/import_form_results_step_preview_grades.php' => ['internal_student_id', 'id_studente', 'cv_id'],
 ];
 $forbidden = ['getClassesWithTeacherSubjects', 'getStudentiClasse', 'MAPPATURA_STUDENTI', 'CLASSROOM_MAPPINGS', 'ClasseVivaAPI', 'id_studente_cv', 'id_classe_cv', 'id_materia_cv', 'id_studente_gc'];

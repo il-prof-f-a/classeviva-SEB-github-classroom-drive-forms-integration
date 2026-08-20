@@ -8,6 +8,7 @@ require_once '../bootstrap.php';
 use App\Core\Database\DatabaseFactory;
 use App\Core\GitHubAssignmentRosterService;
 use App\Core\ProviderNeutralMappingService;
+use App\Core\RuntimeStudentNameService;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\UdaGroupRepository;
 use App\Integration\GitHubIntegration;
@@ -1055,6 +1056,13 @@ $studentMap = $rosterService->buildStudentMap(
 );
 // Arricchisce repo/roster dai grades (che includono student_repository_url).
 $studentMap = $rosterService->enrichRepositories($studentMap, $assignmentGrades);
+$runtimeNamesByStudent = [];
+$mappingGroupId = trim((string)($mappingRow['id_gruppo'] ?? ''));
+if ($mappingGroupId !== '') {
+    foreach ((new RuntimeStudentNameService($dbAdapter, $userId, $config))->resolveGroupStudents($mappingGroupId) as $runtimeStudent) {
+        $runtimeNamesByStudent[(string)$runtimeStudent['id_studente']] = trim((string)$runtimeStudent['nome_completo']);
+    }
+}
 $acceptedByUser = [];
 $acceptedByRoster = [];
 $acceptedReposFound = 0;
@@ -1452,9 +1460,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                 $commitCountTotal = $acceptedItem ? ($acceptedItem['commit_count'] ?? null) : null;
                                 $defaultBranch = $acceptedItem ? (string)($acceptedItem['repository']['default_branch'] ?? ($acceptedItem['default_branch'] ?? '')) : null;
                                 $studentId = $row['id_studente'] ?? '';
-                                // Nome visualizzato: preferenza roster (ClasseViva/Classroom/GitHub Classroom)
-                                // come già valorizzato da getAssignmentGrades; fallback sul login GitHub.
-                                $studentName = $rid !== '' ? $rid : $uname;
+                                // Nome visualizzato dal resolver centrale del gruppo.
+                                $studentName = $runtimeNamesByStudent[(string)$studentId] ?? '';
                                 $lastCommit = $commitInfo[$lowerUser]['last_commit'] ?? null;
                                 $recentCount = $commitInfo[$lowerUser]['recent_count'] ?? null;
                                 $prefill = [];

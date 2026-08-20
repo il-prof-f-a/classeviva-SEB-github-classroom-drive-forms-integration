@@ -14,6 +14,7 @@ try {
 
 use App\Core\Database\DatabaseFactory;
 use App\Core\GradeImportStudentService;
+use App\Core\RuntimeStudentNameService;
 use App\Integration\GoogleClassroomAPI;
 
 $userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
@@ -354,6 +355,14 @@ if ($step === 'load_submissions') {
 
         // Risolve le identità Google Classroom verso id_studente interni.
         $gradeImportService = new GradeImportStudentService($dbAdapter, $userId);
+        $runtimeNameService = new RuntimeStudentNameService($dbAdapter, $userId, $config);
+        $rosterByExternalId = [];
+        foreach ($runtimeNameService->providerRoster('google_classroom', (string)$test['classroom_course_id']) as $rosterStudent) {
+            $externalId = trim((string)($rosterStudent['external_user_id'] ?? ''));
+            if ($externalId !== '') {
+                $rosterByExternalId[$externalId] = $rosterStudent;
+            }
+        }
         $externalRows = [];
         $classroomProfiles = [];
         foreach ($submissions as $submission) {
@@ -361,16 +370,11 @@ if ($step === 'load_submissions') {
             if ($googleUserId === '') {
                 continue;
             }
-            $profile = null;
-            try {
-                $profile = $classroomAPI->getStudente($test['classroom_course_id'], $googleUserId);
-            } catch (Exception $e) {
-                $profile = null;
-            }
+            $profile = $rosterByExternalId[$googleUserId] ?? null;
             $classroomProfiles[$googleUserId] = $profile;
             $externalRows[] = [
                 'external_user_id' => $googleUserId,
-                'display_name' => (string)($profile['name'] ?? ''),
+                'display_name' => (string)($profile['display_name'] ?? ''),
                 'email' => (string)($profile['email'] ?? ''),
                 'assigned_grade' => $submission['assigned_grade'] ?? null,
                 'state' => $submission['state'] ?? '',

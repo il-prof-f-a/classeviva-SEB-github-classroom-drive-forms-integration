@@ -14,9 +14,9 @@ try {
 
 use App\Core\Database\DatabaseFactory;
 use App\Core\GradeImportStudentService;
+use App\Core\RuntimeStudentNameService;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\UdaGroupRepository;
-use App\Integration\GoogleClassroomAPI;
 
 try {
     $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -135,12 +135,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['kahoot_csv'])) {
             throw new Exception("Nessun gruppo didattico con corso Google Classroom associato all'UDA.");
         }
 
-        $courseStudents = (new GoogleClassroomAPI($config))->getCourseStudents($courseId);
+        $courseStudents = (new RuntimeStudentNameService($dbAdapter, $userId, $config))
+            ->providerRoster('google_classroom', $courseId);
         $roster = [];
         foreach ($courseStudents as $courseStudent) {
             $roster[] = [
-                'external_user_id' => (string)($courseStudent['id'] ?? ''),
-                'display_name' => (string)($courseStudent['name'] ?? ''),
+                'external_user_id' => (string)($courseStudent['external_user_id'] ?? $courseStudent['id'] ?? ''),
+                'display_name' => (string)($courseStudent['display_name'] ?? $courseStudent['name'] ?? ''),
                 'email' => (string)($courseStudent['email'] ?? ''),
             ];
         }

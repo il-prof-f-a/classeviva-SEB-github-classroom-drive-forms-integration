@@ -15,6 +15,7 @@ define('REQUIRES_CLASSEVIVA', true);
 $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
+use App\Core\RuntimeStudentNameService;
 use App\Core\StudentiManager;
 use App\Integration\ClasseVivaAPI;
 
@@ -44,6 +45,7 @@ if (!$cvReady) {
 
 $cvAPI = $cvReady ? new ClasseVivaAPI($config) : null;
 $studentiManager = $cvReady && $cvAPI ? new StudentiManager($db, $cvAPI, $config) : null;
+$runtimeNameService = new RuntimeStudentNameService($db, (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system')), $config);
 
 $message = null;
 $error = null;
@@ -282,20 +284,27 @@ try {
     $stats['totale'] = $stats['rubrica'] + $stats['laboratorio'];
 
     // Recupera nomi studenti
+    $runtimeNamesByGroup = [];
     foreach ($valutazioniDaPubblicare as $idStudente => &$gruppo) {
-        if ($studentiManager) {
-            try {
-                $studente = $studentiManager->getStudente($idStudente);
-                $gruppo['studente'] = $studente;
+        $sourceRows = array_merge($gruppo['rubriche'] ?? [], $gruppo['laboratorio'] ?? []);
+        $groupId = trim((string)($sourceRows[0]['id_gruppo'] ?? ''));
+        if ($groupId !== '') {
+            if (!isset($runtimeNamesByGroup[$groupId])) {
+                $runtimeNamesByGroup[$groupId] = [];
+                foreach ($runtimeNameService->resolveGroupStudents($groupId) as $runtimeStudent) {
+                    $runtimeNamesByGroup[$groupId][(string)$runtimeStudent['id_studente']] = trim((string)$runtimeStudent['nome_completo']);
+                }
+            }
+            $runtimeName = $runtimeNamesByGroup[$groupId][$idStudente] ?? '';
+            if ($runtimeName !== '') {
+                $gruppo['studente'] = ['id' => $idStudente, 'nome_completo' => $runtimeName];
                 continue;
-            } catch (Exception $e) {
-                // fallback in caso di errori (magari token scaduto a runtime)
             }
         }
 
         $gruppo['studente'] = [
             'id' => $idStudente,
-            'nome_completo' => 'Studente ' . substr($idStudente, -4)
+            'nome_completo' => 'Nome non disponibile'
         ];
     }
     unset($gruppo);

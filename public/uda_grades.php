@@ -5,6 +5,7 @@ require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\UDAManager;
 use App\Core\GradeImportStudentService;
+use App\Core\RuntimeStudentNameService;
 use App\Integration\KahootAPI;
 use App\Integration\ClasseVivaAPI;
 use App\Core\Database\DatabaseFactory;
@@ -75,7 +76,8 @@ try {
     $classeVivaAPI = $cvReady ? new ClasseVivaAPI($config) : null;
     $currentUserId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
     $gradeImportService = new GradeImportStudentService($dbAdapter, $currentUserId);
-    $studentCachePerClasse = [];
+    $runtimeNameService = new RuntimeStudentNameService($dbAdapter, $currentUserId, $config);
+    $runtimeNamesByGroup = [];
 
     foreach ($votiRaw as $voto) {
         $groupId = (string)($voto['id_gruppo'] ?? '');
@@ -90,6 +92,19 @@ try {
         $voto['cv_subject_id'] = null;
         $voto['cv_subject_name'] = null;
 
+        if ($groupId !== '') {
+            if (!array_key_exists($groupId, $runtimeNamesByGroup)) {
+                $runtimeNamesByGroup[$groupId] = [];
+                foreach ($runtimeNameService->resolveGroupStudents($groupId) as $runtimeStudent) {
+                    $runtimeNamesByGroup[$groupId][(string)$runtimeStudent['id_studente']] = trim((string)$runtimeStudent['nome_completo']);
+                }
+            }
+            $runtimeName = $runtimeNamesByGroup[$groupId][$internalStudentId] ?? '';
+            if ($runtimeName !== '') {
+                $voto['nome_studente'] = $runtimeName;
+            }
+        }
+
         $registerTarget = $gradeImportService->resolveClasseVivaForRegister($groupId, $internalStudentId);
 
         if ($registerTarget === null) {
@@ -101,31 +116,6 @@ try {
             $voto['cv_subject_id'] = $registerTarget['subject_id'];
             $voto['cv_subject_name'] = $registerTarget['subject_name'];
 
-            $classKey = $registerTarget['class_id'];
-            $cvStudentId = $registerTarget['student_id'];
-
-            if (!isset($studentCachePerClasse[$classKey])) {
-                if ($classeVivaAPI) {
-                    try {
-                        $list = $classeVivaAPI->getStudentiClasse($classKey);
-                        $map = [];
-                        foreach ($list as $s) {
-                            $map[(string)($s['id'] ?? '')] = $s;
-                        }
-                        $studentCachePerClasse[$classKey] = $map;
-                    } catch (Exception $e) {
-                        $studentCachePerClasse[$classKey] = [];
-                    }
-                } else {
-                    $studentCachePerClasse[$classKey] = [];
-                }
-            }
-
-            $info = $studentCachePerClasse[$classKey][$cvStudentId] ?? null;
-            if ($info) {
-                $voto['nome_studente'] = (string)($info['nome'] ?? '');
-                $voto['cognome_studente'] = (string)($info['cognome'] ?? '');
-            }
         }
 
         // Rinomina tipo_voto in tipo_valutazione per compatibilità
@@ -368,7 +358,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_registro']
 
             $studentFull = trim(($voto['cognome_studente'] ?? '') . ' ' . ($voto['nome_studente'] ?? ''));
             if ($studentFull === '') {
-                $studentFull = 'ID ' . ($voto['internal_student_id'] ?? $voto['id_studente'] ?? 'N/D');
+                $studentFull = 'Nome non disponibile';
             }
 
             $publishedSummary[] = [
@@ -796,7 +786,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_registro']
                         <div class="modal-body">
                             <p>Sei sicuro di voler eliminare questo voto?</p>
                             <div class="alert alert-warning">
-                                <strong>Studente:</strong> <?= htmlspecialchars(trim((string)($voto['cognome_studente'] ?? '') . ' ' . (string)($voto['nome_studente'] ?? ''))) ?: htmlspecialchars($voto['internal_student_id'] ?? 'N/D') ?><br>
+                                <strong>Studente:</strong> <?= htmlspecialchars(trim((string)($voto['cognome_studente'] ?? '') . ' ' . (string)($voto['nome_studente'] ?? '')) ?: 'Nome non disponibile') ?><br>
                                 <strong>Voto:</strong> <?= htmlspecialchars($voto['voto'] ?? '') ?><br>
                                 <strong>Tipo:</strong> <?= htmlspecialchars($voto['tipo_voto'] ?? '') ?><br>
                                 <strong>Data:</strong> <?= htmlspecialchars($voto['data_valutazione'] ?? '') ?>
@@ -921,9 +911,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_registro']
     </script>
 </body>
 </html>
-
-
-
 
 
 

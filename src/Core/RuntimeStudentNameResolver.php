@@ -29,6 +29,27 @@ final class RuntimeStudentNameResolver
         array $providerRosters,
         array $providerPriority = self::PROVIDER_PRIORITY
     ): array {
+        $details = self::resolveDetails($memberships, $identitiesByStudent, $providerRosters, $providerPriority);
+        $resolved = [];
+        foreach ($details as $studentId => $detail) {
+            $resolved[$studentId] = (string)($detail['name'] ?? '');
+        }
+        return $resolved;
+    }
+
+    /**
+     * Risolve nome e provider scelto mantenendo la stessa priorità di
+     * resolveNames(). È usato dal servizio centralizzato per evitare che le
+     * pagine ricostruiscano la precedenza in modo diverso.
+     *
+     * @return array<string,array{name:string,provider:string}>
+     */
+    public static function resolveDetails(
+        array $memberships,
+        array $identitiesByStudent,
+        array $providerRosters,
+        array $providerPriority = self::PROVIDER_PRIORITY
+    ): array {
         $rosterNames = [];
         foreach ($providerPriority as $provider) {
             $provider = trim((string)$provider);
@@ -58,7 +79,7 @@ final class RuntimeStudentNameResolver
                     $externalId = trim((string)($identity['external_user_id'] ?? ''));
                     $name = $rosterNames[$provider][$externalId] ?? '';
                     if ($externalId !== '' && $name !== '') {
-                        $resolved[$internalId] = $name;
+                        $resolved[$internalId] = ['name' => $name, 'provider' => $provider];
                         break 2;
                     }
                 }
@@ -83,7 +104,7 @@ final class RuntimeStudentNameResolver
     /** @param array<string,mixed> $student */
     private static function displayName(array $student): string
     {
-        $name = trim((string)($student['name'] ?? ''));
+        $name = trim((string)($student['name'] ?? ($student['display_name'] ?? '')));
         if ($name !== '') {
             return $name;
         }

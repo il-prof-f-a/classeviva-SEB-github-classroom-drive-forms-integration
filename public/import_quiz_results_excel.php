@@ -16,11 +16,10 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
 use App\Core\GradeImportStudentService;
-use App\Core\StudentIdentityRepository;
+use App\Core\RuntimeStudentNameService;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\UdaGroupRepository;
 use App\Core\UDAManager;
-use App\Integration\GoogleClassroomAPI;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -155,27 +154,31 @@ function resolveQuizStudentNames($dbAdapter, array $config, string $userId, ?str
         return $rows;
     }
 
-    $nameByExternalId = [];
     try {
-        $integrationRepository = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
-        $googleIntegration = null;
-        foreach ($integrationRepository->listForGroup($groupId) as $integration) {
-            if (($integration['provider'] ?? '') !== 'google_classroom'
-                || ($integration['stato'] ?? 'attivo') === 'disattivo') {
-                continue;
-            }
-            $contextId = trim((string)($integration['external_context_id'] ?? ''));
-            if ($contextId !== '') {
-                $googleIntegration = $contextId;
-                break;
+        $nameService = new RuntimeStudentNameService($dbAdapter, $userId, $config);
+        $nameByInternalId = [];
+        foreach ($nameService->resolveGroupStudents($groupId) as $runtimeStudent) {
+            $studentId = trim((string)($runtimeStudent['id_studente'] ?? ''));
+            $displayName = trim((string)($runtimeStudent['nome_completo'] ?? ''));
+            if ($studentId !== '' && $displayName !== '') {
+                $nameByInternalId[$studentId] = $displayName;
             }
         }
 
-        if ($googleIntegration !== null) {
-            $courseStudents = (new GoogleClassroomAPI($config))->getCourseStudents($googleIntegration);
-            foreach ($courseStudents as $courseStudent) {
-                $externalId = trim((string)($courseStudent['id'] ?? ''));
-                $displayName = trim((string)($courseStudent['name'] ?? ''));
+        $nameByExternalId = [];
+        $integrationRepository = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
+        foreach ($integrationRepository->listForGroup($groupId) as $integration) {
+            if (($integration['stato'] ?? 'attivo') === 'disattivo') {
+                continue;
+            }
+            $provider = trim((string)($integration['provider'] ?? ''));
+            $contextId = trim((string)($integration['external_context_id'] ?? ''));
+            if ($provider === '' || $contextId === '') {
+                continue;
+            }
+            foreach ($nameService->providerRoster($provider, $contextId) as $courseStudent) {
+                $externalId = trim((string)($courseStudent['external_user_id'] ?? $courseStudent['id'] ?? ''));
+                $displayName = trim((string)($courseStudent['display_name'] ?? $courseStudent['name'] ?? ''));
                 if ($externalId !== '' && $displayName !== '') {
                     $nameByExternalId[$externalId] = $displayName;
                 }
@@ -196,24 +199,6 @@ function resolveQuizStudentNames($dbAdapter, array $config, string $userId, ?str
             $normalizedName = $normalizeName($displayName);
             if ($normalizedName !== '') {
                 $nameByNormalizedName[$normalizedName] = $displayName;
-            }
-        }
-
-        // Collega l'id interno della riga all'identità Google del gruppo.
-        $identityRepository = new StudentIdentityRepository($dbAdapter, $userId);
-        $nameByInternalId = [];
-        foreach ($rows as $row) {
-            $studentId = trim((string)($row['student_id'] ?? ''));
-            if ($studentId === '') {
-                continue;
-            }
-            foreach ($identityRepository->listForStudent($studentId) as $identity) {
-                $externalId = trim((string)($identity['external_user_id'] ?? ''));
-                if (($identity['provider'] ?? '') === 'google_classroom'
-                    && $externalId !== '' && isset($nameByExternalId[$externalId])) {
-                    $nameByInternalId[$studentId] = $nameByExternalId[$externalId];
-                    break;
-                }
             }
         }
 
@@ -385,12 +370,13 @@ if ($step === 'upload' && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES
         $resolution = ['group_id' => null, 'matches' => [], 'unmatched' => []];
         if ($groupId !== null && $courseId !== '') {
             try {
-                $courseStudents = (new GoogleClassroomAPI($config))->getCourseStudents($courseId);
+                $courseStudents = (new RuntimeStudentNameService($dbAdapter, $userId, $config))
+                    ->providerRoster('google_classroom', $courseId);
                 $roster = [];
                 foreach ($courseStudents as $courseStudent) {
                     $roster[] = [
-                        'external_user_id' => (string)($courseStudent['id'] ?? ''),
-                        'display_name' => (string)($courseStudent['name'] ?? ''),
+                        'external_user_id' => (string)($courseStudent['external_user_id'] ?? $courseStudent['id'] ?? ''),
+                        'display_name' => (string)($courseStudent['display_name'] ?? $courseStudent['name'] ?? ''),
                         'email' => (string)($courseStudent['email'] ?? ''),
                     ];
                 }
