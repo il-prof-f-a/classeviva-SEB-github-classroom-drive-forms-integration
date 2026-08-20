@@ -228,10 +228,16 @@ class GoogleClassroomAPI
 
         $result = $this->service->courses_courseWorkMaterials->create($courseId, $courseWorkMaterial);
 
+        // alternateLink non è valorizzato per le bozze: ricostruisci l'URL canonico.
+        $link = (string)($result->alternateLink ?? '');
+        if ($link === '') {
+            $link = "https://classroom.google.com/c/{$courseId}/m/{$result->id}/details";
+        }
+
         return [
             'id' => $result->id,
             'title' => $result->title,
-            'link' => $result->alternateLink
+            'link' => $link
         ];
     }
 
@@ -327,10 +333,16 @@ class GoogleClassroomAPI
 
         $result = $this->service->courses_courseWork->create($courseId, $courseWork);
 
+        // alternateLink non è valorizzato per le bozze: ricostruisci l'URL canonico.
+        $link = (string)($result->alternateLink ?? '');
+        if ($link === '') {
+            $link = "https://classroom.google.com/c/{$courseId}/a/{$result->id}/details";
+        }
+
         return [
             'id' => $result->id,
             'title' => $result->title,
-            'link' => $result->alternateLink,
+            'link' => $link,
             'state' => $result->state
         ];
     }
