@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__, 2);
+require_once $root . '/src/Core/Security/Csrf.php';
+$_SESSION = [];
 $source = file_get_contents($root . '/public/import_questions.php') ?: '';
 $preview = file_get_contents($root . '/public/partials/import_preview.php') ?: '';
 $js = file_get_contents($root . '/public/assets/js/import-questions.js') ?: '';

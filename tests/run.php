@@ -592,6 +592,7 @@ $editorTests = [
     'template download endpoint' => __DIR__ . '/import_questions/test_template_download.php',
     'import selection controls' => __DIR__ . '/import_questions/test_import_selection.php',
     'forms classroom highlight' => __DIR__ . '/import_questions/test_forms_classroom_highlight.php',
+    'import form CSRF fields' => __DIR__ . '/import_questions/test_csrf_forms.php',
 ];
 foreach ($editorTests as $label => $testFile) {
     exec($phpCommand . ' ' . escapeshellarg($testFile) . ' 2>&1', $editorOutput, $editorExitCode);

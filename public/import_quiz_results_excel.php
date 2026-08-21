@@ -20,6 +20,7 @@ use App\Core\RuntimeStudentNameService;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\UdaGroupRepository;
 use App\Core\UDAManager;
+use App\Core\Security\Csrf;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -659,6 +660,7 @@ $progressWidth = $currentStep === 1 ? '33%' : ($currentStep === 2 ? '66%' : '100
                 </div>
                 <div class="card-body">
                     <form method="POST" enctype="multipart/form-data">
+                        <?= Csrf::hiddenField($_SESSION) ?>
                         <input type="hidden" name="platform" value="<?= htmlspecialchars($platform) ?>">
                         <input type="hidden" name="uda_id" value="<?= htmlspecialchars($udaId) ?>">
                         <input type="hidden" name="step" value="upload">
@@ -729,6 +731,7 @@ $progressWidth = $currentStep === 1 ? '33%' : ($currentStep === 2 ? '66%' : '100
                                 <?php endif; ?>
 
                                 <form method="POST">
+                                    <?= Csrf::hiddenField($_SESSION) ?>
                                     <input type="hidden" name="platform" value="<?= htmlspecialchars($platform) ?>">
                                     <input type="hidden" name="uda_id" value="<?= htmlspecialchars($udaId) ?>">
                                     <input type="hidden" name="step" value="import">

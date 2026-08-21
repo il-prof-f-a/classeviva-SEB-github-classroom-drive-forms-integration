@@ -176,6 +176,8 @@ if (isset($_SESSION['user_id'])) {
                 <a href="privacy-policy.html" target="_blank" class="text-decoration-none">Privacy Policy</a>
                 <span class="mx-2">|</span>
                 <a href="termini-servizio.html" target="_blank" class="text-decoration-none">Termini di Servizio</a>
+                <span class="mx-2">|</span>
+                <a href="DISCLAIMER.md" target="_blank" rel="noopener" class="text-decoration-none">Disclaimer</a>
             </small>
         </div>
     </footer>

@@ -1,6 +1,7 @@
 <?php if (!empty($previewQuestions)): ?>
 <section id="importPreviewSection" class="mb-4" data-preview-mode="true" aria-labelledby="importPreviewTitle">
     <form method="POST" id="importForm">
+        <?= \App\Core\Security\Csrf::hiddenField($_SESSION) ?>
         <input type="hidden" name="action" value="import_selected">
         <input type="hidden" name="modalita" value="<?= htmlspecialchars($modalita) ?>">
         <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo ?? '') ?>">

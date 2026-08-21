@@ -1,10 +1,16 @@
 # UDA Smart
 
-> **Software sperimentale.** Il repository distribuisce codice sorgente e non costituisce un servizio pubblico o uno strumento approvato da un'istituzione scolastica. Prima di trattare dati reali leggere il [Disclaimer](DISCLAIMER.md), i Termini di servizio e l'Informativa privacy.
+> **Software sperimentale.** Il repository distribuisce codice sorgente e non costituisce un servizio pubblico o uno strumento approvato da un'istituzione scolastica. Prima di trattare dati reali leggere il [Disclaimer](DISCLAIMER.md), i [Termini di servizio](termini-servizio.html) e l'[Informativa privacy](privacy-policy.html).
 
 UDA Smart è una piattaforma PHP per progettare e gestire Unità di Apprendimento, materiali, obiettivi, test, rubriche e valutazioni, con integrazioni opzionali per Google Workspace for Education, GitHub Classroom, ClasseViva e servizi di intelligenza artificiale.
 
 Il repository contiene il codice distribuibile e template privi di credenziali. Non servono Composer, PHP o MySQL installati sul computer se si usa Docker.
+
+## Stato del progetto e documenti legali
+
+UDA Smart è distribuito come codice da installare e amministrare autonomamente: la pubblicazione del repository non apre una piattaforma pubblica e non autorizza, da sola, il trattamento di dati scolastici. Lo stage dell'autore è una sperimentazione personale ancora in fase di test, non approvata dall'istituzione scolastica e limitata agli account indicati da `TEST_ALLOWED_EMAILS`.
+
+Prima di usare dati reali consultare il [Disclaimer](DISCLAIMER.md), i [Termini di servizio](termini-servizio.html) e l'[Informativa privacy](privacy-policy.html). Le installazioni autonome devono produrre un'informativa coerente con il proprio hosting, i propri provider, le proprie finalità e i propri tempi di conservazione.
 
 ## Avvio rapido con Docker
 
@@ -157,7 +163,9 @@ Le mappature vengono salvate nelle integrazioni globali e sono quindi riutilizza
 
 Il database applicativo è SQL-only e supporta `sqlite` e `mysql`. Una classe-materia è rappresentata da un record interno in `GRUPPI_DIDATTICI`; i collegamenti a provider esterni sono righe indipendenti in `GRUPPI_INTEGRAZIONI`. Un'UDA usa `UDA_GRUPPI`, quindi può essere assegnata a gruppi senza dipendere da una chiave ClasseViva.
 
-Gli studenti hanno un `id_studente` interno. Gli identificativi ClasseViva, Google Classroom e GitHub Classroom vivono in `STUDENTI_IDENTITA_ESTERNE`; assignment, repository e submission sono risorse in `STUDENTI_RISORSE_ESTERNE`. Nomi, cognomi ed email non vengono persistiti: quando servono all'interfaccia vengono recuperati dal provider nel contesto della richiesta.
+Gli studenti hanno un `id_studente` interno. Gli identificativi ClasseViva, Google Classroom e GitHub Classroom vivono in `STUDENTI_IDENTITA_ESTERNE`; assignment, repository e submission sono risorse in `STUDENTI_RISORSE_ESTERNE`. Il dominio canonico non salva nomi, cognomi o email: quando servono all'interfaccia, al matching o all'importazione vengono recuperati dal provider nel contesto della richiesta e possono restare temporaneamente in memoria o nella sessione necessaria al flusso. I provider esterni restano soggetti autonomi e possono conservare i dati secondo le proprie regole.
+
+ClasseViva è una capability opzionale, non una dipendenza strutturale del dominio. È possibile creare gruppi, UDA, rubriche, griglie e valutazioni locali senza una mappatura ClasseViva; la relativa autenticazione viene richiesta soltanto dalle operazioni che hanno davvero bisogno di ClasseViva, come la pubblicazione sul registro. Google Classroom e GitHub Classroom possono essere collegati e usati indipendentemente.
 
 ### Editor dei gruppi didattici
 
@@ -200,7 +208,7 @@ php scripts/reset_teaching_domain.php --apply --confirm=RESET-TEACHING-DOMAIN
 
 Lo script rifiuta ambienti di produzione e salva sempre un report locale.
 
-La rimozione fisica delle sei tabelle legacy Ã¨ una migrazione separata e non
+La rimozione fisica delle sei tabelle legacy è una migrazione separata e non
 automatica. Per i dettagli della procedura locale e staging consultare
 [`docs/deployment/legacy-table-migration.md`](docs/deployment/legacy-table-migration.md).
 
@@ -222,9 +230,9 @@ Il callback non è un parametro configurabile: l'applicazione lo deriva sempre d
 
 Client ID e Client Secret possono essere salvati per singolo utente dalla pagina **Integrazioni**. Non inserire mai client secret reali nei file tracciati da Git.
 
-## ClasseViva, AI ed email
+## Provider esterni, ClasseViva opzionale, AI ed email
 
-ClasseViva viene abilitata con `CLASSEVIVA_ENABLED=true`. L'integrazione usa API non ufficiali e non documentate, individuate mediante attività di reverse engineering; non è autorizzata, approvata o supportata da ClasseViva/Spaggiari e può smettere di funzionare senza preavviso.
+ClasseViva viene abilitata con `CLASSEVIVA_ENABLED=true` solo quando serve. L'integrazione usa API non ufficiali e non documentate, individuate mediante attività di reverse engineering; non è autorizzata, approvata o supportata da ClasseViva/Spaggiari e può smettere di funzionare senza preavviso. L'assenza del mapping o del token ClasseViva non blocca il lavoro locale sui gruppi didattici e sulle valutazioni; blocca soltanto le azioni esterne che richiedono una coppia ClasseViva valida.
 
 Il login è avviato dall'utente nel browser, ma username e password transitano via HTTPS nel processo PHP dell'installazione, che esegue una singola richiesta di login REST verso ClasseViva. Non è quindi corretto descrivere questa integrazione come esclusivamente browser-side. Le credenziali non vengono scritte in log, file, sessione o database e le variabili applicative vengono eliminate subito dopo la richiesta; PHP e il sistema operativo non possono tuttavia garantire la cancellazione fisica immediata di ogni copia dalla memoria RAM.
 
@@ -245,6 +253,14 @@ GEMINI_API_KEY=
 Creare le chiavi solo dai portali ufficiali del provider: [OpenAI](https://platform.openai.com/docs/quickstart), [Anthropic](https://docs.anthropic.com/en/api/admin-api/apikeys/get-api-key) e [Google Gemini](https://ai.google.dev/gemini-api/docs/api-key). Le chiavi vanno conservate solo nel file ignorato, nel secret manager del deploy o nella configurazione cifrata per utente.
 
 Per l'invio email impostare `MAIL_ENABLED=true` e compilare le variabili `MAIL_*` presenti in `.env.example` con i dati SMTP del proprio fornitore.
+
+## Privacy e dati trattati
+
+Il database applicativo conserva gli identificativi tecnici necessari a collegare gruppi, studenti, integrazioni, domande, test e valutazioni: ad esempio `id_gruppo`, `id_studente`, identificativi esterni, contesti dei provider e risultati didattici. Nomi, cognomi ed email degli studenti non sono il modello persistente dell'applicazione, ma possono essere consultati temporaneamente dai provider per mostrare nomi leggibili, risolvere un matching o preparare un'importazione.
+
+Questa minimizzazione riduce l'identificazione immediata, ma non rende innocua un'esfiltrazione. La correlazione di ID esterni, gruppi, voti, risposte, livelli, date, repository e sessioni può consentire di identificare gli studenti, alterare valutazioni o colpire gli account dei provider. Per questo database, backup, log, sessioni, chiavi e configurazioni devono essere protetti come dati scolastici quando possono essere ricondotti agli interessati.
+
+L'istanza di stage è limitata agli account configurati e non è un sistema ufficiale. Chi installa una propria copia diventa responsabile di ruoli privacy, autorizzazioni, base giuridica, informative, conservazione, cancellazione, fornitori e gestione degli incidenti nel proprio contesto. Per i dettagli consultare l'[Informativa privacy](privacy-policy.html), i [Termini di servizio](termini-servizio.html) e il [Disclaimer](DISCLAIMER.md).
 
 ## File locali, generati o segreti
 
@@ -291,13 +307,25 @@ docker compose run --rm -T -v "./tests:/var/www/html/tests:ro" -e TEST_MYSQL=tru
 
 La pipeline GitHub Actions esegue validazione Composer, lint PHP, controlli di pubblicabilità e inizializzazione dello schema su MySQL 8.4.
 
-## Sicurezza e pubblicazione
+## Hardening, sicurezza e pubblicazione
+
+Il bootstrap applica una baseline di hardening comune alle pagine web: Content Security Policy applicata, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS quando l'istanza usa HTTPS e `Cache-Control: no-store` sulle pagine di integrazione. La CSP autorizza soltanto le origini necessarie per script, stili, font e connessioni configurate; il font Bootstrap Icons viene autorizzato esplicitamente dal CDN previsto.
+
+Le mutazioni pubbliche passano dalla guardia globale di autenticazione e CSRF; i form di importazione espongono inoltre il token server-side. Sessioni, timeout, rotazione dell'identificatore, cookie `HttpOnly`/`SameSite`/`Secure` e logout sono gestiti centralmente. Upload, fogli di calcolo, output HTML/JSON, URL di ritorno e richieste server-side applicano validazioni e limiti dedicati. Questi controlli riducono la superficie d'attacco ma non sostituiscono HTTPS, aggiornamenti, privilegi minimi, backup protetti e monitoraggio.
 
 - Verificare `git status --ignored` prima di ogni pubblicazione.
 - Non aggiungere `.env`, dump SQL, database runtime, token OAuth, credenziali JSON o log.
 - Usare `APP_DEBUG=false` fuori dall'ambiente locale.
 - Conservare `ENCRYPTION_KEY` fuori dal repository e includerla nei backup sicuri.
 - Eseguire prima i test in locale, poi nello staging previsto dal progetto e infine in produzione; credenziali e dati non devono essere copiati tra ambienti senza una decisione esplicita.
+
+La suite completa è il controllo minimo prima di una pubblicazione:
+
+```bash
+composer test
+```
+
+Il deploy deve essere eseguito soltanto dopo aver verificato ambiente, `APP_URL`, HTTPS, allowlist di test, segreti, database, backup e log dell'istanza destinazione.
 
 ## Licenza
 

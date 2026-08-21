@@ -14,7 +14,7 @@ final class SecurityHeaders
             'X-Frame-Options' => 'SAMEORIGIN',
             'Referrer-Policy' => 'strict-origin-when-cross-origin',
             'Permissions-Policy' => 'camera=(), microphone=(), geolocation=(), payment=()',
-            'Content-Security-Policy' => "default-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self' https://accounts.google.com https://github.com; script-src 'self' https://cdn.jsdelivr.net https://apis.google.com 'unsafe-inline'; style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; connect-src 'self' https://api.openai.com https://generativelanguage.googleapis.com",
+            'Content-Security-Policy' => "default-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self' https://accounts.google.com https://github.com; script-src 'self' https://cdn.jsdelivr.net https://apis.google.com 'unsafe-inline'; style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; font-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://api.openai.com https://generativelanguage.googleapis.com",
         ];
         if ($https) $headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains';
         if ($integrationPage) $headers['Cache-Control'] = 'no-store';

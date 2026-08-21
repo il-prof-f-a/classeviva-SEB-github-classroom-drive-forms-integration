@@ -7,6 +7,7 @@ use App\Core\Security\SecurityHeaders;
 $headers = SecurityHeaders::headers(true, true);
 foreach (['Strict-Transport-Security','X-Content-Type-Options','X-Frame-Options','Referrer-Policy','Permissions-Policy','Content-Security-Policy','Cache-Control'] as $name) if (empty($headers[$name])) exit(1);
 if (!str_contains($headers['Content-Security-Policy'], 'frame-ancestors')) exit(1);
+if (!str_contains($headers['Content-Security-Policy'], "font-src 'self' https://cdn.jsdelivr.net")) exit(1);
 if (isset($headers['Content-Security-Policy-Report-Only'])) exit(1);
 if ($headers['X-Frame-Options'] !== 'SAMEORIGIN') exit(1);
 if (SecurityHeaders::requestIsHttps(['HTTP_X_FORWARDED_PROTO' => 'https'], false)) exit(1);

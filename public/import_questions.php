@@ -12,6 +12,7 @@ use App\Core\GoogleTokenProvider;
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
 use App\Core\QuestionImporter;
+use App\Core\Security\Csrf;
 use Google\Client;
 use Google\Service\Forms;
 use Smalot\PdfParser\Parser as PdfParser;
@@ -2385,6 +2386,7 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
 
         <?php $selectionHiddenClass = ($importCompleted || !empty($previewQuestions)) ? ' d-none' : ''; ?>
         <form method="POST" enctype="multipart/form-data" id="existingTestForm" class="mb-4<?= $selectionHiddenClass ?>">
+            <?= Csrf::hiddenField($_SESSION) ?>
             <input type="hidden" name="action" value="preview_existing_test">
             <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo) ?>">
             <input type="hidden" name="existing_source" id="existingSourceInput" value="<?= htmlspecialchars($existingSource) ?>">
@@ -2509,6 +2511,7 @@ function buildPreviewFromKahootResultsSpreadsheet($spreadsheet): array
             </div>
         </form>
         <form method="POST" enctype="multipart/form-data" id="previewForm" class="<?= trim($selectionHiddenClass) ?>">
+            <?= Csrf::hiddenField($_SESSION) ?>
             <input type="hidden" name="action" value="preview">
             <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo) ?>">
             <input type="hidden" name="modalita" id="modalitaInput" value="<?= htmlspecialchars($modalita) ?>">
