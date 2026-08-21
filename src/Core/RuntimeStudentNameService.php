@@ -88,6 +88,7 @@ final class RuntimeStudentNameService
                 }
                 $result = [];
                 $seen = [];
+                $identitiesForRoster = new StudentIdentityRepository($this->db, $this->userId);
                 foreach ($roster as $student) {
                     if (!is_array($student)) {
                         continue;
@@ -98,9 +99,17 @@ final class RuntimeStudentNameService
                         continue;
                     }
                     $seen[$externalId] = true;
+                    // Risolvi l'id interno dall'identità del provider: il salvataggio
+                    // usa l'id interno, quindi il roster deve restituirlo per restare
+                    // coerente con le valutazioni salvate.
+                    $internalId = '';
+                    $identity = $identitiesForRoster->findByExternal($provider, $externalId);
+                    if ($identity !== null) {
+                        $internalId = trim((string)($identity['id_studente'] ?? ''));
+                    }
                     $result[] = [
-                        'id_studente' => $externalId,
-                        'id_studente_internal' => '',
+                        'id_studente' => $internalId !== '' ? $internalId : $externalId,
+                        'id_studente_internal' => $internalId,
                         'nome' => $name,
                         'cognome' => '',
                         'nome_completo' => $name,
