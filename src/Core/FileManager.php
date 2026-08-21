@@ -3,6 +3,7 @@
 namespace App\Core;
 
 use Exception;
+use App\Core\Security\UploadPolicy;
 
 /**
  * FileManager - Gestisce upload, download e organizzazione file
@@ -80,6 +81,7 @@ class FileManager
         if ($file['size'] > $maxSize) {
             throw new Exception("File troppo grande. Massimo: " . $this->config['security']['max_upload_size']);
         }
+        UploadPolicy::assertValid((string)$file['name'], (string)$file['tmp_name'], 'document');
 
         // Determina path di destinazione
         $year = $this->config['academic_year']['current'];

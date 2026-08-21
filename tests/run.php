@@ -6,6 +6,35 @@ $root = dirname(__DIR__);
 $failures = [];
 $passes = 0;
 
+$securityTests = [
+    'baseline sicurezza' => __DIR__ . '/security/baseline_environment.php',
+    'identificatori SQL' => __DIR__ . '/security/sql_identifier_policy.php',
+    'guardie richiesta' => __DIR__ . '/security/request_guard.php',
+    'superficie web' => __DIR__ . '/security/public_surface.php',
+    'policy SSRF' => __DIR__ . '/security/ssrf_policy.php',
+    'accesso materiali AI' => __DIR__ . '/security/ai_material_access.php',
+    'output encoding' => __DIR__ . '/security/output_encoding.php',
+    'campi segreti' => __DIR__ . '/security/secret_fields.php',
+    'ownership fail-closed' => __DIR__ . '/security/ownership_fail_closed.php',
+    'upload policy' => __DIR__ . '/security/upload_policy.php',
+    'archivio GitHub' => __DIR__ . '/security/github_archive_policy.php',
+    'sicurezza sessione' => __DIR__ . '/security/session_security.php',
+    'cifratura versionata' => __DIR__ . '/security/encryption_versioning.php',
+    'header HTTP' => __DIR__ . '/security/http_headers.php',
+    'egress integrazioni' => __DIR__ . '/security/integration_egress.php',
+];
+foreach ($securityTests as $label => $testFile) {
+    exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($testFile) . ' 2>&1', $securityOutput, $securityExitCode);
+    if ($securityExitCode === 0) {
+        $passes++;
+        echo "PASS: {$label}\n";
+    } else {
+        $failures[] = "{$label}: " . implode(' | ', $securityOutput);
+        echo "FAIL: {$label}\n";
+    }
+    $securityOutput = [];
+}
+
 $legacyClassesMigrationCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/database/legacy_classes_to_groups.php');
 exec($legacyClassesMigrationCommand . ' 2>&1', $legacyClassesMigrationOutput, $legacyClassesMigrationExitCode);
 if ($legacyClassesMigrationExitCode === 0) {

@@ -440,33 +440,30 @@ class AIQuestionService
     {
         $saved = [];
         foreach ($allegati as $item) {
-            $url = $item['url'] ?? null;
             $driveId = $item['drive_file_id'] ?? null;
             try {
-                if ($driveId) {
+                if (is_string($driveId) && preg_match('/^[A-Za-z0-9_-]{10,}$/', $driveId)) {
                     $name = $driveId . '.bin';
                     $dest = rtrim($tmpPath, '/\\') . DIRECTORY_SEPARATOR . $name;
                     $this->drive->downloadFile($driveId, $dest);
-                } elseif ($url) {
-                    $name = basename(parse_url($url, PHP_URL_PATH));
-                    if (!$name || $name === '/' || strpos($name, '.') === false) {
-                        $name = uniqid('att_', true) . '.bin';
-                    }
-                    $content = @file_get_contents($url);
-                    if ($content === false) {
-                        continue;
-                    }
-                    $dest = rtrim($tmpPath, '/\\') . DIRECTORY_SEPARATOR . $name;
-                    file_put_contents($dest, $content);
                 } else {
                     continue;
                 }
-                $sizeMb = filesize($dest) / (1024 * 1024);
-                if ($sizeMb > self::MAX_ATTACH_MB) {
+                $tmpReal = realpath($tmpPath);
+                $destReal = realpath($dest);
+                if ($tmpReal === false || $destReal === false
+                    || !str_starts_with($destReal . DIRECTORY_SEPARATOR, $tmpReal . DIRECTORY_SEPARATOR)) {
                     @unlink($dest);
                     continue;
                 }
-                $saved[] = $dest;
+                $size = filesize($destReal);
+                if ($size === false) continue;
+                $sizeMb = $size / (1024 * 1024);
+                if ($sizeMb > self::MAX_ATTACH_MB) {
+                    @unlink($destReal);
+                    continue;
+                }
+                $saved[] = $destReal;
             } catch (Exception $e) {
                 // ignora singolo errore, prosegue
                 continue;

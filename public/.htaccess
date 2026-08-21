@@ -12,5 +12,10 @@
     AddType text/css .css
 </IfModule>
 
-php_flag display_errors on
-php_value error_reporting 32767
+# Il debug è controllato dal bootstrap e non viene mai attivato dal web server.
+
+# Nega file applicativi e directory private se il server superiore non lo fa.
+<FilesMatch "^(\.env|composer\.(json|lock)|.*\.(bak|db|sqlite|yaml|yml|json))$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>

@@ -16,6 +16,10 @@ if (file_exists(ROOT_PATH . '/vendor/autoload.php')) {
     require_once ROOT_PATH . '/vendor/autoload.php';
 }
 
+if (class_exists(\App\Core\Security\SecurityHeaders::class)) {
+    \App\Core\Security\SecurityHeaders::apply($_SERVER, (string)($_SERVER['SCRIPT_NAME'] ?? ''));
+}
+
 // Carica variabili d'ambiente (.env in root o in config/.env)
 $envPaths = [ROOT_PATH, ROOT_PATH . '/config'];
 foreach ($envPaths as $envPath) {
@@ -62,6 +66,20 @@ if (php_sapi_name() !== 'cli' && session_status() === PHP_SESSION_NONE) {
         'samesite' => 'Lax',
     ]);
     session_start();
+    if (!empty($_SESSION['user_id']) && class_exists(\App\Core\Security\SessionGuard::class)) {
+        $sessionDecision = \App\Core\Security\SessionGuard::touch(
+            $_SESSION,
+            time(),
+            $sessionIdleTimeout,
+            1800
+        );
+        if ($sessionDecision['expired']) {
+            $_SESSION = [];
+            session_regenerate_id(true);
+        } elseif ($sessionDecision['rotate']) {
+            session_regenerate_id(true);
+        }
+    }
 }
 
 if (!function_exists('app_url')) {
@@ -225,6 +243,7 @@ function buildConfigFromEnv(): array {
                 'enabled' => filter_var(env('MAIL_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
                 'smtp_host' => env('MAIL_HOST', ''),
                 'smtp_port' => env('MAIL_PORT', 587),
+                'smtp_allowed_ports' => [465, 587],
                 'smtp_encryption' => env('MAIL_ENCRYPTION', 'tls'),
                 'smtp_user' => env('MAIL_USERNAME', ''),
                 'smtp_password' => env('MAIL_PASSWORD', ''),

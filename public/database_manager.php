@@ -17,6 +17,8 @@ use App\Core\Database\DatabaseInitializer;
 use App\Core\Database\DatabaseMigration;
 use App\Core\Database\SchemaMigrationRunner;
 use App\Core\SchemaDefinitions;
+use App\Core\Security\Authorization;
+use App\Core\Security\Csrf;
 
 error_reporting(E_ALL);
 
@@ -224,6 +226,10 @@ $schemaVersion = SchemaMigrationRunner::PROVIDER_NEUTRAL_VERSION;
 
 $currentEmail = strtolower(trim($_SESSION['user_email'] ?? ''));
 $isAdminUser = is_admin_user($currentEmail);
+$adminEmails = array_filter(array_map('trim', explode(',', (string)env('ADMIN_EMAILS', ''))));
+Authorization::assertAdmin($_SESSION, $adminEmails);
+$csrfSession = &$_SESSION;
+$csrfToken = Csrf::token($csrfSession);
 
 $actionResult = null;
 $actionType = null;
@@ -234,6 +240,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $createBackup = isset($_POST['create_backup']);
 
     try {
+        Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? null);
         $adminActions = ['validate', 'repair', 'initialize', 'backup'];
         if (in_array($action, $adminActions, true) && !$isAdminUser) {
             throw new Exception("Permesso negato per l'operazione richiesta.");
@@ -930,6 +937,7 @@ $totalSheets = count($allSheets);
         <div class="modal-dialog">
             <div class="modal-content">
                 <form method="POST">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                     <div class="modal-header bg-primary text-white">
                         <h5 class="modal-title"><i class="fas fa-check-circle me-2"></i>Valida Database</h5>
                         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
@@ -966,6 +974,7 @@ $totalSheets = count($allSheets);
         <div class="modal-dialog">
             <div class="modal-content">
                 <form method="POST">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                     <div class="modal-header bg-warning text-dark">
                         <h5 class="modal-title"><i class="fas fa-tools me-2"></i>Ripara Database</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
@@ -1003,6 +1012,7 @@ $totalSheets = count($allSheets);
         <div class="modal-dialog">
             <div class="modal-content">
                 <form method="POST">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                     <div class="modal-header bg-danger text-white">
                         <h5 class="modal-title"><i class="fas fa-rocket me-2"></i>Inizializza Database</h5>
                         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
@@ -1043,6 +1053,7 @@ $totalSheets = count($allSheets);
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <form method="POST" id="importForm" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                     <div class="modal-header bg-info text-white">
                         <h5 class="modal-title"><i class="fas fa-file-import me-2"></i>Importa dati utente (backup JSON)</h5>
                         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
@@ -1111,6 +1122,7 @@ $totalSheets = count($allSheets);
         <div class="modal-dialog">
             <div class="modal-content">
                 <form method="POST">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                     <div class="modal-header bg-secondary text-white">
                         <h5 class="modal-title"><i class="fas fa-file-export me-2"></i>Esporta dati utente</h5>
                         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>

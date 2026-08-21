@@ -125,6 +125,8 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
      */
     public function findWhere(string $sheetName, array $where): array
     {
+        SqlIdentifierValidator::assertSheet($sheetName);
+        SqlIdentifierValidator::assertColumns($sheetName, array_keys($where));
         if ($sheetName === 'CLASSI_ASSEGNATE') {
             return \App\Core\LegacyUdaDataGateway::findClassiAssegnateWhere($this, $where);
         }
@@ -206,6 +208,8 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
      */
     public function insertRow(string $sheetName, array $data): bool
     {
+        SqlIdentifierValidator::assertSheet($sheetName);
+        SqlIdentifierValidator::assertColumns($sheetName, array_keys($data));
         if ($sheetName === 'CLASSROOM_MAPPINGS') {
             return \App\Core\ProviderNeutralMappingService::insertLegacy($this, 'google_classroom', $data);
         }
@@ -251,6 +255,9 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
      */
     public function updateRow(string $sheetName, string $keyField, $keyValue, array $data): bool
     {
+        SqlIdentifierValidator::assertSheet($sheetName);
+        SqlIdentifierValidator::assertColumn($sheetName, $keyField);
+        SqlIdentifierValidator::assertColumns($sheetName, array_keys($data));
         if ($sheetName === 'CLASSROOM_MAPPINGS') {
             return \App\Core\ProviderNeutralMappingService::updateLegacy($this, 'google_classroom', (string)$keyValue, $data);
         }
@@ -299,6 +306,8 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
      */
     public function deleteRow(string $sheetName, $keyValue, string $keyField = 'id'): bool
     {
+        SqlIdentifierValidator::assertSheet($sheetName);
+        SqlIdentifierValidator::assertColumn($sheetName, $keyField);
         if ($sheetName === 'CLASSROOM_MAPPINGS') {
             return \App\Core\ProviderNeutralMappingService::deleteLegacy($this, 'google_classroom', (string)$keyValue);
         }
@@ -717,6 +726,7 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
      */
     private function sanitizeTableName(string $sheetName): string
     {
+        SqlIdentifierValidator::assertSheet($sheetName);
         return preg_replace('/[^a-zA-Z0-9_]/', '_', $sheetName);
     }
 

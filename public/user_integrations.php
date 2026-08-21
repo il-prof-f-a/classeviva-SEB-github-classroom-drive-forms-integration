@@ -30,6 +30,7 @@ use Google\Client;
 use Google\Service\Classroom;
 use Google\Service\Drive;
 use Google\Service\Forms;
+use App\Core\Security\Csrf;
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -43,10 +44,13 @@ if (empty($_SESSION['user_id'])) {
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 $userId = (string)$_SESSION['user_id'];
 $integrationManager = new UserIntegrationManager($dbAdapter, $userId);
+$csrfSession = &$_SESSION;
+$csrfToken = Csrf::token($csrfSession);
 
 // Logout GitHub (solo sessione/token locale)
-if (isset($_GET['action']) && $_GET['action'] === 'logout_github') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'logout_github') {
     try {
+        Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? null);
         $gh = new GitHubIntegration($config);
         $gh->logout();
     } catch (\Throwable $e) {
@@ -113,6 +117,7 @@ $returnTo = $normalizeReturnUrl($_SESSION['cv_return_to'] ?? '');
 // Gestione salvataggi e test integrazioni
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['section'])) {
     try {
+        Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? null);
         $section = $_POST['section'];
         $action  = $_POST['action'] ?? 'save';
 
@@ -226,12 +231,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['section'])) {
             }
 
         } elseif ($section === 'mail') {
+            $existingMailConfig = $integrationManager->getConfig('mail') ?? [];
+            $submittedMailPassword = trim((string)($_POST['smtp_password'] ?? ''));
             $mailConfig = [
                 'smtp_host'      => trim($_POST['smtp_host'] ?? ''),
                 'smtp_port'      => trim($_POST['smtp_port'] ?? ''),
                 'smtp_encryption'=> trim($_POST['smtp_encryption'] ?? 'tls'),
                 'smtp_user'      => trim($_POST['smtp_user'] ?? ''),
-                'smtp_password'  => trim($_POST['smtp_password'] ?? ''),
+                'smtp_password'  => $submittedMailPassword !== '' ? $submittedMailPassword : (string)($existingMailConfig['smtp_password'] ?? ''),
                 'from_address'   => trim($_POST['from_address'] ?? ''),
                 'from_name'      => trim($_POST['from_name'] ?? ''),
                 'test_recipient' => trim($_POST['test_recipient'] ?? ''),
@@ -280,9 +287,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['section'])) {
             }
 
         } elseif ($section === 'github') {
+            $existingGithubConfig = $integrationManager->getConfig('github') ?? [];
+            $submittedGithubSecret = trim((string)($_POST['github_client_secret'] ?? ''));
             $githubConfig = [
                 'client_id' => trim($_POST['github_client_id'] ?? ''),
-                'client_secret' => trim($_POST['github_client_secret'] ?? ''),
+                'client_secret' => $submittedGithubSecret !== '' ? $submittedGithubSecret : (string)($existingGithubConfig['client_secret'] ?? ''),
             ];
             $hasGithubOauth = !empty($githubConfig['client_id']) && !empty($githubConfig['client_secret']);
             $integrationManager->saveConfig('github', $githubConfig, $hasGithubOauth);
@@ -308,7 +317,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['section'])) {
             }
         } elseif ($section === 'ai') {
             $aiProvider = trim($_POST['ai_provider'] ?? '');
-            $aiApiKey = trim($_POST['ai_api_key'] ?? '');
+            $existingAiConfig = $integrationManager->getConfig('ai') ?? [];
+            $submittedAiApiKey = trim((string)($_POST['ai_api_key'] ?? ''));
+            $aiApiKey = $submittedAiApiKey !== '' ? $submittedAiApiKey : (string)($existingAiConfig['api_key'] ?? '');
 
             $aiConfig = [
                 'provider' => $aiProvider,
@@ -758,6 +769,7 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
                 </div>
                 <div class="card-body">
                     <form method="POST">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                         <input type="hidden" name="section" value="profile">
 
                         <div class="mb-3">
@@ -829,6 +841,7 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
                         </div>
                     </div>
                     <form method="POST">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                         <input type="hidden" name="section" value="classeviva">
 
                         <div class="form-check form-switch mb-3">
@@ -924,6 +937,7 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
             <div class="modal-dialog">
                 <div class="modal-content">
                     <form method="POST">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                         <input type="hidden" name="section" value="classeviva">
                         <input type="hidden" name="action" value="refresh_token">
                         <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo) ?>">
@@ -1056,6 +1070,7 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
 
                     <?php if ($googleTokenStatus['exists']): ?>
                         <form method="POST" class="mt-3" onsubmit="return confirm('Sei sicuro di voler revocare il token? Dovrai autorizzare di nuovo l\\'applicazione.');">
+                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                             <input type="hidden" name="section" value="google">
                             <input type="hidden" name="token_action" value="revoke">
                             <div class="d-grid">
@@ -1081,6 +1096,7 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
                 </div>
                 <div class="card-body">
                     <form method="POST">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                         <input type="hidden" name="section" value="google">
 
                         <div class="mb-3">
@@ -1161,6 +1177,7 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
                     ];
                     ?>
                     <form method="POST">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                         <input type="hidden" name="section" value="mail">
 
                         <div class="card mb-3 border-info">
@@ -1229,7 +1246,7 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
                         <div class="mb-3">
                             <label class="form-label">Password</label>
                             <input type="password" name="smtp_password" class="form-control"
-                                   value="<?= htmlspecialchars($mailConfig['smtp_password'] ?? '') ?>">
+                                   value="" placeholder="Lascia vuoto per mantenere il valore configurato" autocomplete="new-password">
                         </div>
 
                         <div class="mb-3">
@@ -1275,6 +1292,7 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
                     </p>
 
                     <form method="POST" id="aiForm">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                         <input type="hidden" name="section" value="ai">
 
                         <div class="mb-3">
@@ -1291,8 +1309,7 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
                         <div class="mb-3">
                             <label class="form-label">API Key *</label>
                             <input type="password" name="ai_api_key" class="form-control" id="aiApiKeyInput"
-                                   value="<?= htmlspecialchars($aiConfig['api_key'] ?? '') ?>"
-                                   placeholder="Inserisci la tua API key">
+                                   value="" placeholder="Lascia vuoto per mantenere la chiave configurata" autocomplete="new-password">
                             <div class="form-text">
                                 La chiave API verrà salvata in modo sicuro e usata solo per il tuo account.
                             </div>
@@ -1344,9 +1361,11 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
                                             <?php endif; ?>
                                         </p>
                                     </div>
-                                    <a href="?action=logout_github#github-section" class="btn btn-outline-danger btn-sm">
-                                        <i class="bi bi-box-arrow-right"></i> Disconnetti
-                                    </a>
+                                    <form method="POST" action="#github-section" class="d-inline">
+                                        <input type="hidden" name="action" value="logout_github">
+                                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                                        <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-box-arrow-right"></i> Disconnetti</button>
+                                    </form>
                                 </div>
                             <?php else: ?>
                                 <?php if ($githubAuthError): ?>
@@ -1385,6 +1404,7 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
                     </div>
 
                     <form method="POST">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                         <input type="hidden" name="section" value="github">
 
                         <div class="mb-3">
@@ -1395,7 +1415,7 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
                         <div class="mb-3">
                             <label class="form-label">Client Secret GitHub OAuth</label>
                             <input type="password" name="github_client_secret" class="form-control"
-                                   value="<?= htmlspecialchars($githubConfig['client_secret'] ?? '') ?>">
+                                   value="" placeholder="Lascia vuoto per mantenere il secret configurato" autocomplete="new-password">
                         </div>
                         <div class="d-flex gap-2">
                             <button type="submit" name="action" value="save" class="btn btn-primary">

@@ -7,6 +7,7 @@ use GuzzleHttp\Client;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use Exception;
+use InvalidArgumentException;
 
 /**
  * ClasseVivaAPI - Integrazione con API Spaggiari ClasseViva
@@ -33,6 +34,9 @@ class ClasseVivaAPI
 
         // Base URL senza trailing slash per costruzione manuale URL
         $this->baseUrl = rtrim((string)($this->config['base_url'] ?? 'https://web.spaggiari.eu/rest/v1'), '/');
+        if ($this->baseUrl !== 'https://web.spaggiari.eu/rest/v1') {
+            throw new InvalidArgumentException('Endpoint ClasseViva non consentito');
+        }
 
         $this->applyStoredToken($this->config['token'] ?? null);
 
@@ -1954,4 +1958,3 @@ class ClasseVivaAPI
     }
 
 }
-

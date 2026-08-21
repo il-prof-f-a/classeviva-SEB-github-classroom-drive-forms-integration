@@ -20,10 +20,12 @@ use App\Core\Database\DatabaseFactory;
 use App\Integration\GoogleDriveAPI;
 use App\Integration\GoogleClassroomAPI;
 use App\Integration\ClasseVivaAPI;
+use App\Core\Security\Authorization;
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
+Authorization::assertAdmin($_SESSION, array_filter(array_map('trim', explode(',', (string)env('ADMIN_EMAILS', '')))));
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 
@@ -59,6 +61,8 @@ $cvReady = $cvEnabled && $cvTokenValid;
 
 // Prepara dati per i dropdown (caricati via AJAX)
 $driveRootFolder = $config['google']['drive']['root_folder_id'] ?? '';
+$csrfSession = &$_SESSION;
+$csrfToken = \App\Core\Security\Csrf::token($csrfSession);
 
 ?>
 <!DOCTYPE html>
@@ -860,6 +864,7 @@ async function runTest(platform, test) {
     addLog(`Esecuzione test: ${platform}/${test}...`, 'info');
 
     const params = new URLSearchParams();
+    params.append('csrf_token', <?= json_encode($csrfToken, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>);
     params.append('action', 'run_test');
     params.append('platform', platform);
     params.append('test', test);
@@ -931,6 +936,7 @@ async function cleanupSingle(platform, test, resourceId) {
     addLog(`Cleanup: eliminazione risorsa ${resourceId}...`, 'info');
 
     const params = new URLSearchParams();
+    params.append('csrf_token', <?= json_encode($csrfToken, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>);
     params.append('action', 'cleanup');
     params.append('platform', platform);
     params.append('test', test);
@@ -1039,7 +1045,7 @@ async function loadDriveFolders() {
         const response = await fetch('api/test_api_handler.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'action=load_data&type=drive_folders'
+            body: 'action=load_data&type=drive_folders&csrf_token=' + encodeURIComponent(<?= json_encode($csrfToken) ?>)
         });
         const result = await response.json();
         if (result.success && result.data) {
@@ -1069,7 +1075,7 @@ async function loadClassroomCourses() {
         const response = await fetch('api/test_api_handler.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'action=load_data&type=classroom_courses'
+            body: 'action=load_data&type=classroom_courses&csrf_token=' + encodeURIComponent(<?= json_encode($csrfToken) ?>)
         });
         const result = await response.json();
         if (result.success && result.data) {
@@ -1101,7 +1107,7 @@ async function loadCvClasses() {
         const response = await fetch('api/test_api_handler.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'action=load_data&type=cv_classes'
+            body: 'action=load_data&type=cv_classes&csrf_token=' + encodeURIComponent(<?= json_encode($csrfToken) ?>)
         });
         const result = await response.json();
         if (result.success && result.data) {

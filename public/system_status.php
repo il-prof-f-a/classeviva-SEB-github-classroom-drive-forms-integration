@@ -13,6 +13,7 @@ use App\Core\GoogleTokenProvider;
 use App\Core\Database\DatabaseFactory;
 use App\Core\SchemaDefinitions;
 use App\Integration\ClasseVivaAPI;
+use App\Core\Security\Authorization;
 
 $currentEmail = strtolower(trim($_SESSION['user_email'] ?? ''));
 if (!is_admin_user($currentEmail)) {
@@ -22,6 +23,7 @@ if (!is_admin_user($currentEmail)) {
     echo "Accesso non autorizzato.\n";
     exit(1);
 }
+Authorization::assertAdmin($_SESSION, array_filter(array_map('trim', explode(',', (string)env('ADMIN_EMAILS', '')))));
 
 // Esegui verifiche
 $checks = [

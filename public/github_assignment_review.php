@@ -644,11 +644,19 @@ if ($action === 'repo_loc') {
             'User-Agent: Sistema-UDA-PHP'
         ];
 
+        $redirectLocation = '';
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_FILE, $fh);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        curl_setopt($ch, CURLOPT_UNRESTRICTED_AUTH, true);
+        // Gestiamo il redirect manualmente: il token resta sull'API GitHub e
+        // non viene mai inoltrato al dominio codeload.
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($ch, CURLOPT_HEADERFUNCTION, static function ($curl, string $header) use (&$redirectLocation): int {
+            if (stripos($header, 'Location:') === 0) {
+                $redirectLocation = trim(substr($header, 9));
+            }
+            return strlen($header);
+        });
         curl_setopt($ch, CURLOPT_TIMEOUT, 120);
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 20);
         $ok = curl_exec($ch);
@@ -656,6 +664,27 @@ if ($action === 'repo_loc') {
         $curlErr = curl_error($ch);
         curl_close($ch);
         fclose($fh);
+
+        if ($ok && $httpCode >= 300 && $httpCode < 400) {
+            $redirectLocation = $redirectLocation ?: '';
+            $redirectParts = parse_url($redirectLocation);
+            if (($redirectParts['scheme'] ?? '') !== 'https' || strtolower((string)($redirectParts['host'] ?? '')) !== 'codeload.github.com') {
+                @unlink($tmpZip);
+                throw new Exception('Redirect GitHub non consentito');
+            }
+            $fh = fopen($tmpZip, 'wb');
+            $ch = curl_init($redirectLocation);
+            curl_setopt($ch, CURLOPT_FILE, $fh);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/vnd.github+json', 'User-Agent: Sistema-UDA-PHP']);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 120);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 20);
+            $ok = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlErr = curl_error($ch);
+            curl_close($ch);
+            fclose($fh);
+        }
 
         if (!$ok || $httpCode < 200 || $httpCode >= 300) {
             $bodySnippet = '';
@@ -690,14 +719,13 @@ if ($action === 'repo_loc') {
             throw new Exception('Impossibile creare cartella temporanea');
         }
 
-        $zip = new ZipArchive();
-        if ($zip->open($tmpZip) !== true) {
+        try {
+            \App\Core\Security\GitHubArchiveExtractor::extract($tmpZip, $extractDir);
+        } catch (\Throwable $archiveError) {
             @unlink($tmpZip);
             ghRemoveDirRecursive($extractDir);
-            throw new Exception('Impossibile aprire zip');
+            throw new Exception($archiveError->getMessage(), 0, $archiveError);
         }
-        $zip->extractTo($extractDir);
-        $zip->close();
         @unlink($tmpZip);
 
         $dirs = glob($extractDir . DIRECTORY_SEPARATOR . '*', GLOB_ONLYDIR);

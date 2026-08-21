@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Core;
 
 use RuntimeException;
+use App\Core\Security\UploadPolicy;
 
 /**
  * Gestisce file Excel/CSV usati come import, export o template.
@@ -73,6 +74,7 @@ final class SpreadsheetFileService
         if (!in_array($extension, $allowedExtensions, true)) {
             throw new RuntimeException("Tipo file non supportato: {$extension}");
         }
+        UploadPolicy::assertValid(basename($realPath), $realPath, 'spreadsheet');
 
         try {
             return \PhpOffice\PhpSpreadsheet\IOFactory::load($realPath);

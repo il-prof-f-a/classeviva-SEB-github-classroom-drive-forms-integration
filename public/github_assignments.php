@@ -10,6 +10,7 @@ use App\Integration\GitHubIntegration;
 use App\Core\Database\DatabaseFactory;
 use App\Core\ProviderNeutralMappingService;
 use App\Core\UDAManager;
+use App\Core\Security\Csrf;
 
 $pageTitle = "Gestione Assignment GitHub";
 
@@ -26,10 +27,13 @@ $isAuthenticated = $github->isAuthenticated();
 // Variabili
 $successMessage = null;
 $errorMessage = null;
+$csrfSession = &$_SESSION;
+$csrfToken = Csrf::token($csrfSession);
 
 // Gestione creazione nuovo assignment
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'create_assignment') {
     try {
+        Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? null);
         $idUda = $_POST['id_uda'] ?? '';
         $idClassroomMap = $_POST['id_classroom_map'] ?? '';
         $assignmentName = $_POST['assignment_name'] ?? '';
@@ -85,9 +89,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 }
 
 // Gestione eliminazione assignment
-if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete' && isset($_POST['id'])) {
     try {
-        $dbAdapter->deleteRow('GITHUB_ASSIGNMENTS', 'id_assignment', $_GET['id']);
+        Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? null);
+        $dbAdapter->deleteRow('GITHUB_ASSIGNMENTS', (string) $_POST['id'], 'id_assignment');
         $successMessage = "Assignment eliminato con successo!";
     } catch (Exception $e) {
         $errorMessage = "Errore nell'eliminazione: " . $e->getMessage();
@@ -95,11 +100,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
 }
 
 // Gestione pubblicazione singola su Google Classroom
-if (isset($_GET['action']) && $_GET['action'] === 'publish_gc' && isset($_GET['id'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'publish_gc' && isset($_POST['id'])) {
     try {
+        Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? null);
         // TODO: Implementare pubblicazione singola assignment su Google Classroom
         // Per ora segna solo come pubblicato
-        $dbAdapter->updateRow('GITHUB_ASSIGNMENTS', 'id_assignment', $_GET['id'], [
+        $dbAdapter->updateRow('GITHUB_ASSIGNMENTS', 'id_assignment', $_POST['id'], [
             'pubblicato_gc' => 'SI',
             'data_pubblicazione' => date('d/m/Y H:i:s')
         ]);
@@ -312,17 +318,19 @@ $filteredAssignments = array_filter($assignments, function($assignment) use ($fi
                                                     <i class="bi bi-github"></i> Apri
                                                 </a>
                                                 <?php if ($assignment['pubblicato_gc'] !== 'SI'): ?>
-                                                    <a href="?action=publish_gc&id=<?= urlencode($assignment['id_assignment']) ?>"
-                                                       class="btn btn-sm btn-success"
-                                                       onclick="return confirm('Pubblicare questo assignment su Google Classroom?')">
-                                                        <i class="bi bi-send"></i>
-                                                    </a>
+                                                    <form method="POST" class="d-inline" onsubmit="return confirm('Pubblicare questo assignment su Google Classroom?')">
+                                                        <input type="hidden" name="action" value="publish_gc">
+                                                        <input type="hidden" name="id" value="<?= htmlspecialchars($assignment['id_assignment'], ENT_QUOTES, 'UTF-8') ?>">
+                                                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                                                        <button type="submit" class="btn btn-sm btn-success"><i class="bi bi-send"></i></button>
+                                                    </form>
                                                 <?php endif; ?>
-                                                <a href="?action=delete&id=<?= urlencode($assignment['id_assignment']) ?>"
-                                                   class="btn btn-sm btn-outline-danger"
-                                                   onclick="return confirm('Eliminare questo assignment? (Non verrà eliminato da GitHub)')">
-                                                    <i class="bi bi-trash"></i>
-                                                </a>
+                                                <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo assignment? (Non verrà eliminato da GitHub)')">
+                                                    <input type="hidden" name="action" value="delete">
+                                                    <input type="hidden" name="id" value="<?= htmlspecialchars($assignment['id_assignment'], ENT_QUOTES, 'UTF-8') ?>">
+                                                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                                                    <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                                </form>
                                             </div>
                                         </div>
                                     </div>
@@ -343,6 +351,7 @@ $filteredAssignments = array_filter($assignments, function($assignment) use ($fi
                 <div class="card-body">
                     <form method="POST" action="">
                         <input type="hidden" name="action" value="create_assignment">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
 
                         <div class="row">
                             <div class="col-md-6 mb-3">

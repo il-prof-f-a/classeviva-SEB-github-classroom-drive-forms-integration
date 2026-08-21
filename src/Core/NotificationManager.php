@@ -6,6 +6,7 @@ use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception as PHPMailerException;
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
+use App\Core\Security\OutboundUrlPolicy;
 
 /**
  * Gestisce l'invio di notifiche (email, etc.)
@@ -131,9 +132,19 @@ class NotificationManager
 
         $emailConfig = $this->config['notifications']['email'];
 
+        $smtpHost = strtolower(trim((string)($emailConfig['smtp_host'] ?? '')));
+        $allowedPorts = $emailConfig['smtp_allowed_ports'] ?? [465, 587];
+        if (is_string($allowedPorts)) {
+            $allowedPorts = array_map('intval', preg_split('/\s*,\s*/', $allowedPorts, -1, PREG_SPLIT_NO_EMPTY));
+        }
+        (new OutboundUrlPolicy([$smtpHost], $allowedPorts))->assertAllowed(
+            'https://' . (filter_var($smtpHost, FILTER_VALIDATE_IP) ? '[' . $smtpHost . ']' : $smtpHost)
+            . ':' . (int)($emailConfig['smtp_port'] ?? 587)
+        );
+
         // Configurazione SMTP
         $mail->isSMTP();
-        $mail->Host = $emailConfig['smtp_host'];
+        $mail->Host = $smtpHost;
         $mail->SMTPAuth = true;
         $mail->Username = $emailConfig['smtp_user'];
         $mail->Password = $emailConfig['smtp_password'];

@@ -7,6 +7,7 @@
 require_once '../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
+use App\Core\Security\Csrf;
 
 $pageTitle = "Gestione Repository Template";
 
@@ -15,10 +16,13 @@ $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 
 $successMessage = null;
 $errorMessage = null;
+$csrfSession = &$_SESSION;
+$csrfToken = Csrf::token($csrfSession);
 
 // Gestione salvataggio nuovo template
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_template') {
     try {
+        Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? null);
         $nome = trim($_POST['nome'] ?? '');
         $urlRepository = trim($_POST['url_repository'] ?? '');
         $descrizione = trim($_POST['descrizione'] ?? '');
@@ -69,15 +73,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 }
 
 // Gestione modifica stato (attivo/inattivo)
-if (isset($_GET['action']) && $_GET['action'] === 'toggle_status' && isset($_GET['id'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'toggle_status' && isset($_POST['id'])) {
     try {
+        Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? null);
         $templates = $dbAdapter->findAll('GITHUB_REPO_TEMPLATES');
         foreach ($templates as $index => $tmpl) {
-            if ($tmpl['id_template'] === $_GET['id']) {
+            if ($tmpl['id_template'] === $_POST['id']) {
                 $newStatus = $tmpl['attivo'] === 'si' ? 'no' : 'si';
                 $tmpl['attivo'] = $newStatus;
                 $tmpl['ultima_modifica'] = date('d/m/Y H:i:s');
-                $dbAdapter->updateRow('GITHUB_REPO_TEMPLATES', 'id_template', $_GET['id'], $tmpl);
+                $dbAdapter->updateRow('GITHUB_REPO_TEMPLATES', 'id_template', $_POST['id'], $tmpl);
                 $successMessage = "Stato template aggiornato!";
                 break;
             }
@@ -88,9 +93,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'toggle_status' && isset($_GET
 }
 
 // Gestione eliminazione template
-if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete' && isset($_POST['id'])) {
     try {
-        $dbAdapter->deleteRow('GITHUB_REPO_TEMPLATES', 'id_template', $_GET['id']);
+        Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? null);
+        $dbAdapter->deleteRow('GITHUB_REPO_TEMPLATES', (string) $_POST['id'], 'id_template');
         $successMessage = "Template eliminato con successo!";
     } catch (Exception $e) {
         $errorMessage = "Errore nell'eliminazione: " . $e->getMessage();
@@ -236,17 +242,18 @@ $linguaggiDisponibili = [
                                             </td>
                                             <td>
                                                 <div class="btn-group" role="group">
-                                                    <a href="?action=toggle_status&id=<?= urlencode($template['id_template']) ?>"
-                                                       class="btn btn-sm btn-outline-<?= $template['attivo'] === 'si' ? 'warning' : 'success' ?>"
-                                                       title="<?= $template['attivo'] === 'si' ? 'Disattiva' : 'Attiva' ?>">
-                                                        <i class="bi bi-<?= $template['attivo'] === 'si' ? 'pause' : 'play' ?>-circle"></i>
-                                                    </a>
-                                                    <a href="?action=delete&id=<?= urlencode($template['id_template']) ?>"
-                                                       class="btn btn-sm btn-outline-danger"
-                                                       onclick="return confirm('Sei sicuro di voler eliminare questo template?')"
-                                                       title="Elimina">
-                                                        <i class="bi bi-trash"></i>
-                                                    </a>
+                                                    <form method="POST" class="d-inline">
+                                                        <input type="hidden" name="action" value="toggle_status">
+                                                        <input type="hidden" name="id" value="<?= htmlspecialchars($template['id_template'], ENT_QUOTES, 'UTF-8') ?>">
+                                                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                                                        <button type="submit" class="btn btn-sm btn-outline-<?= $template['attivo'] === 'si' ? 'warning' : 'success' ?>" title="<?= $template['attivo'] === 'si' ? 'Disattiva' : 'Attiva' ?>"><i class="bi bi-<?= $template['attivo'] === 'si' ? 'pause' : 'play' ?>-circle"></i></button>
+                                                    </form>
+                                                    <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo template?')">
+                                                        <input type="hidden" name="action" value="delete">
+                                                        <input type="hidden" name="id" value="<?= htmlspecialchars($template['id_template'], ENT_QUOTES, 'UTF-8') ?>">
+                                                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Elimina"><i class="bi bi-trash"></i></button>
+                                                    </form>
                                                 </div>
                                             </td>
                                         </tr>
@@ -268,6 +275,7 @@ $linguaggiDisponibili = [
                 <div class="card-body">
                     <form method="POST" action="">
                         <input type="hidden" name="action" value="add_template">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
 
                         <div class="row">
                             <div class="col-md-6 mb-3">

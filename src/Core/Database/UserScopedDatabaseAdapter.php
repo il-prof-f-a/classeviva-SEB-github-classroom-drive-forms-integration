@@ -69,11 +69,11 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
 
         $columns = SchemaDefinitions::getSheetColumns($sheetName) ?? [];
 
-        if (in_array('id_utente', $columns, true)) {
-            return 'id_utente';
+        // Le colonne custom esplicite prevalgono sul campo legacy id_utente.
+        if (isset(self::OWNER_COLUMNS[$sheetName])) {
+            return self::OWNER_COLUMNS[$sheetName];
         }
-
-        return self::OWNER_COLUMNS[$sheetName] ?? null;
+        return in_array('id_utente', $columns, true) ? 'id_utente' : null;
     }
 
     /**
@@ -86,11 +86,8 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
             return $where;
         }
 
-        // Se il chiamante non specifica esplicitamente la colonna utente,
-        // aggiungiamo il filtro sull'utente corrente.
-        if (!array_key_exists($ownerColumn, $where)) {
-            $where[$ownerColumn] = $this->userId;
-        }
+        // Il chiamante non può sostituire il proprietario richiesto.
+        $where[$ownerColumn] = $this->userId;
 
         return $where;
     }
@@ -166,9 +163,8 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
         $ownerColumn = $this->getOwnerColumn($sheetName);
         if ($ownerColumn !== null && $row !== null) {
             // Se la riga non appartiene all'utente corrente, non la esponiamo
-            if (isset($row[$ownerColumn]) && $row[$ownerColumn] !== $this->userId) {
-                return null;
-            }
+            if (!array_key_exists($ownerColumn, $row)
+                || (string)$row[$ownerColumn] !== $this->userId) return null;
         }
 
         return $row;
@@ -194,15 +190,7 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
         if ($ownerColumn !== null) {
             // Per alcune tabelle (es. UDA_ANAGRAFICA, INTEGRAZIONI_UTENTE) vogliamo
             // che il proprietario sia sempre l'utente corrente, anche in fase di import.
-            if ($sheetName === 'UDA_ANAGRAFICA' || $sheetName === 'INTEGRAZIONI_UTENTE') {
-                $data[$ownerColumn] = $this->userId;
-            } else {
-                // Per le altre, se il chiamante non ha specificato esplicitamente
-                // il proprietario, lo impostiamo all'utente corrente.
-                if (!isset($data[$ownerColumn])) {
-                    $data[$ownerColumn] = $this->userId;
-                }
-            }
+            $data[$ownerColumn] = $this->userId;
         }
 
         return $this->inner->insertRow($sheetName, $data);
@@ -227,7 +215,8 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
             if ($existing === null) {
                 return false;
             }
-            if (isset($existing[$ownerColumn]) && $existing[$ownerColumn] !== $this->userId) {
+            if (!array_key_exists($ownerColumn, $existing)
+                || (string)$existing[$ownerColumn] !== $this->userId) {
                 // Riga di un altro utente: non aggiornare
                 return false;
             }
@@ -254,7 +243,8 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
             if ($existing === null) {
                 return false;
             }
-            if (isset($existing[$ownerColumn]) && $existing[$ownerColumn] !== $this->userId) {
+            if (!array_key_exists($ownerColumn, $existing)
+                || (string)$existing[$ownerColumn] !== $this->userId) {
                 // Riga di un altro utente: non eliminare
                 return false;
             }

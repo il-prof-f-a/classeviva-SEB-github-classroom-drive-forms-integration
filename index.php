@@ -7,6 +7,7 @@
 require_once __DIR__ . '/bootstrap.php';
 
 use App\Core\NotificationManager;
+use App\Core\Security\RateLimiter;
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -19,11 +20,19 @@ if (empty($_SESSION['test_access_csrf'])) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'request_test_update') {
+    $rateLimiter = new RateLimiter(ROOT_PATH . '/storage/rate_limits');
+    if (!$rateLimiter->allow('newsletter:' . ($_SERVER['REMOTE_ADDR'] ?? 'unknown'), 5, 3600)) {
+        http_response_code(429);
+        header('Retry-After: 3600');
+        $testAccessError = 'Troppe richieste. Riprova più tardi.';
+    }
     $csrf = (string)($_POST['test_access_csrf'] ?? '');
     $subscriberEmail = strtolower(trim((string)($_POST['subscriber_email'] ?? '')));
     $privacyAccepted = ($_POST['updates_privacy_consent'] ?? '') === '1';
 
-    if (!hash_equals((string)$_SESSION['test_access_csrf'], $csrf)) {
+    if ($testAccessError !== null) {
+        // rate limited
+    } elseif (!hash_equals((string)$_SESSION['test_access_csrf'], $csrf)) {
         $testAccessError = 'La richiesta è scaduta. Ricarica la pagina e riprova.';
     } elseif (!filter_var($subscriberEmail, FILTER_VALIDATE_EMAIL)) {
         $testAccessError = 'Inserisci un indirizzo email valido.';
@@ -174,4 +183,3 @@ if (isset($_SESSION['user_id'])) {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
-

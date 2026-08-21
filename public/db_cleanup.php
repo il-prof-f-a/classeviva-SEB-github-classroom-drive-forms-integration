@@ -12,6 +12,12 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\SchemaDefinitions;
 use App\Core\Database\DatabaseFactory;
+use App\Core\Security\Authorization;
+use App\Core\Security\Csrf;
+
+Authorization::assertAdmin($_SESSION, array_filter(array_map('trim', explode(',', (string)env('ADMIN_EMAILS', '')))));
+$csrfSession = &$_SESSION;
+$csrfToken = Csrf::token($csrfSession);
 
 $db = DatabaseFactory::createWithInitialization($config, true);
 
@@ -55,6 +61,7 @@ if ($selectedTable) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete') {
+    Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? null);
     $selectedTable = $_POST['table'] ?? null;
     $primaryKey = getPrimaryKeyFor($selectedTable) ?? 'id';
     $ids = $_POST['rows'] ?? [];
@@ -139,6 +146,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
                 </div>
                 <form method="POST" class="mb-0" onsubmit="return confirm('Confermi la cancellazione delle righe selezionate?');">
                     <input type="hidden" name="action" value="delete">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                     <input type="hidden" name="table" value="<?= htmlspecialchars($selectedTable) ?>">
                     <button type="submit" class="btn btn-danger btn-sm">
                         <i class="bi bi-trash"></i> Cancella selezionate

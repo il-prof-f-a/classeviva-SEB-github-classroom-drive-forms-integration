@@ -11,6 +11,7 @@ use App\Core\UDAManager;
 use App\Core\ObiettiviManager;
 use App\Core\UserIntegrationManager;
 use App\Utils\UdaMetadataHelper;
+use App\Core\Security\Csrf;
 
 $db = DatabaseFactory::createWithInitialization($config, true);
 $udaManager = new UDAManager($config);
@@ -19,6 +20,8 @@ $obiettiviManager = new ObiettiviManager($db, $config);
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
+$csrfSession = &$_SESSION;
+$csrfToken = Csrf::token($csrfSession);
 $profName = '';
 $defaultProvider = '';
 if (!empty($_SESSION['user_id'])) {
@@ -101,19 +104,19 @@ try {
                 $key = 'drive:' . $mat['file_id_drive'];
                 if (!isset($attachmentsSeen[$key])) {
                     $attachmentsSeen[$key] = true;
-                    $attachmentsList[] = ['drive_file_id' => $mat['file_id_drive'], 'name' => $name];
+                    $attachmentsList[] = ['material_id' => (string)($mat['id_materiale'] ?? ''), 'drive_file_id' => $mat['file_id_drive'], 'name' => $name];
                 }
             } elseif (!empty($mat['url_drive']) && preg_match('#^https?://#', $mat['url_drive'])) {
                 $key = 'url:' . $mat['url_drive'];
                 if (!isset($attachmentsSeen[$key])) {
                     $attachmentsSeen[$key] = true;
-                    $attachmentsList[] = ['url' => $mat['url_drive'], 'name' => $name];
+                    $attachmentsList[] = ['material_id' => (string)($mat['id_materiale'] ?? ''), 'url' => $mat['url_drive'], 'name' => $name];
                 }
             } elseif (!empty($mat['local_path'])) {
                 $key = 'local:' . $mat['local_path'];
                 if (!isset($attachmentsSeen[$key])) {
                     $attachmentsSeen[$key] = true;
-                    $attachmentsList[] = ['relative_path' => $mat['local_path'], 'name' => $name];
+                    $attachmentsList[] = ['material_id' => (string)($mat['id_materiale'] ?? ''), 'relative_path' => $mat['local_path'], 'name' => $name];
                 }
             }
         }
@@ -365,7 +368,8 @@ include __DIR__ . '/partials/app_header.php';
     const responsePreview = document.getElementById('ai_response_preview');
     const importBtn = document.getElementById('ai_import_btn');
     const copyBtn = document.getElementById('ai_copy_btn');
-    const attachmentsList = <?= json_encode($attachmentsList, JSON_UNESCAPED_SLASHES) ?>;
+    const csrfToken = <?= json_encode($csrfToken, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    const attachmentsList = <?= json_encode($attachmentsList, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     const obiettiviList = <?= json_encode($obiettiviList, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
     const profName = "<?= addslashes($profName) ?>";
     const alertPlaceholder = document.createElement('div');
@@ -396,9 +400,13 @@ include __DIR__ . '/partials/app_header.php';
         const downloadAttachments = dlCheckbox ? dlCheckbox.checked : (hasAttachments && includeAttachments && !usePublic);
         return {
             provider: providerSelect.value,
+            uda_id: <?= json_encode($udaId, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>,
             model: modelSelect.value,
             use_public_links: usePublic,
             download_attachments: downloadAttachments,
+            material_ids: (includeAttachments && hasAttachments
+                ? Array.from(document.querySelectorAll('.ai-att:checked')).map(cb => attachmentsList[parseInt(cb.dataset.idx, 10)]?.material_id).filter(Boolean)
+                : []),
             attachments: (includeAttachments && hasAttachments
                 ? Array.from(document.querySelectorAll('.ai-att:checked')).map(cb => {
                     const idx = parseInt(cb.dataset.idx, 10);
@@ -460,7 +468,7 @@ include __DIR__ . '/partials/app_header.php';
         try {
             const res = await fetch('api_generate_questions.php', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
                 body: JSON.stringify({action: 'list_models', provider: prov})
             });
             const data = await res.json();
@@ -512,7 +520,7 @@ include __DIR__ . '/partials/app_header.php';
         try {
             const res = await fetch('api_generate_questions.php', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
                 body: JSON.stringify(payload)
             });
             const data = await res.json();
@@ -597,7 +605,7 @@ include __DIR__ . '/partials/app_header.php';
             const timer = setTimeout(() => controller.abort(), 120000); // timeout 120s
             const res = await fetch('api_generate_questions.php', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
                 body: JSON.stringify(payload),
                 signal: controller.signal
             });

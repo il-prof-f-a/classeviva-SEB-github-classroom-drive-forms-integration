@@ -34,7 +34,8 @@
     }
   },
   "scripts": {
-    "test": "php tests/run.php"
+    "test": "php tests/run.php",
+    "security": "composer validate --strict --no-check-publish && composer audit --locked && php tests/run.php"
   },
   "config": {
     "optimize-autoloader": true,

@@ -25,6 +25,8 @@ use App\Core\GoogleTokenProvider;
 use Google\Client;
 use Google\Service\Forms;
 use Google\Service\Drive;
+use App\Core\Security\Authorization;
+use App\Core\Security\Csrf;
 
 header('Content-Type: application/json');
 
@@ -40,7 +42,15 @@ function jsonResponse($success, $message = '', $data = null, $error = null) {
 }
 
 try {
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        session_start();
+    }
+    Authorization::assertAdmin($_SESSION, array_filter(array_map('trim', explode(',', (string)env('ADMIN_EMAILS', '')))));
     $action = $_POST['action'] ?? '';
+
+    if (in_array($action, ['run_test', 'cleanup'], true)) {
+        Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? null);
+    }
 
     if ($action === 'load_data') {
         handleLoadData($config);

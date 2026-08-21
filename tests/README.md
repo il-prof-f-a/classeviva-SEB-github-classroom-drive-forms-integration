@@ -6,6 +6,19 @@ La suite non richiede PHPUnit. Dalla root della repository:
 php tests/run.php
 ```
 
+Prima di un rilascio eseguire anche la baseline Composer/runtime:
+
+```bash
+composer validate --strict
+composer install --no-interaction --prefer-dist
+composer audit --locked
+php tests/run.php
+```
+
+La baseline di sicurezza richiede PHP 8.2--8.4, le estensioni runtime dichiarate
+nel `composer.json`, `vendor/autoload.php` completo e una `ENCRYPTION_KEY` in ogni
+ambiente non di test.
+
 Copre il contratto di pubblicabilità: file di distribuzione, asset applicativi, lint PHP, include letterali, configurazione `.env`, endpoint diagnostici, URL specifici dello staging, autoload Composer e regole Git. La suite verifica anche il ciclo ClasseViva session-only: scambio token REST verso `PHPSESSID`, assenza di credenziali e token nel database, timeout, rinnovo e logout.
 
 Il test di integrazione MySQL viene eseguito separatamente tramite Docker Compose e `scripts/setup_database.php --validate`.

@@ -12,8 +12,25 @@ require_once __DIR__ . '/../bootstrap.php';
 use App\Core\ClasseVivaTokenGuard;
 use App\Integration\ClasseVivaAPI;
 use App\Core\Database\DatabaseFactory;
+use App\Core\Security\Authorization;
+use App\Core\Security\Csrf;
 
 error_reporting(E_ALL);
+
+if (PHP_SAPI !== 'cli') {
+    try {
+        Authorization::assertAdmin($_SESSION, array_filter(array_map('trim', explode(',', (string)env('ADMIN_EMAILS', '')))));
+        if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? '')) !== 'POST') {
+            http_response_code(405);
+            header('Allow: POST');
+            exit('Metodo non consentito');
+        }
+        Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? null);
+    } catch (Throwable $error) {
+        http_response_code(403);
+        exit('Operazione non autorizzata');
+    }
+}
 
 echo "\n🗑️  CANCELLAZIONE VOTI STUDENTE\n";
 echo str_repeat("=", 80) . "\n\n";
