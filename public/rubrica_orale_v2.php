@@ -727,37 +727,85 @@ if ($action === 'salva_valutazione_studente') {
 }
 
 // ==== ACTION: Elimina valutazione studente ====
-	if ($action === 'elimina_valutazione') {
-	    $idStudente = $_POST['id_studente'] ?? null;
-	    $idUda = $_POST['id_uda'] ?? $idUdaDaGet;
-	    $idClasse = $_POST['id_classe'] ?? $idClasseDaGet;
-	    $idRubrica = $_POST['id_rubrica'] ?? null;
+if ($action === 'elimina_valutazione') {
+    $idStudente = trim((string)($_POST['id_studente'] ?? ''));
+    $idUda = $_POST['id_uda'] ?? $idUdaDaGet;
+    $idClasse = $_POST['id_classe'] ?? $idClasseDaGet;
+    $idRubrica = $_POST['id_rubrica'] ?? null;
+    $idGruppo = trim((string)($_POST['id_gruppo'] ?? ''));
 
-	    if ($idStudente && $idUda && $idClasse) {
-	        // Trova la valutazione nel database
-	        $where = [
-	            'id_uda' => $idUda,
-	            'id_classe_cv' => $idClasse,
-	            'id_studente_cv' => $idStudente
-	        ];
-    if (!empty($idRubrica)) {
-        $where['id_rubrica'] = $idRubrica;
-	    }
-	    $valutazioni = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $where);
-
-        if (!empty($valutazioni)) {
-            $idValutazione = $valutazioni[0]['id_valutazione'];
-            $dbAdapter->deleteRow('VALUTAZIONI_RUBRICA', $idValutazione, 'id_valutazione');
-            $message = "Valutazione eliminata con successo";
+    // I link provider-neutral possono non avere id_classe: risolviamo il gruppo
+    // dall'id_gruppo esplicito o dall'assegnazione UDA (come il salvataggio).
+    if ($idGruppo === '' && $idUda !== '') {
+        $assegnazioniUda = $udaGroupRepository->listForUda((string)$idUda);
+        if (count($assegnazioniUda) === 1) {
+            $idGruppo = trim((string)($assegnazioniUda[0]['id_gruppo'] ?? ''));
         } else {
-            $error = "Valutazione non trovata";
+            foreach ($assegnazioniUda as $assegnazione) {
+                $candidateGroup = trim((string)($assegnazione['id_gruppo'] ?? ''));
+                if ($candidateGroup === '') {
+                    continue;
+                }
+                if ($candidateGroup === (string)$idClasse) {
+                    $idGruppo = $candidateGroup;
+                    break;
+                }
+                $cvIntegration = $teachingGroupIntegrationRepository->findForGroupProvider($candidateGroup, 'classeviva');
+                if ($cvIntegration !== null && (string)($cvIntegration['external_context_id'] ?? '') === (string)$idClasse) {
+                    $idGruppo = $candidateGroup;
+                    break;
+                }
+            }
         }
-    } else {
-        $error = "Dati insufficienti per eliminare la valutazione";
     }
 
-    // Redirect per ricaricare la pagina con i dati aggiornati
-    header("Location: rubrica_orale_v2.php?id_uda=$idUda&id_classe=$idClasse");
+    $valutazioni = [];
+    if ($idStudente !== '' && $idUda) {
+        // Prima provider-neutral (id_gruppo + id_studente interno).
+        $where = ['id_uda' => $idUda];
+        if ($idGruppo !== '') {
+            $where['id_gruppo'] = $idGruppo;
+            $where['id_studente'] = $idStudente;
+        } else {
+            $where['id_classe_cv'] = $idClasse;
+            $where['id_studente_cv'] = $idStudente;
+        }
+        if (!empty($idRubrica)) {
+            $where['id_rubrica'] = $idRubrica;
+        }
+        $valutazioni = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $where);
+
+        // Fallback legacy (valutazioni non ancora migrate al gruppo).
+        if (empty($valutazioni) && $idGruppo !== '') {
+            $legacyWhere = [
+                'id_uda' => $idUda,
+                'id_classe_cv' => $idClasse,
+                'id_studente_cv' => $idStudente,
+            ];
+            if (!empty($idRubrica)) {
+                $legacyWhere['id_rubrica'] = $idRubrica;
+            }
+            $valutazioni = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $legacyWhere);
+        }
+    }
+
+    if (!empty($valutazioni)) {
+        foreach ($valutazioni as $valutazione) {
+            $idValutazione = $valutazione['id_valutazione'] ?? null;
+            if ($idValutazione !== null && $idValutazione !== '') {
+                $dbAdapter->deleteRow('VALUTAZIONI_RUBRICA', $idValutazione, 'id_valutazione');
+            }
+        }
+        $message = "Valutazione eliminata con successo";
+    } elseif ($idStudente === '' || !$idUda) {
+        $error = "Dati insufficienti per eliminare la valutazione";
+    } else {
+        $error = "Valutazione non trovata";
+    }
+
+    // Redirect per ricaricare la pagina con i dati aggiornati.
+    $redirectGroup = $idGruppo !== '' ? '&id_gruppo=' . rawurlencode($idGruppo) : '';
+    header("Location: rubrica_orale_v2.php?id_uda=" . rawurlencode((string)$idUda) . "&id_classe=" . rawurlencode((string)$idClasse) . $redirectGroup);
     exit;
 }
 
@@ -1201,22 +1249,61 @@ if ($action === 'cancella_registrati_blocco') {
 
     $idUda = $_POST['id_uda'] ?? null;
     $idClasse = $_POST['id_classe'] ?? null;
+    $idRubrica = $_POST['id_rubrica'] ?? null;
+    $idGruppo = trim((string)($_POST['id_gruppo'] ?? ''));
     $votiPayload = $_POST['voti'] ?? null;
 
-    if (!$idUda || !$idClasse) {
+    // I link provider-neutral possono non avere id_classe: risolviamo il gruppo
+    // dall'id_gruppo esplicito o dall'assegnazione UDA.
+    if ($idGruppo === '' && $idUda !== null && $idUda !== '') {
+        $assegnazioniUda = $udaGroupRepository->listForUda((string)$idUda);
+        if (count($assegnazioniUda) === 1) {
+            $idGruppo = trim((string)($assegnazioniUda[0]['id_gruppo'] ?? ''));
+        } else {
+            foreach ($assegnazioniUda as $assegnazione) {
+                $candidateGroup = trim((string)($assegnazione['id_gruppo'] ?? ''));
+                if ($candidateGroup === '') {
+                    continue;
+                }
+                if ($candidateGroup === (string)$idClasse) {
+                    $idGruppo = $candidateGroup;
+                    break;
+                }
+                $cvIntegration = $teachingGroupIntegrationRepository->findForGroupProvider($candidateGroup, 'classeviva');
+                if ($cvIntegration !== null && (string)($cvIntegration['external_context_id'] ?? '') === (string)$idClasse) {
+                    $idGruppo = $candidateGroup;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!$idUda) {
         echo json_encode(['success' => false, 'message' => 'Dati mancanti']);
         exit;
     }
 
-    // Seleziona valutazioni già pubblicate (pubblicato_cv = 1) per questa UDA/classe
-	    $where = [
-	        'id_uda' => $idUda,
-	        'id_classe_cv' => $idClasse
-	    ];
-	    if (!empty($idRubrica)) {
-	        $where['id_rubrica'] = $idRubrica;
-	    }
+    // Seleziona valutazioni già pubblicate (pubblicato_cv = 1) per questa UDA/gruppo.
+    $where = ['id_uda' => $idUda];
+    if ($idGruppo !== '') {
+        $where['id_gruppo'] = $idGruppo;
+    } else {
+        $where['id_classe_cv'] = $idClasse;
+    }
+    if (!empty($idRubrica)) {
+        $where['id_rubrica'] = $idRubrica;
+    }
     $daCancellare = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $where);
+
+    // Fallback legacy (valutazioni non migrate al gruppo).
+    if (empty($daCancellare) && $idGruppo !== '' && $idClasse !== null && $idClasse !== '') {
+        $legacyWhere = ['id_uda' => $idUda, 'id_classe_cv' => $idClasse];
+        if (!empty($idRubrica)) {
+            $legacyWhere['id_rubrica'] = $idRubrica;
+        }
+        $daCancellare = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $legacyWhere);
+    }
+
     $selectedIds = [];
     if (!empty($votiPayload)) {
         $decoded = json_decode($votiPayload, true);
@@ -1239,7 +1326,10 @@ if ($action === 'cancella_registrati_blocco') {
 
     if (!empty($selectedIds)) {
         $daCancellare = array_filter($daCancellare, function($v) use ($selectedIds) {
-            return in_array((string)($v['id_studente_cv'] ?? ''), $selectedIds, true);
+            $internal = (string)($v['id_studente'] ?? '');
+            $legacy = (string)($v['id_studente_cv'] ?? '');
+            return ($internal !== '' && in_array($internal, $selectedIds, true))
+                || ($legacy !== '' && in_array($legacy, $selectedIds, true));
         });
     } else {
         $daCancellare = array_filter($daCancellare, function($v) {
@@ -2707,6 +2797,8 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                 'action': 'elimina_valutazione',
                 'id_uda': idUda,
                 'id_classe': idClasse,
+                'id_gruppo': document.querySelector('input[name="id_gruppo"]')?.value || '',
+                'id_rubrica': getRubricaId(),
                 'id_studente': idStudente
             };
 
@@ -2714,7 +2806,7 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                 const input = document.createElement('input');
                 input.type = 'hidden';
                 input.name = key;
-                input.value = fields[key];
+                input.value = fields[key] || '';
                 form.appendChild(input);
             }
 
@@ -2791,12 +2883,16 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
             const urlParams = new URLSearchParams(window.location.search);
             const idUda = urlParams.get('id_uda');
             const idClasse = urlParams.get('id_classe');
+            const idGruppo = document.querySelector('input[name="id_gruppo"]')?.value || urlParams.get('id_gruppo') || '';
             const params = [];
             if (idUda) {
                 params.push(`id_uda=${encodeURIComponent(idUda)}`);
             }
             if (idClasse) {
                 params.push(`id_classe=${encodeURIComponent(idClasse)}`);
+            }
+            if (idGruppo) {
+                params.push(`id_gruppo=${encodeURIComponent(idGruppo)}`);
             }
             params.push('voti_salvati=1');
             const targetUrl = `rubrica_orale_v2.php?${params.join('&')}`;
@@ -3064,6 +3160,7 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                     'action': 'cancella_registrati_blocco',
                     'id_uda': idUda,
                     'id_classe': idClasse,
+                    'id_gruppo': document.querySelector('input[name="id_gruppo"]')?.value || '',
                     'id_rubrica': idRubrica,
                     'voti': JSON.stringify(payload)
                 })
@@ -3088,7 +3185,8 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
             const urlParams = new URLSearchParams(window.location.search);
             const idUda = urlParams.get('id_uda');
             const idClasse = urlParams.get('id_classe');
-            if (!idClasse) {
+            const idGruppo = document.querySelector('input[name="id_gruppo"]')?.value || '';
+            if (!idClasse && !idGruppo) {
                 alert('Seleziona prima una classe');
                 return;
             }
@@ -3103,7 +3201,9 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                 body: new URLSearchParams({
                     'action': 'cancella_registrati_blocco',
                     'id_uda': idUda,
-                    'id_classe': idClasse
+                    'id_classe': idClasse,
+                    'id_gruppo': idGruppo,
+                    'id_rubrica': getRubricaId()
                 })
             })
             .then(response => response.json())

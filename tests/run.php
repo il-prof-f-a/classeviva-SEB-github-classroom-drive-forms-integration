@@ -536,6 +536,7 @@ $architectureTests = [
     'CV token gate on mapping pages' => __DIR__ . '/public/provider_neutral_gate.php',
     'resolver consumed' => __DIR__ . '/public/resolver_consumed.php',
     'rubrica orale provider-neutral' => __DIR__ . '/public/rubrica_orale_provider_neutral.php',
+    'rubrica orale delete provider-neutral' => __DIR__ . '/public/rubrica_orale_delete_provider_neutral.php',
     'laboratorio griglia provider-neutral' => __DIR__ . '/public/laboratorio_griglia_provider_neutral.php',
     'rubrica orale preselezione' => __DIR__ . '/public/rubrica_orale_preselezione.php',
     'rubrica orale riepilogo nomi' => __DIR__ . '/public/rubrica_orale_riepilogo_nomi.php',
