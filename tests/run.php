@@ -526,6 +526,7 @@ $architectureTests = [
     'uda grades publish summary' => __DIR__ . '/public/uda_grades_publish_summary.php',
     'github assignment provider-neutral' => __DIR__ . '/public/github_assignment_provider_neutral.php',
     'github review provider-neutral' => __DIR__ . '/public/github_review_provider_neutral.php',
+    'github review commit loc' => __DIR__ . '/public/github_review_commit_loc.php',
     'GitHub assignment roster' => __DIR__ . '/domain/github_assignment_roster.php',
     'GitHub assignment group roster' => __DIR__ . '/domain/github_assignment_group_roster.php',
     'GitHub assignment grade repos' => __DIR__ . '/domain/github_assignment_grade_repos.php',

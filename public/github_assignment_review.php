@@ -36,15 +36,15 @@ if ($requestMethod === 'POST' && str_contains(strtolower((string)($_SERVER['CONT
     $jsonRequest = is_array($decodedRequest) ? $decodedRequest : [];
 }
 $postAction = $requestMethod === 'POST' ? ($_POST['action'] ?? $jsonRequest['action'] ?? null) : null;
-if ($getAction === 'commit_details') {
+if ($postAction === 'commit_details') {
     try {
         if (!$isAuthenticated) {
             throw new Exception('Non autenticato su GitHub');
         }
 
-        $repoFull = trim((string)($_GET['repo'] ?? ''));
-        $sha = trim((string)($_GET['sha'] ?? ''));
-        $withComments = (string)($_GET['with_comments'] ?? '0') === '1';
+        $repoFull = trim((string)($_POST['repo'] ?? $jsonRequest['repo'] ?? ''));
+        $sha = trim((string)($_POST['sha'] ?? $jsonRequest['sha'] ?? ''));
+        $withComments = (string)($_POST['with_comments'] ?? $jsonRequest['with_comments'] ?? '0') === '1';
 
         if (!preg_match('~^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$~', $repoFull)) {
             throw new Exception('Repository non valido');
@@ -641,10 +641,6 @@ if ($postAction === 'repo_loc') {
         }
 
         $url = "https://api.github.com/repos/{$owner}/{$repo}/zipball/{$ref}";
-        $fh = fopen($tmpZip, 'wb');
-        if (!$fh) {
-            throw new Exception('Impossibile scrivere zip temporaneo');
-        }
 
         $headers = [
             'Authorization: Bearer ' . $token,
@@ -653,39 +649,31 @@ if ($postAction === 'repo_loc') {
             'User-Agent: Sistema-UDA-PHP'
         ];
 
-        $redirectLocation = '';
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_FILE, $fh);
-        // Gestiamo il redirect manualmente: il token resta sull'API GitHub e
-        // non viene mai inoltrato al dominio codeload.
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-        curl_setopt($ch, CURLOPT_HEADERFUNCTION, static function ($curl, string $header) use (&$redirectLocation): int {
-            if (stripos($header, 'Location:') === 0) {
-                $redirectLocation = trim(substr($header, 9));
-            }
-            return strlen($header);
-        });
-        curl_setopt($ch, CURLOPT_TIMEOUT, 120);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 20);
-        $ok = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlErr = curl_error($ch);
-        curl_close($ch);
-        fclose($fh);
-
-        if ($ok && $httpCode >= 300 && $httpCode < 400) {
-            $redirectLocation = $redirectLocation ?: '';
-            $redirectParts = parse_url($redirectLocation);
-            if (($redirectParts['scheme'] ?? '') !== 'https' || strtolower((string)($redirectParts['host'] ?? '')) !== 'codeload.github.com') {
-                @unlink($tmpZip);
-                throw new Exception('Redirect GitHub non consentito');
-            }
+        // Seguiamo i redirect manualmente: il token OAuth viene inviato solo alla
+        // prima richiesta (api.github.com) e non è mai inoltrato ai domini di
+        // download. Accettiamo un piccolo numero di hop HTTPS.
+        $redirectUrl = $url;
+        $downloaded = false;
+        $httpCode = 0;
+        $curlErr = '';
+        for ($hop = 0; $hop <= 5; $hop++) {
+            $redirectLocation = '';
             $fh = fopen($tmpZip, 'wb');
-            $ch = curl_init($redirectLocation);
+            if (!$fh) {
+                throw new Exception('Impossibile scrivere zip temporaneo');
+            }
+            $ch = curl_init($redirectUrl);
             curl_setopt($ch, CURLOPT_FILE, $fh);
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/vnd.github+json', 'User-Agent: Sistema-UDA-PHP']);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $hop === 0
+                ? $headers
+                : ['Accept: application/vnd.github+json', 'User-Agent: Sistema-UDA-PHP']);
+            curl_setopt($ch, CURLOPT_HEADERFUNCTION, static function ($curl, string $header) use (&$redirectLocation): int {
+                if (stripos($header, 'Location:') === 0) {
+                    $redirectLocation = trim(substr($header, 9));
+                }
+                return strlen($header);
+            });
             curl_setopt($ch, CURLOPT_TIMEOUT, 120);
             curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 20);
             $ok = curl_exec($ch);
@@ -693,9 +681,24 @@ if ($postAction === 'repo_loc') {
             $curlErr = curl_error($ch);
             curl_close($ch);
             fclose($fh);
+
+            if (!$ok) {
+                break;
+            }
+            if ($httpCode >= 300 && $httpCode < 400 && $redirectLocation !== '') {
+                $redirectParts = parse_url($redirectLocation);
+                if (($redirectParts['scheme'] ?? '') !== 'https') {
+                    @unlink($tmpZip);
+                    throw new Exception('Redirect GitHub non consentito');
+                }
+                $redirectUrl = $redirectLocation;
+                continue;
+            }
+            $downloaded = true;
+            break;
         }
 
-        if (!$ok || $httpCode < 200 || $httpCode >= 300) {
+        if (!$downloaded || $httpCode < 200 || $httpCode >= 300) {
             $bodySnippet = '';
             try {
                 if (is_file($tmpZip)) {
@@ -1759,13 +1762,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
             container.innerHTML = '<div class="text-muted">Caricamento…</div>';
 
-            const url = new URL(window.location.href);
-            url.searchParams.set('action', 'commit_details');
-            url.searchParams.set('repo', repoFull);
-            url.searchParams.set('sha', sha);
-            url.searchParams.set('with_comments', withComments ? '1' : '0');
-
-            const res = await fetch(url.toString(), {method: 'POST', headers: {'Accept': 'application/json'}});
+            const body = new URLSearchParams({action: 'commit_details', repo: repoFull, sha, with_comments: withComments ? '1' : '0'});
+            const res = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body});
             const data = await res.json();
 
             if (!data.ok) {
