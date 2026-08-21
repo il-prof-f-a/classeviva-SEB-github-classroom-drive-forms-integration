@@ -505,7 +505,9 @@ $tabStatus = [
         : (!empty($googleTokenStatus['exists']) ? 'warning' : 'missing'),
     'mail' => $statusMailOk ? 'valid' : 'missing',
     'ai' => $statusAiOk ? 'valid' : 'missing',
-    'github' => $statusGithubOk ? 'valid' : 'missing',
+    'github' => ($statusGithubOk && $githubIsAuthenticated)
+        ? 'valid'
+        : ($statusGithubOk ? 'warning' : 'missing'),
 ];
 
 $configurationIssue = !$classevivaTokenState['ready'] || !(!empty($googleTokenStatus['exists']) && !empty($googleTokenStatus['valid']) && !$googleMissingScopes);
@@ -727,7 +729,7 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
     $tabInfo = [
         'profile' => ['label' => 'Profilo / Scuola', 'hint' => htmlspecialchars($profileSchoolHint !== '' ? $profileSchoolHint : 'Nessuna scuola impostata')],
         'classeviva' => ['label' => 'ClasseViva', 'hint' => $shortenHint(htmlspecialchars($cvHint))],
-        'google' => ['label' => 'Google (Drive / Forms)', 'hint' => htmlspecialchars($googleHintText)],
+        'google' => ['label' => 'Google (Classroom, Drive e Forms)', 'hint' => htmlspecialchars($googleHintText)],
         'mail' => ['label' => 'Mail / Notifiche', 'hint' => htmlspecialchars($mailFromHint !== '' ? $mailFromHint : 'Mittente non impostato')],
         'ai' => ['label' => 'Intelligenza Artificiale', 'hint' => htmlspecialchars($aiHint)],
         'github' => ['label' => 'GitHub', 'hint' => 'Client ID: ' . htmlspecialchars($githubClientHint !== '' ? $githubClientHint : 'N/D')],
@@ -1080,7 +1082,7 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
             </div>
             <div class="card border-0 shadow-sm">
                 <div class="card-header">
-                    <h5 class="mb-0">Drive / Forms</h5>
+                    <h5 class="mb-0">Classroom, Drive e Forms</h5>
                 </div>
                 <div class="card-body">
                     <form method="POST">
