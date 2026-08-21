@@ -387,7 +387,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         . '<a href="uda_questions.php?id=' . urlencode($udaId) . '" class="btn btn-success btn-sm text-nowrap">'
         . '<i class="bi bi-question-circle"></i> Crea test con le domande</a>'
         . '<button class="btn btn-primary btn-sm text-nowrap" data-bs-toggle="modal" data-bs-target="#addTestModal" id="openAddTestBtn">'
-        . '<i class="bi bi-link-45deg"></i> Collega un test dal link</button>'
+        . '<i class="bi bi-link-45deg"></i> Collega un test esistente</button>'
         . '<a class="btn btn-github btn-sm text-nowrap" href="github_assignment_create.php?id_uda=' . urlencode($udaId) . '">'
         . '<i class="bi bi-github"></i> Crea assegnazione GitHub</a>'
         . '</div>';
@@ -459,7 +459,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             function renderTestCards($tests, $withAnchors = false) {
                 if (empty($tests)) {
                     echo '<div class="alert alert-info">';
-                    echo '<i class="bi bi-info-circle"></i> Nessun test trovato. Usa "Crea test con le domande" o "Collega un test dal link" per aggiungerne uno.';
+                    echo '<i class="bi bi-info-circle"></i> Nessun test trovato. Usa "Crea test con le domande" o "Collega un test esistente" per aggiungerne uno.';
                     echo '</div>';
                     return;
                 }
