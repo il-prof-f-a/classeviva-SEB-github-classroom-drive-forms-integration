@@ -386,12 +386,14 @@ function sortLink(string $field, string $label, string $currentField, string $cu
                             <a href="user_integrations.php" class="btn btn-outline-primary btn-sm">
                                 <i class="bi bi-person-badge"></i> Integrazioni Utente
                             </a>
+                            <?php if ($isDebugUser): ?>
                             <a href="database_manager.php" class="btn btn-outline-primary btn-sm">
                                 <i class="bi bi-database"></i> Gestione Database
                             </a>
                             <a href="db_cleanup.php" class="btn btn-outline-danger btn-sm" title="Cancella righe da una tabella">
                                 <i class="bi bi-trash"></i> Pulizia Tabelle DB
                             </a>
+                            <?php endif; ?>
                             <a href="google_auth.php" class="btn btn-outline-primary btn-sm">
                                 <i class="bi bi-google"></i> Autenticazione Google
                             </a>
@@ -468,6 +470,7 @@ function sortLink(string $field, string $label, string $currentField, string $cu
                 </div>
             </div>
 
+            <?php if ($isDebugUser): ?>
             <!-- Test & Debug -->
             <div class="<?= $dashboardColClass ?> mb-3">
                 <button type="button"
@@ -489,23 +492,17 @@ function sortLink(string $field, string $label, string $currentField, string $cu
                                 <i class="bi bi-plug"></i> Test Integrazioni API
                                 <span class="badge bg-dark text-warning float-end">Consigliato</span>
                             </a>
-                            <?php if ($isDebugUser): ?>
-                                <a href="test.php" class="btn btn-outline-warning btn-sm">
-                                    <i class="bi bi-clipboard-check"></i> Test Sistema
-                                </a>
-                                <a href="system_status.php" class="btn btn-outline-warning btn-sm">
-                                    <i class="bi bi-speedometer2"></i> Stato Sistema Avanzato
-                                </a>
-                            <?php endif; ?>
+                            <a href="test.php" class="btn btn-outline-warning btn-sm">
+                                <i class="bi bi-clipboard-check"></i> Test Sistema
+                            </a>
+                            <a href="system_status.php" class="btn btn-outline-warning btn-sm">
+                                <i class="bi bi-speedometer2"></i> Stato Sistema Avanzato
+                            </a>
                         </div>
-                        <?php if (!$isDebugUser): ?>
-                            <div class="small text-muted mt-2">
-                                Alcune voci di debug avanzato sono riservate all'amministratore.
-                            </div>
-                        <?php endif; ?>
                     </div>
                 </div>
             </div>
+            <?php endif; ?>
         </div>
         <div class="card">
             <div class="card-header">
