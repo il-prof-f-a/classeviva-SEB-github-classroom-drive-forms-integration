@@ -26,6 +26,7 @@ use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\UdaGroupRepository;
 use App\Core\Security\PublicError;
 use App\Integration\ClasseVivaAPI;
+use App\Integration\GitHubIntegration;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 $udaManager = new UDAManager($config);
@@ -58,6 +59,30 @@ if (($groupId === null || $groupId === '') && $udaId) {
     $assignments = $udaGroupRepo->listForUda((string)$udaId);
     if (count($assignments) === 1) {
         $groupId = trim((string)($assignments[0]['id_gruppo'] ?? '')) ?: null;
+    }
+}
+
+// Rileva se l'elenco studenti dipende dalle sole credenziali GitHub Classroom.
+$githubStudentListAuthNeeded = false;
+$githubAuthUrl = null;
+if ($groupId !== null && $groupId !== '') {
+    $activeProviders = [];
+    foreach ($integrationRepo->listForGroup((string)$groupId) as $integration) {
+        if (($integration['stato'] ?? 'attivo') !== 'disattivo') {
+            $activeProviders[(string)($integration['provider'] ?? '')] = true;
+        }
+    }
+    $activeProviders = array_keys($activeProviders);
+    if (count($activeProviders) === 1 && ($activeProviders[0] ?? '') === 'github_classroom') {
+        $githubIntegration = new GitHubIntegration($config);
+        if (!$githubIntegration->loadTokenFromSession() || !$githubIntegration->isAuthenticated()) {
+            $githubStudentListAuthNeeded = true;
+            try {
+                $githubAuthUrl = $githubIntegration->getAuthorizationUrl(null, (string)($_SERVER['REQUEST_URI'] ?? 'laboratorio_griglia.php'));
+            } catch (Throwable $ignored) {
+                $githubAuthUrl = null;
+            }
+        }
     }
 }
 
@@ -873,6 +898,13 @@ try {
         <?php if ($message): ?>
             <div class="alert alert-success">
                 <i class="bi bi-check-circle"></i> <?= htmlspecialchars($message) ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($githubStudentListAuthNeeded): ?>
+            <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <span><i class="bi bi-github"></i> L'elenco degli studenti dipende dalle credenziali GitHub Classroom. Autorizza GitHub per visualizzarlo.</span>
+                <a href="<?= htmlspecialchars((string)$githubAuthUrl) ?>" class="btn btn-sm btn-dark"><i class="bi bi-github"></i> Autorizza GitHub</a>
             </div>
         <?php endif; ?>
 

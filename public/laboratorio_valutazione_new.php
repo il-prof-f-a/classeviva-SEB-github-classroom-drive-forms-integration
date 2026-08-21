@@ -26,6 +26,7 @@ use App\Core\UdaGroupRepository;
 use App\Core\TeachingGroupRepository;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Integration\ClasseVivaAPI;
+use App\Integration\GitHubIntegration;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 $udaManager = new UDAManager($config);
@@ -83,6 +84,30 @@ if ($udaId) {
             $idMateriaCV = trim((string)($integration['external_subject_id'] ?? ''));
             if ($gruppoClasse === '' && !empty($integration['external_name'])) {
                 $gruppoClasse = trim((string)$integration['external_name']);
+            }
+        }
+    }
+}
+
+// Rileva se l'elenco studenti dipende dalle sole credenziali GitHub Classroom.
+$githubStudentListAuthNeeded = false;
+$githubAuthUrl = null;
+if ($gruppoId !== '') {
+    $activeProviders = [];
+    foreach ((new TeachingGroupIntegrationRepository($dbAdapter, $userId))->listForGroup($gruppoId) as $integration) {
+        if (($integration['stato'] ?? 'attivo') !== 'disattivo') {
+            $activeProviders[(string)($integration['provider'] ?? '')] = true;
+        }
+    }
+    $activeProviders = array_keys($activeProviders);
+    if (count($activeProviders) === 1 && ($activeProviders[0] ?? '') === 'github_classroom') {
+        $githubIntegration = new GitHubIntegration($config);
+        if (!$githubIntegration->loadTokenFromSession() || !$githubIntegration->isAuthenticated()) {
+            $githubStudentListAuthNeeded = true;
+            try {
+                $githubAuthUrl = $githubIntegration->getAuthorizationUrl(null, (string)($_SERVER['REQUEST_URI'] ?? 'laboratorio_valutazione_new.php'));
+            } catch (Throwable $ignored) {
+                $githubAuthUrl = null;
             }
         }
     }
@@ -260,6 +285,13 @@ $username = $_SESSION['username'] ?? 'docente';
                 <a href="teaching_groups.php?return_to=<?= urlencode('laboratorio_valutazione_new.php?id_uda=' . $udaId) ?>" class="btn btn-sm btn-outline-warning">
                     <i class="bi bi-link-45deg"></i> Vai ai mapping
                 </a>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($githubStudentListAuthNeeded): ?>
+            <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <span><i class="bi bi-github"></i> L'elenco degli studenti dipende dalle credenziali GitHub Classroom. Autorizza GitHub per visualizzarlo.</span>
+                <a href="<?= htmlspecialchars((string)$githubAuthUrl) ?>" class="btn btn-sm btn-dark"><i class="bi bi-github"></i> Autorizza GitHub</a>
             </div>
         <?php endif; ?>
 

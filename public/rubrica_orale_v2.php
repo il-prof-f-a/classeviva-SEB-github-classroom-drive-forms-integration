@@ -26,6 +26,7 @@ use App\Core\RuntimeStudentNameService;
 use App\Core\Security\PublicError;
 use App\Integration\ClasseVivaAPI;
 use App\Integration\GoogleDriveAPI;
+use App\Integration\GitHubIntegration;
 
 $config = require_once __DIR__ . '/../bootstrap.php';
 
@@ -1591,6 +1592,31 @@ if ($gruppoSelezionatoId === '' && $idClasseDaGet !== null) {
     }
 }
 
+// Rileva se l'elenco studenti dipende dalle sole credenziali GitHub Classroom:
+// in tal caso serve un banner informativo con il pulsante di autenticazione.
+$githubStudentListAuthNeeded = false;
+$githubAuthUrl = null;
+if ($gruppoSelezionatoId !== '') {
+    $activeProviders = [];
+    foreach ($teachingGroupIntegrationRepository->listForGroup($gruppoSelezionatoId) as $integration) {
+        if (($integration['stato'] ?? 'attivo') !== 'disattivo') {
+            $activeProviders[(string)($integration['provider'] ?? '')] = true;
+        }
+    }
+    $activeProviders = array_keys($activeProviders);
+    if (count($activeProviders) === 1 && ($activeProviders[0] ?? '') === 'github_classroom') {
+        $githubIntegration = new GitHubIntegration($config);
+        if (!$githubIntegration->loadTokenFromSession() || !$githubIntegration->isAuthenticated()) {
+            $githubStudentListAuthNeeded = true;
+            try {
+                $githubAuthUrl = $githubIntegration->getAuthorizationUrl(null, (string)($_SERVER['REQUEST_URI'] ?? 'rubrica_orale_v2.php'));
+            } catch (Throwable $ignored) {
+                $githubAuthUrl = null;
+            }
+        }
+    }
+}
+
 // Mappa nomi materie da ClasseViva per normalizzare le etichette
 try {
     $subjectsCv = $cvReady ? $cvAPI->getSubjects() : [];
@@ -2005,6 +2031,13 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
             <div class="alert alert-danger alert-dismissible">
                 <i class="bi bi-x-circle"></i> <?= htmlspecialchars($error) ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($githubStudentListAuthNeeded): ?>
+            <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <span><i class="bi bi-github"></i> L'elenco degli studenti dipende dalle credenziali GitHub Classroom. Autorizza GitHub per visualizzarlo.</span>
+                <a href="<?= htmlspecialchars((string)$githubAuthUrl) ?>" class="btn btn-sm btn-dark"><i class="bi bi-github"></i> Autorizza GitHub</a>
             </div>
         <?php endif; ?>
         <?php
