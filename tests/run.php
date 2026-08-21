@@ -553,6 +553,7 @@ $architectureTests = [
     'group ownership capability E2E' => __DIR__ . '/e2e/group_ownership_capability.php',
     'GitHub student resources' => __DIR__ . '/integration/github_student_resources.php',
     'GitHub student map owner' => __DIR__ . '/integration/github_student_map_owner.php',
+    'GitHub api redirect' => __DIR__ . '/integration/github_api_redirect.php',
 ];
 foreach ($architectureTests as $label => $testFile) {
     $architectureOutput = [];

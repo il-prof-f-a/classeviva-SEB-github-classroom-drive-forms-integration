@@ -280,6 +280,12 @@ class GitHubIntegration
             $ch = curl_init($url);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+            // Segue i redirect (301/302) interni all'API GitHub: quando un repo o una
+            // organizzazione viene rinominata, l'API risponde con un redirect verso
+            // api.github.com/repositories/{id} (stesso host), senza perdere il token.
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+            curl_setopt($ch, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTPS);
 
             if ($method === 'POST') {
                 curl_setopt($ch, CURLOPT_POST, true);
