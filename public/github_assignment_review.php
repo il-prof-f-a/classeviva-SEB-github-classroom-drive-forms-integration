@@ -1362,9 +1362,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                min-width: 0;
 	            }
 	        }
+
+	        /* Revisione alla cieca: nasconde nomi/repo finché il toggle non è attivo */
+	        body.review-blind .show-name { display: none !important; }
+	        body.review-names .show-blind { display: none !important; }
 	    </style>
 	</head>
-<body>
+<body class="review-blind">
         <?php
     $pageTitle = $test['nome'] ?? 'Assignment GitHub';
     $pageSubtitle = 'Assignment GitHub Classroom - UDA: ' . ($test['id_uda'] ?? '');
@@ -1468,6 +1472,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                         </div>
                     </div>
 	                </div>
+	                <div class="d-flex align-items-center gap-2 mb-3">
+	                    <div class="form-check form-switch">
+	                        <input class="form-check-input" type="checkbox" role="switch" id="review-show-names" autocomplete="off">
+	                        <label class="form-check-label" for="review-show-names">Mostra nomi e repository</label>
+	                    </div>
+	                    <small class="text-muted">Se disattivato, la revisione è "alla cieca": si vedono solo gli ID.</small>
+	                </div>
 	                <div class="table-responsive">
 	                    <table class="table table-striped align-top github-grades-table">
 	                        <colgroup>
@@ -1528,20 +1539,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                     $prefill[] = "Ultimo commit: " . date('d/m/Y H:i', strtotime($lastCommit));
                                 }
                                 $prefillText = implode("\n", $prefill);
+                                $prefillFull = $prefillText;
+                                $prefillBlind = ($repoUrl !== '') ? str_replace($repoUrl, 'nascosta', $prefillText) : $prefillText;
+                                $githubIdDisplay = 'nascosto';
+                                $githubRid = trim((string)($row['roster_identifier'] ?? ''));
+                                if ($githubRid !== '' && ctype_digit($githubRid)) {
+                                    $githubIdDisplay = $githubRid;
+                                }
                                 ?>
                                 <tr>
                                     <td>
                                         <input type="hidden" name="github_username[<?= $idx ?>]" value="<?= htmlspecialchars($uname) ?>">
-                                        <div><i class="bi bi-github"></i> <?= htmlspecialchars($uname) ?></div>
-                                        <small class="text-muted"><?= htmlspecialchars($row['roster_identifier'] ?? '') ?></small>
+                                        <div class="show-name"><i class="bi bi-github"></i> <?= htmlspecialchars($uname) ?></div>
+                                        <div class="show-blind"><i class="bi bi-github"></i> <?= htmlspecialchars($githubIdDisplay) ?></div>
+                                        <small class="text-muted show-name"><?= htmlspecialchars($row['roster_identifier'] ?? '') ?></small>
                                     </td>
                                     <td class="repo-col">
                                         <input type="hidden" name="repo_url[<?= $idx ?>]" value="<?= htmlspecialchars($repoUrl) ?>">
+                                        <span class="show-blind text-muted">nascosta</span>
+                                        <span class="show-name">
                                         <?php if ($repoUrl): ?>
                                             <a href="<?= htmlspecialchars($repoUrl) ?>" target="_blank"><?= htmlspecialchars($repoUrl) ?></a>
                                         <?php else: ?>
                                             <em class="text-muted">N/D</em>
                                         <?php endif; ?>
+                                        </span>
 
                                         <?php
                                         $repoFullRow = '';
@@ -1644,7 +1666,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                         <input type="hidden" name="id_studente[<?= $idx ?>]" value="<?= htmlspecialchars($studentId) ?>">
                                         <?php if ($studentId): ?>
                                             <span class="badge bg-success">Associato</span>
-                                            <?php if ($studentName !== ''): ?><strong class="d-block"><?= htmlspecialchars($studentName) ?></strong><?php endif; ?>
+                                            <?php if ($studentName !== ''): ?><strong class="d-block show-name"><?= htmlspecialchars($studentName) ?></strong><?php endif; ?>
                                             <small class="text-muted d-block">ID: <?= htmlspecialchars($studentId) ?></small>
                                         <?php else: ?>
                                             <span class="badge bg-warning text-dark">Non associato</span>
@@ -1686,8 +1708,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                                    <td class="comment-col">
 	                                        <?php if ($studentId): ?>
 	                                            <div class="comment-wrap">
-	                                                <textarea name="commento[<?= $idx ?>]" class="form-control form-control-sm" rows="1"
-	                                                          placeholder="Commento docente (opzionale)"><?= htmlspecialchars($prefillText) ?></textarea>
+	                                                <textarea name="commento[<?= $idx ?>]" class="form-control form-control-sm review-comment" rows="1"
+	                                                          data-blind="<?= htmlspecialchars(json_encode($prefillBlind, JSON_HEX_TAG), ENT_QUOTES) ?>"
+	                                                          data-full="<?= htmlspecialchars(json_encode($prefillFull, JSON_HEX_TAG), ENT_QUOTES) ?>"
+	                                                          placeholder="Commento docente (opzionale)"><?= htmlspecialchars($prefillBlind) ?></textarea>
 	                                            </div>
 	                                        <?php else: ?>
 	                                            <em class="text-muted">-</em>
@@ -2479,6 +2503,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                }
 	            });
 	        }
+	    // Toggle "Mostra nomi e repository" (revisione alla cieca)
+	    (function () {
+	        var toggle = document.getElementById("review-show-names");
+	        function apply(show) {
+	            document.body.classList.toggle("review-names", show);
+	            document.body.classList.toggle("review-blind", !show);
+	            document.querySelectorAll(".review-comment").forEach(function (ta) {
+	                if (ta.dataset.touched === "1") return;
+	                var raw = show ? ta.dataset.full : ta.dataset.blind;
+	                try { ta.value = JSON.parse(raw); } catch (e) {}
+	            });
+	        }
+	        if (toggle) {
+	            toggle.addEventListener("change", function () { apply(toggle.checked); });
+	        }
+	        document.querySelectorAll(".review-comment").forEach(function (ta) {
+	            ta.addEventListener("input", function () { ta.dataset.touched = "1"; });
+	        });
+	        apply(false);
+	    })();
 	    </script>
 	</body>
 	</html>
