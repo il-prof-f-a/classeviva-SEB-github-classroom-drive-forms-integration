@@ -10,7 +10,9 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
+use App\Core\ProviderNeutralMappingService;
 use App\Integration\GoogleClassroomAPI;
+use App\Utils\UdaIntegrationResolver;
 
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -31,6 +33,44 @@ if (!$udaComplete) {
 
 $uda = $udaComplete['uda'];
 $tests = $udaComplete['test'];
+
+// Risoluzione delle GitHub Classroom mappate ai gruppi dell'UDA (per il catalogo
+// "Collega un test esistente" quando la piattaforma selezionata è GitHub Classroom).
+$userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
+$mappingService = new ProviderNeutralMappingService($dbAdapter, $userId);
+$githubMappings = $mappingService->listGithubClassroomMappings();
+
+$udaGroupIds = [];
+foreach ($udaComplete['classi_assegnate'] as $assignment) {
+    $groupId = trim((string)($assignment['id_gruppo'] ?? ''));
+    if ($groupId !== '') {
+        $udaGroupIds[] = $groupId;
+    }
+}
+$udaGroupIds = array_values(array_unique($udaGroupIds));
+
+$udaGithubClassrooms = [];
+foreach ($udaGroupIds as $groupId) {
+    $entry = UdaIntegrationResolver::githubForGroup($groupId, $githubMappings);
+    if ($entry === null) {
+        continue;
+    }
+    $classroomId = trim((string)($entry['classroom_id'] ?? ''));
+    if ($classroomId === '') {
+        continue;
+    }
+    $udaGithubClassrooms[$classroomId] = trim((string)($entry['classroom_name'] ?? 'GitHub Classroom'));
+}
+
+$udaGithubContext = [
+    'group_ids' => $udaGroupIds,
+    'classrooms' => array_map(
+        static fn(string $id, string $name): array => ['id' => $id, 'name' => $name],
+        array_keys($udaGithubClassrooms),
+        array_values($udaGithubClassrooms)
+    ),
+];
+$udaTestsReturnTo = urlencode('uda_tests.php?id=' . $udaId);
 
 // Gestione azioni POST
 $successMessage = null;
@@ -765,6 +805,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 </small>
                             </div>
 
+                            <!-- GitHub Classroom - Catalogo Assignment mappati -->
+                            <div class="col-12" id="githubCatalogContainer" style="display:none;">
+                                <div class="border rounded p-3 bg-light">
+                                    <div class="small text-muted mb-2">
+                                        <i class="bi bi-github"></i> Assignment della GitHub Classroom mappata.
+                                    </div>
+                                    <div class="alert d-none mb-2" id="githubCatalogStatus"></div>
+                                    <div id="githubCatalogMapped">
+                                        <label class="form-label">GitHub Classroom associata</label>
+                                        <select class="form-select mb-2" id="githubClassroomId">
+                                            <option value="">Caricamento classroom...</option>
+                                        </select>
+                                        <label class="form-label">Cerca assignment</label>
+                                        <input type="search" class="form-control mb-2" id="githubAssignmentSearch" placeholder="Cerca per titolo o slug..." autocomplete="off">
+                                        <div class="list-group" id="githubAssignmentList" role="listbox"></div>
+                                    </div>
+                                    <div id="githubCatalogNomap" class="d-none">
+                                        <div class="alert alert-warning py-2 mb-2">Nessuna GitHub Classroom mappata ai gruppi di questa UDA.</div>
+                                        <a class="btn btn-sm btn-outline-primary" href="teaching_groups.php?return_to=<?= htmlspecialchars($udaTestsReturnTo, ENT_QUOTES, 'UTF-8') ?>">Crea la mappatura</a>
+                                    </div>
+                                </div>
+                            </div>
+
                             <!-- URL Kahoot/Altro - Campi Manuali -->
                             <div id="urlManualiContainer" style="display:none;">
                                 <!-- URL Studenti -->
@@ -1033,7 +1096,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
     </div>
 
+    <script src="assets/js/catalog-picker.js?v=<?= @filemtime(__DIR__ . '/assets/js/catalog-picker.js') ?>"></script>
     <script>
+    const udaGithubContext = <?= json_encode($udaGithubContext, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     document.addEventListener('DOMContentLoaded', function() {
         const piattaformaSelect = document.getElementById('piattaformaSelect');
         const urlGestioneContainer = document.getElementById('urlGestioneContainer');
@@ -1083,7 +1148,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         });
 
-        // Nota: i test GitHub si creano dal wizard dedicato; qui resta la possibilità di collegarli dal link selezionando "GitHub Classroom".
+        // GitHub Classroom: catalogo assignment mappati (come nel wizard step 6)
+        const githubCatalogContainer = document.getElementById('githubCatalogContainer');
+        const githubCatalogMapped = document.getElementById('githubCatalogMapped');
+        const githubCatalogNomap = document.getElementById('githubCatalogNomap');
+        const githubCatalogStatus = document.getElementById('githubCatalogStatus');
+        const githubClassroomSelect = document.getElementById('githubClassroomId');
+        const githubAssignmentSearch = document.getElementById('githubAssignmentSearch');
+        const githubAssignmentList = document.getElementById('githubAssignmentList');
 
         // Mostra/nascondi campo URL gestione in base alla piattaforma
         piattaformaSelect.addEventListener('change', async function() {
@@ -1091,7 +1163,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             urlGestioneContainer.style.display = 'none';
             urlManualiContainer.style.display = 'none';
             classroomContainer.style.display = 'none';
+            githubCatalogContainer.style.display = 'none';
             datiAutomatici.style.display = 'none';
+            clearGithubHiddenFields();
 
             // DISABILITA tutti i campi nome, descrizione, punteggio dei container nascosti
             // Questo previene che vengano inviati nel FormData
@@ -1136,12 +1210,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 // Carica corsi Classroom
                 await caricaCorsiClassroom();
-            } else if (this.value === 'kahoot' || this.value === 'socrative' || this.value === 'altro' || this.value === 'github') {
+            } else if (this.value === 'github') {
+                urlManualiContainer.style.display = 'block';
+                githubCatalogContainer.style.display = 'block';
+                cbmToggleContainer.style.display = 'none';
+                urlGestione.required = false;
+                urlStudenti.required = true;
+                urlDocenteInput.required = true;
+                btnSalvaTest.disabled = false;
+                // Abilita campo per inserimento manuale
+                document.getElementById('nomeTestManuale').disabled = false;
+                document.getElementById('nomeTestManuale').required = true;
+                // Carica gli assignment della GitHub Classroom mappata
+                loadGithubAssignments();
+            } else if (this.value === 'kahoot' || this.value === 'socrative' || this.value === 'altro') {
                 urlManualiContainer.style.display = 'block';
                 cbmToggleContainer.style.display = 'none';
                 urlGestione.required = false;
                 urlStudenti.required = true;
-                urlDocenteInput.required = (this.value === 'github');
+                urlDocenteInput.required = false;
                 btnSalvaTest.disabled = false;
                 // Abilita campo per inserimento manuale
                 document.getElementById('nomeTestManuale').disabled = false;
@@ -1151,6 +1238,157 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 urlStudenti.required = false;
                 btnSalvaTest.disabled = true;
             }
+        });
+
+        // ---- Helper GitHub Classroom (catalogo assignment mappati) ----
+        function setGithubCatalogStatus(message, type = 'info') {
+            if (!githubCatalogStatus) return;
+            githubCatalogStatus.className = 'alert alert-' + type + ' mb-2';
+            githubCatalogStatus.textContent = message || '';
+            githubCatalogStatus.classList.toggle('d-none', !message);
+        }
+
+        function clearGithubHiddenFields() {
+            let classroomInput = document.getElementById('hidden_github_classroom_id');
+            if (!classroomInput) {
+                classroomInput = document.createElement('input');
+                classroomInput.type = 'hidden';
+                classroomInput.name = 'github_classroom_id';
+                classroomInput.id = 'hidden_github_classroom_id';
+                document.getElementById('addTestForm').appendChild(classroomInput);
+            }
+            classroomInput.value = '';
+            let assignmentInput = document.getElementById('hidden_github_assignment_id');
+            if (!assignmentInput) {
+                assignmentInput = document.createElement('input');
+                assignmentInput.type = 'hidden';
+                assignmentInput.name = 'github_assignment_id';
+                assignmentInput.id = 'hidden_github_assignment_id';
+                document.getElementById('addTestForm').appendChild(assignmentInput);
+            }
+            assignmentInput.value = '';
+        }
+
+        function fillTestFromGithubAssignment(item) {
+            if (!item) return;
+            document.getElementById('nomeTestManuale').value = String(item.title || item.name || '');
+            document.getElementById('descrizioneTestManuale').value = String(item.description || '');
+            document.getElementById('urlStudenti').value = String(item.student_url || item.url_assignment_student || item.link || '');
+            document.getElementById('urlDocente').value = String(item.teacher_url || item.url_assignment_teacher || item.link || '');
+            clearGithubHiddenFields();
+            document.getElementById('hidden_github_classroom_id').value = String(item.github_classroom_id || githubClassroomSelect.value || '');
+            document.getElementById('hidden_github_assignment_id').value = String(item.github_assignment_id || item.id || '');
+            document.getElementById('nomeTestManuale').disabled = false;
+            document.getElementById('nomeTestManuale').required = true;
+            btnSalvaTest.disabled = false;
+        }
+
+        function renderGithubAssignments(assignments) {
+            githubAssignmentList.replaceChildren();
+            if (!assignments.length) {
+                const empty = document.createElement('div');
+                empty.className = 'list-group-item text-muted';
+                empty.textContent = 'Nessun assignment disponibile.';
+                githubAssignmentList.appendChild(empty);
+                return;
+            }
+            assignments.forEach(assignment => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'list-group-item list-group-item-action';
+                const title = document.createElement('div');
+                title.className = 'fw-semibold';
+                title.textContent = assignment.title || assignment.slug || 'Assignment senza titolo';
+                button.appendChild(title);
+                if (assignment.slug || assignment.github_assignment_id) {
+                    const meta = document.createElement('small');
+                    meta.className = 'text-muted d-block';
+                    meta.textContent = assignment.slug || assignment.github_assignment_id || '';
+                    button.appendChild(meta);
+                }
+                button.addEventListener('click', () => fillTestFromGithubAssignment(assignment));
+                githubAssignmentList.appendChild(button);
+            });
+        }
+
+        let githubPicker = null;
+
+        async function fetchGithubAssignments(classroomId) {
+            const groupIds = Array.isArray(udaGithubContext.group_ids) ? udaGithubContext.group_ids : [];
+            const params = new URLSearchParams();
+            groupIds.forEach(id => params.append('id_gruppo[]', id));
+            params.set('classroom_id', classroomId);
+
+            setGithubCatalogStatus('Caricamento assignment...', 'info');
+            try {
+                const response = await fetch('ajax_get_wizard_github_catalog.php?' + params.toString(), {
+                    credentials: 'same-origin',
+                    headers: { Accept: 'application/json' }
+                });
+                const data = await response.json().catch(() => null);
+                if (!response.ok || !data || !data.success) {
+                    setGithubCatalogStatus(data?.error || ('Errore HTTP ' + response.status), 'warning');
+                    return;
+                }
+                const assignments = Array.isArray(data.assignments) ? data.assignments : [];
+                if (githubPicker) githubPicker.setItems(assignments);
+                else renderGithubAssignments(assignments);
+                setGithubCatalogStatus(assignments.length + ' assignment disponibili.', assignments.length ? 'success' : 'info');
+            } catch (error) {
+                setGithubCatalogStatus(error?.message || 'Impossibile caricare gli assignment.', 'warning');
+                console.error(error);
+            }
+        }
+
+        async function loadGithubAssignments() {
+            const classrooms = Array.isArray(udaGithubContext.classrooms) ? udaGithubContext.classrooms : [];
+            githubPicker = null;
+            githubAssignmentList.replaceChildren();
+            setGithubCatalogStatus('', 'info');
+            clearGithubHiddenFields();
+
+            if (classrooms.length === 0) {
+                githubCatalogMapped.classList.add('d-none');
+                githubCatalogNomap.classList.remove('d-none');
+                return;
+            }
+
+            githubCatalogNomap.classList.add('d-none');
+            githubCatalogMapped.classList.remove('d-none');
+
+            githubClassroomSelect.replaceChildren();
+            classrooms.forEach(classroom => {
+                const option = document.createElement('option');
+                option.value = String(classroom.id || '');
+                option.textContent = String(classroom.name || classroom.id || '');
+                githubClassroomSelect.appendChild(option);
+            });
+            githubClassroomSelect.disabled = classrooms.length <= 1;
+
+            if (window.CatalogPicker) {
+                githubPicker = new window.CatalogPicker({
+                    searchInput: githubAssignmentSearch,
+                    listContainer: githubAssignmentList,
+                    renderItem: assignment => ({
+                        title: assignment.title || assignment.slug || 'Assignment senza titolo',
+                        metadata: assignment.slug || assignment.github_assignment_id || ''
+                    }),
+                    onSelect: assignment => fillTestFromGithubAssignment(assignment)
+                });
+            }
+
+            const classroomId = githubClassroomSelect.value;
+            if (!classroomId) {
+                setGithubCatalogStatus('Nessuna GitHub Classroom selezionabile.', 'warning');
+                return;
+            }
+            await fetchGithubAssignments(classroomId);
+        }
+
+        githubClassroomSelect.addEventListener('change', function() {
+            const classroomId = this.value;
+            clearGithubHiddenFields();
+            if (classroomId) fetchGithubAssignments(classroomId);
         });
 
         // Funzione per caricare corsi Classroom
@@ -1507,9 +1745,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             urlGestioneContainer.style.display = 'none';
             urlManualiContainer.style.display = 'none';
             classroomContainer.style.display = 'none';
+            githubCatalogContainer.style.display = 'none';
             datiAutomatici.style.display = 'none';
             loadingSpinner.style.display = 'none';
             btnSalvaTest.disabled = true;
+            clearGithubHiddenFields();
         });
 
         // Prefill da querystring (es. creazione da export Kahoot/Socrative)
