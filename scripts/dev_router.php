@@ -16,6 +16,17 @@ if (
     return true;
 }
 
+$legalRoutes = [
+    '/privacy-policy.html' => 'privacy-policy',
+    '/termini-servizio.html' => 'termini-servizio',
+];
+if (isset($legalRoutes[$requestPath])) {
+    $_GET['document'] = $legalRoutes[$requestPath];
+    $_GET['fragment'] = '0';
+    require $root . '/public/legal_document.php';
+    return true;
+}
+
 $candidate = realpath($root . DIRECTORY_SEPARATOR . ltrim($requestPath, '/'));
 if ($candidate !== false && str_starts_with($candidate, $root) && is_file($candidate)) {
     return false;

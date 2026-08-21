@@ -1,5 +1,7 @@
 # UDA Smart
 
+> **Software sperimentale.** Il repository distribuisce codice sorgente e non costituisce un servizio pubblico o uno strumento approvato da un'istituzione scolastica. Prima di trattare dati reali leggere il [Disclaimer](DISCLAIMER.md), i Termini di servizio e l'Informativa privacy.
+
 UDA Smart è una piattaforma PHP per progettare e gestire Unità di Apprendimento, materiali, obiettivi, test, rubriche e valutazioni, con integrazioni opzionali per Google Workspace for Education, GitHub Classroom, ClasseViva e servizi di intelligenza artificiale.
 
 Il repository contiene il codice distribuibile e template privi di credenziali. Non servono Composer, PHP o MySQL installati sul computer se si usa Docker.

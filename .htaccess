@@ -1,0 +1,8 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(privacy-policy|termini-servizio)\.html$ public/legal_document.php?document=$1 [END,QSA]
+</IfModule>
+
+<FilesMatch "^(\.env|composer\.(json|lock)|.*\.(bak|db|ini|log|sql|sqlite|yaml|yml))$">
+    Require all denied
+</FilesMatch>

@@ -529,6 +529,7 @@ $architectureTests = [
     'legacy mapping banner' => __DIR__ . '/public/legacy_mapping_banner.php',
     'portal navigation cleanup' => __DIR__ . '/public/portal_navigation_cleanup.php',
     'test phase access' => __DIR__ . '/public/test_phase_access.php',
+    'legal documents' => __DIR__ . '/public/legal_documents.php',
     'CV token gate on mapping pages' => __DIR__ . '/public/provider_neutral_gate.php',
     'resolver consumed' => __DIR__ . '/public/resolver_consumed.php',
     'rubrica orale provider-neutral' => __DIR__ . '/public/rubrica_orale_provider_neutral.php',
