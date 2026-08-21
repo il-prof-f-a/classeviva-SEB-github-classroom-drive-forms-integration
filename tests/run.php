@@ -522,6 +522,7 @@ $architectureTests = [
     'uda view groups' => __DIR__ . '/public/uda_view_groups.php',
     'uda assign groups' => __DIR__ . '/public/uda_assign_groups.php',
     'uda tests github catalog' => __DIR__ . '/public/uda_tests_github_catalog.php',
+    'uda export pacchetto ZIP protetto' => __DIR__ . '/public/uda_export_package.php',
     'uda grades publish summary' => __DIR__ . '/public/uda_grades_publish_summary.php',
     'github assignment provider-neutral' => __DIR__ . '/public/github_assignment_provider_neutral.php',
     'github review provider-neutral' => __DIR__ . '/public/github_review_provider_neutral.php',

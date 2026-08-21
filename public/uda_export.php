@@ -42,18 +42,19 @@ try {
 
     if ($action === 'esporta') {
         // Sezioni selezionate
-        $sezioni = $_POST['sezioni'] ?? ['info', 'obiettivi', 'materiali', 'rubriche', 'laboratorio', 'domande', 'statistiche'];
+        $sezioni = $_POST['sezioni'] ?? ['info', 'obiettivi', 'materiali', 'rubriche', 'laboratorio', 'domande', 'test', 'statistiche'];
+        $password = trim((string)($_POST['password'] ?? ''));
 
-        // Genera documento
-        $filePath = $exportManager->esportaUDAWord($udaId, $sezioni);
+        // Genera pacchetto ZIP protetto (Word + Excel)
+        $filePath = $exportManager->esportaUDAPacchetto($udaId, $sezioni, $password);
 
         if (file_exists($filePath)) {
             $fileGenerato = basename($filePath);
             $fileToken = (new ExportAccessService(ROOT_PATH . '/storage/exports'))
                 ->register($_SESSION, $userId, (string)$udaId, $filePath);
-            $message = "Documento generato con successo!";
+            $message = "Pacchetto ZIP protetto generato con successo!";
         } else {
-            throw new Exception("Errore durante la generazione del documento");
+            throw new Exception("Errore durante la generazione del pacchetto");
         }
     }
 
@@ -67,7 +68,11 @@ try {
 
         if ($filePath !== null && file_exists($filePath)) {
             $fileName = basename($filePath);
-            header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+            $ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+            $contentType = $ext === 'zip'
+                ? 'application/zip'
+                : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+            header('Content-Type: ' . $contentType);
             header('Content-Disposition: attachment; filename="' . $fileName . '"');
             header('Content-Length: ' . filesize($filePath));
             readfile($filePath);
@@ -127,7 +132,7 @@ try {
                 <i class="bi bi-check-circle"></i> <?= htmlspecialchars($message) ?>
                 <?php if ($fileGenerato && $fileToken): ?>
                     <a href="?id=<?= urlencode($udaId) ?>&action=download&token=<?= urlencode($fileToken) ?>" class="btn btn-sm btn-success ms-3">
-                        <i class="bi bi-download"></i> Scarica Documento
+                        <i class="bi bi-download"></i> Scarica Pacchetto ZIP
                     </a>
                 <?php endif; ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
@@ -185,16 +190,14 @@ try {
                             <h5 class="mb-0"><i class="bi bi-info-circle"></i> Formato Documento</h5>
                         </div>
                         <div class="card-body">
-                            <p><strong>Formato:</strong> Microsoft Word (.docx)</p>
-                            <p><strong>Compatibile con:</strong></p>
+                            <p><strong>Formato:</strong> Archivio ZIP protetto da password</p>
+                            <p><strong>Contiene:</strong></p>
                             <ul class="small">
-                                <li>Microsoft Word 2007+</li>
-                                <li>LibreOffice Writer</li>
-                                <li>Google Docs</li>
-                                <li>Convertibile in PDF</li>
+                                <li>Documento Word (.docx) con tutti i link a materiali e test</li>
+                                <li>File Excel (.xlsx) con voti, valutazioni e risposte ai test</li>
                             </ul>
                             <div class="alert alert-warning mb-0">
-                                <small><i class="bi bi-exclamation-triangle"></i> Il documento includerà solo le sezioni con contenuto disponibile.</small>
+                                <small><i class="bi bi-exclamation-triangle"></i> Il documento includerà solo le sezioni con contenuto disponibile. I dati sensibili sono protetti dalla password del file ZIP.</small>
                             </div>
                         </div>
                     </div>
@@ -299,6 +302,19 @@ try {
                                             <div class="card-body">
                                                 <div class="form-check">
                                                     <input class="form-check-input" type="checkbox" name="sezioni[]"
+                                                           value="test" id="sez_test" checked>
+                                                    <label class="form-check-label" for="sez_test">
+                                                        <strong><i class="bi bi-link-45deg"></i> Test e Link Esterni</strong>
+                                                        <div class="text-muted small">Link ai test e ai materiali collegati</div>
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="card sezione-card mb-3">
+                                            <div class="card-body">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="checkbox" name="sezioni[]"
                                                            value="statistiche" id="sez_stats" checked>
                                                     <label class="form-check-label" for="sez_stats">
                                                         <strong><i class="bi bi-graph-up"></i> Statistiche</strong>
@@ -310,9 +326,20 @@ try {
                                     </div>
                                 </div>
 
+                                <div class="mb-3 mt-4">
+                                    <label for="zip_password" class="form-label">
+                                        <i class="bi bi-lock"></i> Password del file ZIP *
+                                    </label>
+                                    <input type="password" name="password" id="zip_password" class="form-control"
+                                           placeholder="Definisci la password per proteggere il pacchetto" required minlength="4" autocomplete="new-password">
+                                    <small class="form-text text-muted">
+                                        Il file ZIP conterrà il documento Word e il file Excel con voti, valutazioni e risposte ai test, protetti con questa password.
+                                    </small>
+                                </div>
+
                                 <div class="d-grid gap-2 mt-4">
                                     <button type="submit" class="btn btn-success btn-lg">
-                                        <i class="bi bi-file-earmark-arrow-down"></i> Genera Documento Word
+                                        <i class="bi bi-file-earmark-zip"></i> Genera Pacchetto ZIP protetto
                                     </button>
                                     <button type="button" class="btn btn-outline-secondary" onclick="selezionaTutte()">
                                         <i class="bi bi-check-all"></i> Seleziona/Deseleziona Tutto
@@ -329,10 +356,10 @@ try {
                         </div>
                         <div class="card-body">
                             <ul class="mb-0">
-                                <li>Il documento generato può essere modificato in Word o LibreOffice</li>
-                                <li>Per convertire in PDF: apri il documento e usa "Salva come PDF"</li>
-                                <li>Puoi personalizzare stili e formattazione dopo l'esportazione</li>
-                                <li>Il documento include collegamenti ipertestuali ai materiali online</li>
+                                <li>Il documento Word include i collegamenti ipertestuali a materiali e test</li>
+                                <li>Il file Excel contiene voti, valutazioni e risposte ai test (protetti nel ZIP)</li>
+                                <li>La password del ZIP è richiesta per aprire l'archivio</li>
+                                <li>Puoi personalizzare stili e formattazione del Word dopo l'estrazione</li>
                             </ul>
                         </div>
                     </div>
