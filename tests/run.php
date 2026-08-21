@@ -38,6 +38,7 @@ $securityTests = [
     'cifratura versionata' => __DIR__ . '/security/encryption_versioning.php',
     'header HTTP' => __DIR__ . '/security/http_headers.php',
     'egress integrazioni' => __DIR__ . '/security/integration_egress.php',
+    'ambiente workflow Security checks' => __DIR__ . '/security/security_workflow_environment.php',
 ];
 foreach ($securityTests as $label => $testFile) {
     exec($phpCommand . ' ' . escapeshellarg($testFile) . ' 2>&1', $securityOutput, $securityExitCode);
