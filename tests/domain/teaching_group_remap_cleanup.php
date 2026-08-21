@@ -20,7 +20,9 @@ spl_autoload_register(static function (string $class) use ($root): void {
 
 use App\Core\Database\DatabaseFactory;
 use App\Core\Database\SchemaMigrationRunner;
+use App\Core\GroupStudentRepository;
 use App\Core\StudentIdentityRepository;
+use App\Core\StudentRepository;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupRepository;
 use App\Core\TeachingGroupService;
@@ -60,6 +62,19 @@ try {
     $service->syncRoster($otherGroupId, 'classeviva', 'CV_CLASS_2', [
         ['external_user_id' => 'CV_OTHER'],
     ]);
+
+    // Simula le righe rimaste da un remapping precedente: gli studenti tecnici
+    // esistono ancora, ma non possiedono più alcuna identità esterna.
+    $orphanStudents = new StudentRepository($adapter, 'USR_A');
+    $orphanMemberships = new GroupStudentRepository($adapter, 'USR_A');
+    foreach (range(1, 4) as $orphanNumber) {
+        $orphanId = 'STD_ORPHAN_' . $orphanNumber;
+        $orphanStudents->create(['id_studente' => $orphanId]);
+        $orphanMemberships->add($groupId, $orphanId, [
+            'provider_origine' => 'legacy',
+            'external_context_id' => 'STALE_REMAP',
+        ]);
+    }
 
     $identities = new StudentIdentityRepository($adapter, 'USR_A');
     $cvA = $identities->findByExternal('classeviva', 'CV_A');

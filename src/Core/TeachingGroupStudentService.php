@@ -279,11 +279,12 @@ final class TeachingGroupStudentService
         }
 
         $count = 0;
-        $this->transaction(function () use ($operations, &$count): void {
+        $this->transaction(function () use ($groupId, $operations, &$count): void {
             foreach ($operations as $sourceId => $targetId) {
                 $this->resolver->merge($sourceId, $targetId);
                 $count++;
             }
+            $this->cleanupOrphanMemberships($groupId);
         });
         return $count;
     }
@@ -331,8 +332,25 @@ final class TeachingGroupStudentService
                     }
                 }
             }
+            $this->cleanupOrphanMemberships($groupId);
         });
         return $count;
+    }
+
+    /** Remove stale memberships whose student has no external identity left. */
+    private function cleanupOrphanMemberships(string $groupId): void
+    {
+        foreach ($this->memberships->listForGroup($groupId) as $membership) {
+            $studentId = trim((string)($membership['id_studente'] ?? ''));
+            $membershipId = trim((string)($membership['id_iscrizione'] ?? ''));
+            if ($studentId === '' || $membershipId === '') {
+                continue;
+            }
+            if ($this->identities->listForStudent($studentId) !== []) {
+                continue;
+            }
+            $this->memberships->delete($membershipId);
+        }
     }
 
     /**

@@ -364,12 +364,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         $seenTargetKeys[$matchKey] = $linkAnchorKey;
                     }
                 }
-                if ($linkPayload !== []) {
-                    try {
-                        $studentService->assignMappings($groupId, $linkPayload);
-                    } catch (Throwable $linkException) {
-                        throw new RuntimeException($linkException->getMessage() . ' [payload: ' . json_encode($linkPayload, JSON_UNESCAPED_UNICODE) . ']');
-                    }
+                try {
+                    // Anche un payload vuoto riconcilia le vecchie membership
+                    // rimaste senza identità dopo un remapping precedente.
+                    $studentService->assignMappings($groupId, $linkPayload);
+                } catch (Throwable $linkException) {
+                    throw new RuntimeException($linkException->getMessage() . ' [payload: ' . json_encode($linkPayload, JSON_UNESCAPED_UNICODE) . ']');
                 }
                 $_SESSION['teaching_groups_flash'] = ['success' => 'Mappature studenti salvate.'];
                 header('Location: teaching_groups.php?return_to=' . urlencode($returnTo));
