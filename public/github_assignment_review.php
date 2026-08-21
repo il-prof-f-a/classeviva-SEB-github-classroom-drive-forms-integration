@@ -1100,7 +1100,14 @@ $runtimeNamesByStudent = [];
 $mappingGroupId = trim((string)($mappingRow['id_gruppo'] ?? ''));
 if ($mappingGroupId !== '') {
     foreach ((new RuntimeStudentNameService($dbAdapter, $userId, $config))->resolveGroupStudents($mappingGroupId) as $runtimeStudent) {
-        $runtimeNamesByStudent[(string)$runtimeStudent['id_studente']] = trim((string)$runtimeStudent['nome_completo']);
+        $studentKey = (string)$runtimeStudent['id_studente'];
+        $runtimeName = trim((string)$runtimeStudent['nome_completo']);
+        $runtimeNamesByStudent[$studentKey] = $runtimeName;
+        // Chiave secondaria per il matching col roster GitHub (username): quando il
+        // gruppo non ha membership interne, id_studente coincide col login GitHub.
+        if (($runtimeStudent['provider'] ?? '') === 'github_classroom' && $studentKey !== '') {
+            $runtimeNamesByStudent[strtolower($studentKey)] = $runtimeName;
+        }
     }
 }
 $acceptedByUser = [];
@@ -1501,7 +1508,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                 $defaultBranch = $acceptedItem ? (string)($acceptedItem['repository']['default_branch'] ?? ($acceptedItem['default_branch'] ?? '')) : null;
                                 $studentId = $row['id_studente'] ?? '';
                                 // Nome visualizzato dal resolver centrale del gruppo.
-                                $studentName = $runtimeNamesByStudent[(string)$studentId] ?? '';
+                                $studentName = $runtimeNamesByStudent[(string)$studentId] ?? ($runtimeNamesByStudent[$lowerUser] ?? '');
                                 $lastCommit = $commitInfo[$lowerUser]['last_commit'] ?? null;
                                 $recentCount = $commitInfo[$lowerUser]['recent_count'] ?? null;
                                 $prefill = [];
