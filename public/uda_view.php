@@ -298,7 +298,7 @@ try {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= $uda->titolo ?? 'UDA' ?> - Sistema Gestione UDA</title>
+    <title><?= htmlspecialchars((string)($uda->titolo ?? 'UDA'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?> - Sistema Gestione UDA</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <style>
@@ -394,7 +394,7 @@ try {
 </head>
 <body>
     <?php
-    $pageTitle = '<i class="bi bi-journal-text"></i> ' . ($uda->titolo ?? 'UDA');
+    $pageTitle = '<i class="bi bi-journal-text"></i> ' . htmlspecialchars((string)($uda->titolo ?? 'UDA'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     $pageSubtitle = $uda->argomento ?? '';
     $headerActions = '<a class="nav-link" href="index.php">Dashboard</a>'
         . '<a class="nav-link" href="uda_create.php">Nuova UDA</a>';

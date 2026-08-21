@@ -371,7 +371,7 @@ include __DIR__ . '/partials/app_header.php';
     const csrfToken = <?= json_encode($csrfToken, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     const attachmentsList = <?= json_encode($attachmentsList, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     const obiettiviList = <?= json_encode($obiettiviList, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
-    const profName = "<?= addslashes($profName) ?>";
+    const profName = <?= json_encode($profName, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     const alertPlaceholder = document.createElement('div');
     alertPlaceholder.className = 'mt-2';
     // inserisci l'area avvisi subito sotto l'header della card principale
@@ -419,17 +419,17 @@ include __DIR__ . '/partials/app_header.php';
             num_closed_expert: parseInt(document.getElementById('ai_num_closed_expert').value || '0', 10),
             params: {
                 include_prof: document.getElementById('ai_inc_prof').checked,
-                prof_name: "<?= addslashes($profName) ?>",
+                prof_name: <?= json_encode($profName, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>,
                 include_argomento: document.getElementById('ai_inc_argomento').checked,
                 include_disciplina: document.getElementById('ai_inc_disciplina').checked,
                 include_destinatari: document.getElementById('ai_inc_destinatari').checked,
                 include_metodologia: document.getElementById('ai_inc_metodologia') ? document.getElementById('ai_inc_metodologia').checked : false,
                 include_obiettivi: document.getElementById('ai_inc_obiettivi').checked,
                 include_allegati: includeAttachments,
-                argomento_text: "<?= addslashes($udaArgomento) ?>",
-                disciplina_text: "<?= addslashes($udaDisciplina) ?>",
-                destinatari_text: "<?= addslashes($udaDestinatari) ?>",
-                metodologia_text: "<?= addslashes($udaMetodologia) ?>",
+                argomento_text: <?= json_encode($udaArgomento, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>,
+                disciplina_text: <?= json_encode($udaDisciplina, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>,
+                destinatari_text: <?= json_encode($udaDestinatari, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>,
+                metodologia_text: <?= json_encode($udaMetodologia, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>,
                 obiettivi_selected: Array.from(document.querySelectorAll('.ai-obj:checked')).map(cb => cb.dataset.text),
                 attachments_selected: (includeAttachments && hasAttachments
                     ? Array.from(document.querySelectorAll('.ai-att:checked')).map(cb => {

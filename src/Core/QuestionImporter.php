@@ -2,6 +2,8 @@
 
 namespace App\Core;
 
+use App\Core\Security\UploadPolicy;
+
 /**
  * Import/preview helper per domande da file (JSON principalmente).
  * Riutilizzato da import_questions.php e test_wizard.php.
@@ -155,6 +157,7 @@ class QuestionImporter
             return ['success' => false, 'error' => 'File non trovato'];
         }
         try {
+            UploadPolicy::assertValid(basename($path), $path, 'spreadsheet');
             $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($path);
             $worksheet = $spreadsheet->getActiveSheet();
             $rows = $worksheet->toArray();

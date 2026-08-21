@@ -54,6 +54,9 @@ class UserIntegrationManager
         try {
             $decrypted = EncryptionHelper::decrypt($configData);
             if (is_array($decrypted)) {
+                if (!EncryptionHelper::isVersioned($configData)) {
+                    $this->saveConfig($provider, $decrypted, (bool)($row['attivo'] ?? true));
+                }
                 return $decrypted;
             }
         } catch (\Exception $e) {

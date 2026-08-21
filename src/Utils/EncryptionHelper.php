@@ -147,4 +147,11 @@ class EncryptionHelper
         $key = function_exists('env') ? env('ENCRYPTION_KEY') : getenv('ENCRYPTION_KEY');
         return is_string($key) && $key !== '';
     }
+
+    public static function isVersioned(string $value): bool
+    {
+        $payload = json_decode($value, true);
+        return is_array($payload) && (int)($payload['v'] ?? 0) === 2
+            && isset($payload['iv'], $payload['tag'], $payload['ciphertext']);
+    }
 }
