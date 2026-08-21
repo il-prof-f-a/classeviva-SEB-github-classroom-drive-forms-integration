@@ -489,6 +489,7 @@ $architectureTests = [
     'teaching group remap cleanup' => __DIR__ . '/domain/teaching_group_remap_cleanup.php',
     'teaching group matrix context' => __DIR__ . '/domain/teaching_group_matrix_context.php',
     'teaching groups page markup' => __DIR__ . '/public/teaching_groups_page_markup.php',
+    'teaching groups delete and count' => __DIR__ . '/public/teaching_groups_delete_and_count.php',
     'dashboard admin buttons' => __DIR__ . '/public/dashboard_admin_buttons.php',
     'user integrations github status' => __DIR__ . '/public/user_integrations_github_status.php',
     'teaching groups no auto sync' => __DIR__ . '/public/teaching_groups_no_auto_sync.php',

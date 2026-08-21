@@ -512,6 +512,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 }
                 $redirectAfterAction('Identità studente scollegata.');
                 break;
+            case 'delete_group':
+                $groupToDelete = $groupRepository->findById($groupId);
+                if ($groupToDelete === null) {
+                    throw new RuntimeException('Gruppo didattico non trovato.');
+                }
+                // Elimina i dati collegati al gruppo prima di rimuovere il gruppo stesso.
+                foreach ([
+                    'VOTI' => 'id_voto',
+                    'VALUTAZIONI_RUBRICA' => 'id_valutazione',
+                    'VALUTAZIONI_LABORATORIO' => 'id_valutazione',
+                    'PLUSMINUS_QUEUE' => 'id_evidenza',
+                    'TEST_CBM_RISPOSTE' => 'id_risposta',
+                    'GRUPPI_STUDENTI' => 'id_iscrizione',
+                    'GRUPPI_INTEGRAZIONI' => 'id_collegamento',
+                    'UDA_GRUPPI' => 'id_assegnazione',
+                    'UDA_PUBBLICAZIONI' => 'id_pubblicazione',
+                ] as $deleteTable => $deleteKey) {
+                    try {
+                        foreach ($dbAdapter->findWhere($deleteTable, ['id_gruppo' => $groupId]) as $deleteRow) {
+                            if (!empty($deleteRow[$deleteKey])) {
+                                $dbAdapter->deleteRow($deleteTable, $deleteRow[$deleteKey], $deleteKey);
+                            }
+                        }
+                    } catch (Throwable $ignored) {
+                        // tabella assente nello schema corrente: ignora
+                    }
+                }
+                $dbAdapter->deleteRow('GRUPPI_DIDATTICI', $groupId, 'id_gruppo');
+                $redirectAfterAction('Gruppo didattico eliminato.');
+                break;
             default:
                 throw new RuntimeException('Azione non riconosciuta.');
         }
@@ -541,9 +571,19 @@ try {
     $catalogError = 'Catalogo gruppi temporaneamente non disponibile.';
 }
 
-$countUnmapped = static function (string $groupId, array $providers) use ($studentService): array {
+$countUnmapped = static function (string $groupId, array $providers) use ($studentService, $runtimeNameService): array {
     $result = ['unmapped' => 0, 'total' => 0];
     if ($providers === []) {
+        return $result;
+    }
+    // Con un solo provider collegato non c'è alcun mapping da fare: il totale è il
+    // numero di studenti rilevati dal roster del gruppo (priorità CV → Google → GitHub).
+    if (count($providers) === 1) {
+        try {
+            $result['total'] = count($runtimeNameService->resolveGroupStudents($groupId));
+        } catch (Throwable $ignored) {
+            $result['total'] = 0;
+        }
         return $result;
     }
     $anchorProvider = $providers[0];
@@ -589,7 +629,14 @@ foreach ($groupRepository->listAll() as $group) {
         }
     }
     $mappingCounts = $countUnmapped($groupId, $groupProviders);
-    $groups[] = ['row' => $group, 'providers' => $providers, 'unmapped_count' => $mappingCounts['unmapped'], 'total_students' => $mappingCounts['total']];
+    $groupVoteCount = 0;
+    $groupUdaCount = 0;
+    try {
+        $groupVoteCount = count($dbAdapter->findWhere('VOTI', ['id_gruppo' => $groupId]));
+        $groupUdaCount = count($dbAdapter->findWhere('UDA_GRUPPI', ['id_gruppo' => $groupId]));
+    } catch (Throwable $ignored) {
+    }
+    $groups[] = ['row' => $group, 'providers' => $providers, 'unmapped_count' => $mappingCounts['unmapped'], 'total_students' => $mappingCounts['total'], 'vote_count' => $groupVoteCount, 'uda_count' => $groupUdaCount];
 }
 
 $nameSimilarity = static function (string $a, string $b): float {
@@ -815,9 +862,9 @@ $skipOnboardingBanner = true;
         </form>
 
         <div class="row g-3">
-        <?php foreach ($groups as $entry): $group = $entry['row']; $groupId = (string)$group['id_gruppo']; $unmappedCount = (int)($entry['unmapped_count'] ?? 0); $totalStudents = (int)($entry['total_students'] ?? 0); $mapBtnClass = $unmappedCount === 0 ? 'btn-success' : ($unmappedCount < 3 ? 'btn-warning' : ''); $mapBtnStyle = $unmappedCount >= 3 ? 'background-color:#fd7e14;border-color:#fd7e14;color:#fff' : ''; ?>
+        <?php foreach ($groups as $entry): $group = $entry['row']; $groupId = (string)$group['id_gruppo']; $unmappedCount = (int)($entry['unmapped_count'] ?? 0); $totalStudents = (int)($entry['total_students'] ?? 0); $voteCount = (int)($entry['vote_count'] ?? 0); $udaCount = (int)($entry['uda_count'] ?? 0); $mapBtnClass = $unmappedCount === 0 ? 'btn-success' : ($unmappedCount < 3 ? 'btn-warning' : ''); $mapBtnStyle = $unmappedCount >= 3 ? 'background-color:#fd7e14;border-color:#fd7e14;color:#fff' : ''; ?>
             <div class="col-12"><article class="card shadow-sm"><div class="card-body">
-                <div class="d-flex flex-wrap justify-content-between gap-2"><div><h2 class="h5 mb-1"><?= $escape($group['nome_gruppo'] ?? '') ?></h2><div class="small text-muted"><?= $escape(trim(($group['nome_classe'] ?? '') . ' · ' . ($group['nome_materia'] ?? '') . ' · ' . ($group['anno_scolastico'] ?? ''), ' ·')) ?></div></div><span class="badge <?= ($group['stato'] ?? 'attivo') === 'attivo' ? 'text-bg-success' : 'text-bg-secondary' ?>"><?= $escape($group['stato'] ?? 'attivo') ?></span></div>
+                <div class="d-flex flex-wrap justify-content-between gap-2"><div><h2 class="h5 mb-1"><?= $escape($group['nome_gruppo'] ?? '') ?></h2><div class="small text-muted"><?= $escape(trim(($group['nome_classe'] ?? '') . ' · ' . ($group['nome_materia'] ?? '') . ' · ' . ($group['anno_scolastico'] ?? ''), ' ·')) ?></div></div><div class="d-flex align-items-center gap-2"><span class="badge <?= ($group['stato'] ?? 'attivo') === 'attivo' ? 'text-bg-success' : 'text-bg-secondary' ?>"><?= $escape($group['stato'] ?? 'attivo') ?></span><button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#delete-group-<?= $escape($groupId) ?>"><i class="bi bi-trash"></i> Elimina</button></div></div>
                 <form method="post" class="mt-2"><input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="save_group"><input type="hidden" name="id_gruppo" value="<?= $escape($groupId) ?>"><input type="hidden" name="return_to" value="<?= $escape($returnTo) ?>">
                     <div class="row gy-2 gx-2">
                         <div class="col-md-3"><label class="form-label visually-hidden" for="group-<?= $escape($groupId) ?>-name">Nome gruppo</label><input id="group-<?= $escape($groupId) ?>-name" class="form-control" name="nome_gruppo" value="<?= $escape($group['nome_gruppo'] ?? '') ?>" required></div>
@@ -848,6 +895,36 @@ $skipOnboardingBanner = true;
                     <?php endforeach; ?></div>
                     <div class="mt-3 d-flex justify-content-between align-items-center"><button class="btn btn-primary" type="submit">Salva</button><a href="?tab=students&amp;id=<?= urlencode($groupId) ?>&amp;return_to=<?= urlencode($returnTo) ?>" class="btn btn-sm <?= $mapBtnClass ?>" style="<?= $mapBtnStyle ?>"><?= $unmappedCount ?> di <?= $totalStudents ?> studenti da mappare</a></div>
                 </form>
+                <div class="modal fade" id="delete-group-<?= $escape($groupId) ?>" tabindex="-1" aria-hidden="true">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header bg-danger text-white">
+                                <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> Elimina gruppo didattico</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-warning mb-0">
+                                    <strong>Attenzione:</strong> l'eliminazione è <strong>irreversibile</strong>. Verranno rimossi anche:
+                                    <ul class="mt-2 mb-0">
+                                        <li><strong><?= $voteCount ?></strong> voti</li>
+                                        <li><strong><?= $udaCount ?></strong> UDA assegnate</li>
+                                        <li>roster studenti, collegamenti ai provider e valutazioni collegate</li>
+                                    </ul>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
+                                <form method="post">
+                                    <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                                    <input type="hidden" name="action" value="delete_group">
+                                    <input type="hidden" name="id_gruppo" value="<?= $escape($groupId) ?>">
+                                    <input type="hidden" name="return_to" value="<?= $escape($returnTo) ?>">
+                                    <button type="submit" class="btn btn-danger">Conferma eliminazione</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div></article></div>
         <?php endforeach; ?>
         <?php if ($groups === [] && $catalogError === null): ?><div class="col-12"><div class="alert alert-info">Nessun gruppo trovato. Puoi crearne uno senza collegare subito un provider.</div></div><?php endif; ?>
