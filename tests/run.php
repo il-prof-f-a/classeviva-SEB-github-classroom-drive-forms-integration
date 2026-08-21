@@ -542,6 +542,7 @@ $architectureTests = [
     'rubrica orale provider-neutral' => __DIR__ . '/public/rubrica_orale_provider_neutral.php',
     'rubrica orale delete provider-neutral' => __DIR__ . '/public/rubrica_orale_delete_provider_neutral.php',
     'laboratorio griglia provider-neutral' => __DIR__ . '/public/laboratorio_griglia_provider_neutral.php',
+    'laboratorio valutazione provider-neutral' => __DIR__ . '/public/laboratorio_valutazione_provider_neutral.php',
     'rubrica orale preselezione' => __DIR__ . '/public/rubrica_orale_preselezione.php',
     'rubrica orale riepilogo nomi' => __DIR__ . '/public/rubrica_orale_riepilogo_nomi.php',
     'rubrica orale runtime names' => __DIR__ . '/public/rubrica_orale_runtime_names.php',

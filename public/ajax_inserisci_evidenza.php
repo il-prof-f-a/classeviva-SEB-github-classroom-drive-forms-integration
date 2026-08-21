@@ -21,6 +21,7 @@ try {
 
     // Estrai parametri
     $idUda = $_POST['id_uda'] ?? '';
+    $idGruppo = trim((string)($_POST['id_gruppo'] ?? ''));
     $idMateriaCV = $_POST['id_materia_cv'] ?? '';
     $idClasseCV = $_POST['id_classe_cv'] ?? '';
     $idStudenteInternal = trim((string)($_POST['id_studente'] ?? ''));
@@ -56,6 +57,7 @@ try {
     $datiEvidenza = [
         'id_evidenza' => $idEvidenza,
         'id_uda' => $idUda,
+        'id_gruppo' => $idGruppo !== '' ? $idGruppo : null,
         'id_materia_cv' => $idMateriaCV,
         'id_classe_cv' => $idClasseCV,
         'id_indicatore' => $idIndicatore,

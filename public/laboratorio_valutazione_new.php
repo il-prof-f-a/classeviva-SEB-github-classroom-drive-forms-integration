@@ -21,6 +21,10 @@ use App\Core\ProviderCapabilityResolver;
 use App\Core\UDAManager;
 use App\Core\LaboratorioManager;
 use App\Core\StudentiManager;
+use App\Core\RuntimeStudentNameService;
+use App\Core\UdaGroupRepository;
+use App\Core\TeachingGroupRepository;
+use App\Core\TeachingGroupIntegrationRepository;
 use App\Integration\ClasseVivaAPI;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -40,11 +44,48 @@ $error = null;
 
 // Parametri
 $udaId = $_GET['id_uda'] ?? $_POST['uda_id'] ?? null;
-$idClasseCV = $_GET['id_classe_cv'] ?? $_POST['id_classe_cv'] ?? null;
-$idMateriaCV = $_GET['id_materia_cv'] ?? $_POST['id_materia_cv'] ?? null;
-$idStudenteCV = $_GET['id_studente_cv'] ?? $_POST['id_studente_cv'] ?? null;
-if ($idClasseCV && $idMateriaCV && !ProviderCapabilityResolver::supportsCvForPair($dbAdapter, $userId, (string)$idClasseCV, (string)$idMateriaCV, 'list_grades')) {
-    $error = 'La classe non è collegata a un gruppo con ClasseViva.';
+$idStudenteCV = $_GET['id_studente'] ?? $_POST['id_studente'] ?? null;
+
+// Risolvi il gruppo didattico dall'UDA (provider-neutral). La classe e la materia
+// non sono più selezionabili: derivano dal gruppo, che può essere mappato o meno
+// a ClasseViva.
+$gruppoId = trim((string)($_GET['id_gruppo'] ?? ''));
+$gruppoClasse = '';
+$gruppoMateria = '';
+$idClasseCV = '';
+$idMateriaCV = '';
+$gruppoClasseViva = false;
+$gruppiUda = [];
+if ($udaId) {
+    $udaGroupRepo = new UdaGroupRepository($dbAdapter, $userId);
+    foreach ($udaGroupRepo->listForUda((string)$udaId) as $assegnazione) {
+        $gid = trim((string)($assegnazione['id_gruppo'] ?? ''));
+        if ($gid !== '') {
+            $gruppiUda[] = $gid;
+        }
+    }
+    $gruppiUda = array_values(array_unique($gruppiUda));
+    if ($gruppoId === '' && count($gruppiUda) === 1) {
+        $gruppoId = $gruppiUda[0];
+    }
+    if ($gruppoId !== '') {
+        $group = (new TeachingGroupRepository($dbAdapter, $userId))->findById($gruppoId);
+        if ($group !== null) {
+            $gruppoClasse = trim((string)($group['nome_classe'] ?? $group['nome_gruppo'] ?? ''));
+            $gruppoMateria = trim((string)($group['nome_materia'] ?? ''));
+        }
+        foreach ((new TeachingGroupIntegrationRepository($dbAdapter, $userId))->listForGroup($gruppoId) as $integration) {
+            if (($integration['provider'] ?? '') !== 'classeviva' || ($integration['stato'] ?? 'attivo') === 'disattivo') {
+                continue;
+            }
+            $gruppoClasseViva = true;
+            $idClasseCV = trim((string)($integration['external_context_id'] ?? ''));
+            $idMateriaCV = trim((string)($integration['external_subject_id'] ?? ''));
+            if ($gruppoClasse === '' && !empty($integration['external_name'])) {
+                $gruppoClasse = trim((string)$integration['external_name']);
+            }
+        }
+    }
 }
 
 // Calcola timestamp 2 ore fa
@@ -77,35 +118,27 @@ try {
         $indicatori = $labManager->getIndicatoriConCategorie();
     }
 
-    // Carica classi solo per l'UDA selezionata
-    if ($udaId) {
-        // OTTIMIZZAZIONE: Usa findWhere invece di findAll + filter
-        $classiAssegnate = $dbAdapter->findWhere('CLASSI_ASSEGNATE', ['id_uda' => $udaId]);
-        foreach ($classiAssegnate as $ca) {
-            $key = ($ca['id_classe'] ?? '') . '|' . ($ca['id_materia_cv'] ?? '');
-            if (!isset($classi[$key])) {
-                $classi[$key] = [
-                    'id_classe_cv' => $ca['id_classe'] ?? '',
-                    'id_materia_cv' => $ca['id_materia_cv'] ?? '',
-                    'nome_classe' => $ca['nome_classe'] ?? '',
-                    'nome_materia' => $ca['nome_materia'] ?? ''
+    // Carica gli studenti direttamente dal roster del gruppo didattico
+    // (ClasseViva → Google Classroom → GitHub Classroom), senza dipendere
+    // dalla mappatura ClasseViva.
+    if ($udaId && $gruppoId !== '') {
+        try {
+            $rosterStudents = (new RuntimeStudentNameService($dbAdapter, $userId, $config))
+                ->resolveGroupStudents($gruppoId);
+            foreach ($rosterStudents as $rosterStudent) {
+                $studenti[] = [
+                    'id' => $rosterStudent['id_studente'],
+                    'id_studente_internal' => (string)($rosterStudent['id_studente_internal'] ?? ''),
+                    'provider' => $rosterStudent['provider'],
+                    'nome_completo' => $rosterStudent['nome_completo'],
+                    'cognome' => $rosterStudent['cognome'],
+                    'nome' => $rosterStudent['nome'],
                 ];
             }
-        }
-    }
-
-    // Carica studenti se classe selezionata
-    if ($idClasseCV) {
-        if (!$cvReady) {
-            $error = $error ?? $cvNotice;
+        } catch (Throwable $exception) {
+            error_log('Errore roster laboratorio: ' . $exception->getMessage());
+            $error = 'Impossibile caricare gli studenti del gruppo didattico.';
             $studenti = [];
-        } else {
-            try {
-                $studenti = $studentiManager->getStudentiClasse($idClasseCV);
-            } catch (Exception $e) {
-                $error = "Impossibile caricare studenti: " . $e->getMessage();
-                $studenti = [];
-            }
         }
     }
 
@@ -114,13 +147,13 @@ try {
     $evidenzeVecchie = [];
 
     if ($idStudenteCV && $udaId) {
-        // OTTIMIZZAZIONE CRITICA: Usa findWhere per filtrare a livello database
-        // invece di caricare tutto e filtrare in PHP
-        $evidenzeStudente = $dbAdapter->findWhere('PLUSMINUS_QUEUE', [
-            'id_studente_cv' => $idStudenteCV,
-            'id_uda' => $udaId,
-            'id_materia_cv' => $idMateriaCV
-        ]);
+        // Filtra per gruppo didattico + studente (provider-neutral).
+        $evidenzeWhere = ['id_uda' => $udaId];
+        if ($gruppoId !== '') {
+            $evidenzeWhere['id_gruppo'] = $gruppoId;
+        }
+        $evidenzeWhere['id_studente'] = $idStudenteCV;
+        $evidenzeStudente = $dbAdapter->findWhere('PLUSMINUS_QUEUE', $evidenzeWhere);
 
         // Separa recenti da vecchie (già molto più veloce con dataset ridotto)
         foreach ($evidenzeStudente as $ev) {
@@ -180,9 +213,15 @@ $username = $_SESSION['username'] ?? 'docente';
     $pageTitle = '<i class="bi bi-plus-slash-minus"></i> Laboratorio PiuOMeno';
     ob_start();
     ?>
+    <?php if ($gruppoClasseViva): ?>
     <a href="pubblicazione_cv.php<?php echo $udaId ? "?id_uda=" . urlencode($udaId) : ""; ?>" class="btn btn-outline-light btn-sm">
         <i class="bi bi-cloud-upload"></i> Pubblica Valutazioni
     </a>
+    <?php else: ?>
+    <button type="button" class="btn btn-outline-light btn-sm" disabled title="Nessun mapping ClasseViva">
+        <i class="bi bi-cloud-upload"></i> Pubblica Valutazioni
+    </button>
+    <?php endif; ?>
     <?php if ($udaId): ?>
         <a href="uda_view.php?id=<?php echo urlencode($udaId); ?>" class="btn btn-outline-light btn-sm">
             <i class="bi bi-arrow-left"></i> Torna all'UDA
@@ -212,12 +251,24 @@ $username = $_SESSION['username'] ?? 'docente';
             </div>
         <?php endif; ?>
 
+        <?php if ($gruppoId !== '' && !$gruppoClasseViva): ?>
+            <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <span>
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>Nessun mapping ClasseViva:</strong> alcune funzionalità (pubblicazione annotazioni e voti) sono disabilitate.
+                </span>
+                <a href="teaching_groups.php?return_to=<?= urlencode('laboratorio_valutazione_new.php?id_uda=' . $udaId) ?>" class="btn btn-sm btn-outline-warning">
+                    <i class="bi bi-link-45deg"></i> Vai ai mapping
+                </a>
+            </div>
+        <?php endif; ?>
+
         <!-- Info Sistema -->
         <div class="alert alert-info">
             <h5 class="alert-heading"><i class="bi bi-info-circle"></i> Sistema PiùOMeno</h5>
             <p class="mb-0">
                 Le evidenze <strong>+/-</strong> sono <strong>modificabili per 2 ore</strong> dall'inserimento.
-                Dopo 2 ore vengono automaticamente registrate su ClasseViva.
+                Dopo 2 ore vengono registrate internamente; la pubblicazione su ClasseViva richiede il mapping.
                 Il voto si costruisce in un momento successivo con il pulsante dedicato.
             </p>
         </div>
@@ -243,23 +294,14 @@ $username = $_SESSION['username'] ?? 'docente';
                         </select>
                     </div>
 
-                    <!-- Classe + Materia -->
-                    <?php if (!empty($classi)): ?>
+                    <!-- Classe + Materia (derivata dal gruppo didattico) -->
+                    <?php if ($gruppoId !== ''): ?>
                         <div class="col-md-3">
                             <label class="form-label">Classe + Materia</label>
-                            <select id="classe-materia-select" class="form-select">
-                                <option value="">-- Seleziona --</option>
-                                <?php foreach ($classi as $key => $cm): ?>
-                                    <?php
-                                    $selected = ($cm['id_classe_cv'] === $idClasseCV && $cm['id_materia_cv'] === $idMateriaCV) ? 'selected' : '';
-                                    ?>
-                                    <option value="<?= htmlspecialchars($key) ?>" <?= $selected ?>
-                                            data-classe="<?= htmlspecialchars($cm['id_classe_cv']) ?>"
-                                            data-materia="<?= htmlspecialchars($cm['id_materia_cv']) ?>">
-                                        <?= htmlspecialchars($cm['nome_classe']) ?> - <?= htmlspecialchars($cm['nome_materia']) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
+                            <div class="form-control bg-light">
+                                <i class="bi bi-people"></i>
+                                <?= htmlspecialchars(trim(($gruppoClasse !== '' ? $gruppoClasse . ' - ' : '') . $gruppoMateria) ?: 'Gruppo didattico') ?>
+                            </div>
                         </div>
                     <?php endif; ?>
 
@@ -271,6 +313,8 @@ $username = $_SESSION['username'] ?? 'docente';
                                 <option value="">-- Seleziona Studente --</option>
                                 <?php foreach ($studenti as $s): ?>
                                     <option value="<?= htmlspecialchars($s['id']) ?>"
+                                            data-provider="<?= htmlspecialchars($s['provider'] ?? 'internal') ?>"
+                                            data-studente-internal="<?= htmlspecialchars((string)($s['id_studente_internal'] ?? '')) ?>"
                                             <?= $s['id'] === $idStudenteCV ? 'selected' : '' ?>>
                                         <?= htmlspecialchars($s['nome_completo'] ?? ($s['cognome'] . ' ' . $s['nome'])) ?>
                                     </option>
@@ -291,7 +335,7 @@ $username = $_SESSION['username'] ?? 'docente';
             </div>
         </div>
 
-        <?php if ($idStudenteCV && $udaId && $idMateriaCV): ?>
+        <?php if ($idStudenteCV && $udaId && $gruppoId !== ''): ?>
             <div class="row">
                 <!-- Colonna Indicatori -->
                 <div class="col-md-9">
@@ -454,6 +498,7 @@ $username = $_SESSION['username'] ?? 'docente';
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script>
         const udaId = <?= \App\Core\Security\OutputEncoder::json($udaId) ?>;
+        const gruppoId = <?= \App\Core\Security\OutputEncoder::json($gruppoId) ?>;
         const idClasseCV = <?= \App\Core\Security\OutputEncoder::json($idClasseCV) ?>;
         const idMateriaCV = <?= \App\Core\Security\OutputEncoder::json($idMateriaCV) ?>;
         const idStudenteCV = <?= \App\Core\Security\OutputEncoder::json($idStudenteCV) ?>;
@@ -470,21 +515,11 @@ $username = $_SESSION['username'] ?? 'docente';
                 }
             });
 
-            // Cambio Classe+Materia
-            $('#classe-materia-select').change(function() {
-                const opt = $(this).find(':selected');
-                const classe = opt.data('classe');
-                const materia = opt.data('materia');
-                if (classe && materia && udaId) {
-                    window.location.href = `laboratorio_valutazione_new.php?id_uda=${encodeURIComponent(udaId)}&id_classe_cv=${encodeURIComponent(classe)}&id_materia_cv=${encodeURIComponent(materia)}`;
-                }
-            });
-
-            // Cambio Studente
+            // Cambio Studente (il gruppo è derivato dall'UDA)
             $('#studente-select').change(function() {
                 const studente = $(this).val();
-                if (studente && udaId && idClasseCV && idMateriaCV) {
-                    window.location.href = `laboratorio_valutazione_new.php?id_uda=${encodeURIComponent(udaId)}&id_classe_cv=${encodeURIComponent(idClasseCV)}&id_materia_cv=${encodeURIComponent(idMateriaCV)}&id_studente_cv=${encodeURIComponent(studente)}`;
+                if (studente && udaId) {
+                    window.location.href = `laboratorio_valutazione_new.php?id_uda=${encodeURIComponent(udaId)}&id_gruppo=${encodeURIComponent(gruppoId)}&id_studente=${encodeURIComponent(studente)}`;
                 }
             });
 
@@ -545,8 +580,10 @@ $username = $_SESSION['username'] ?? 'docente';
                 type: 'POST',
                 data: {
                     id_uda: udaId,
+                    id_gruppo: gruppoId,
                     id_materia_cv: idMateriaCV,
                     id_classe_cv: idClasseCV,
+                    id_studente: idStudenteCV,
                     id_studente_cv: idStudenteCV,
                     id_indicatore: pendingEvidenza.indicatore,
                     nome_indicatore: pendingEvidenza.nomeIndicatore,
@@ -590,7 +627,7 @@ $username = $_SESSION['username'] ?? 'docente';
         function costruisciVoto() {
             if (!confirm('Costruire il voto aggregando tutte le evidenze registrate?')) return;
 
-            window.location.href = `costruisci_voto.php?id_uda=${encodeURIComponent(udaId)}&id_materia_cv=${encodeURIComponent(idMateriaCV)}&id_classe_cv=${encodeURIComponent(idClasseCV)}&id_studente_cv=${encodeURIComponent(idStudenteCV)}`;
+            window.location.href = `laboratorio_griglia.php?id_uda=${encodeURIComponent(udaId)}&id_gruppo=${encodeURIComponent(gruppoId)}&id_studente=${encodeURIComponent(idStudenteCV)}`;
         }
     </script>
 </body>
