@@ -84,4 +84,19 @@ if (count(GitHubAssignmentCatalog::filter([$githubAssignment], 'laboratorio')) !
     fwrite(STDERR, "FAIL: filtro catalogo GitHub Classroom\n");
     exit(1);
 }
+
+// Regressione: senza html_url/url e senza oggetto classroom nidificato, l'URL docente
+// va ricostruito dal classroom_id richiesto (parametro), altrimenti resta vuoto.
+$githubNoHtml = GitHubAssignmentCatalog::normalize([
+    'id' => 456,
+    'title' => 'Laboratorio reti',
+    'slug' => 'laboratorio-reti',
+    'invite_link' => 'https://classroom.github.com/a/DEF456',
+], '77');
+if (($githubNoHtml['teacher_url'] ?? '') !== 'https://classroom.github.com/classrooms/77/assignments/laboratorio-reti'
+    || ($githubNoHtml['github_classroom_id'] ?? '') !== '77') {
+    fwrite(STDERR, "FAIL: ricostruzione URL docente GitHub senza html_url\n");
+    exit(1);
+}
+
 echo "PASS: GitHub Classroom catalog normalizer\n";

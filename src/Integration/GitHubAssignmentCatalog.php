@@ -23,15 +23,19 @@ final class GitHubAssignmentCatalog
             // (lista repo studenti accettati) da classroom.url / id+nome / id.
             $classroom = is_array($assignment['classroom'] ?? null) ? $assignment['classroom'] : [];
             $classroomUrl = trim((string)($classroom['url'] ?? ''));
-            $classroomId = trim((string)($classroom['id'] ?? ''));
+            $nestedClassroomId = trim((string)($classroom['id'] ?? ''));
             $classroomName = trim((string)($classroom['name'] ?? ''));
-            if ($classroomUrl === '' && $classroomId !== '' && $classroomName !== '') {
-                $classroomUrl = 'https://classroom.github.com/classrooms/' . $classroomId . '-' . $classroomName;
+            if ($classroomUrl === '' && $nestedClassroomId !== '' && $classroomName !== '') {
+                $classroomUrl = 'https://classroom.github.com/classrooms/' . $nestedClassroomId . '-' . $classroomName;
             }
             if ($classroomUrl !== '') {
                 $teacherUrl = rtrim($classroomUrl, '/') . '/assignments/' . $slug;
             } elseif ($classroomId !== '') {
+                // Il classroom_id richiesto (parametro) è sempre disponibile: usalo
+                // come fallback affidabile quando l'oggetto classroom non è incluso.
                 $teacherUrl = 'https://classroom.github.com/classrooms/' . $classroomId . '/assignments/' . $slug;
+            } elseif ($nestedClassroomId !== '') {
+                $teacherUrl = 'https://classroom.github.com/classrooms/' . $nestedClassroomId . '/assignments/' . $slug;
             }
         }
         $resolvedClassroomId = trim((string)($assignment['classroom_id'] ?? $classroomId ?? ''));
