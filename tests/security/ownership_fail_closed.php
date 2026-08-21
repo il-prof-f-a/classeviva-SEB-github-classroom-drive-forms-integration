@@ -17,12 +17,17 @@ $inner = new class implements DatabaseAdapterInterface {
         ['id_uda'=>'UDA_ORPHAN','titolo'=>'orphan','id_utente_owner'=>''],
     ];
     public array $lastWhere = [];
+    public array $lastUpdateWhere = [];
+    public array $lastDeleteWhere = [];
     public function findAll(string $s): array { return $this->rows; }
     public function findWhere(string $s, array $w): array { $this->lastWhere = $w; return array_values(array_filter($this->rows, fn($r) => (string)($r['id_utente_owner'] ?? '') === (string)($w['id_utente_owner'] ?? ''))); }
     public function findOne(string $s, string $k, $v): ?array { foreach ($this->rows as $r) if (($r[$k] ?? null) == $v) return $r; return null; }
     public function insertRow(string $s, array $d): bool { $this->rows[] = $d; return true; }
     public function updateRow(string $s, string $k, $v, array $d): bool { return true; }
     public function deleteRow(string $s, $v, string $k = 'id'): bool { return true; }
+    public function updateWhere(string $s, array $w, array $d): bool { $this->lastUpdateWhere = $w; return count($this->findMatching($w)) > 0; }
+    public function deleteWhere(string $s, array $w): bool { $this->lastDeleteWhere = $w; return count($this->findMatching($w)) > 0; }
+    private function findMatching(array $where): array { return array_filter($this->rows, static function(array $row) use ($where): bool { foreach ($where as $key => $value) if (($row[$key] ?? null) != $value) return false; return true; }); }
     public function ensureSheetExists(string $s): bool { return true; }
     public function getConnection() { return null; }
     public function createBackup(): string { return ''; }
@@ -45,4 +50,8 @@ $db->insertRow('UDA_ANAGRAFICA', ['id_uda'=>'UDA_NEW','id_utente_owner'=>'USR_B'
 if (($inner->rows[array_key_last($inner->rows)]['id_utente_owner'] ?? '') !== 'USR_A') { fwrite(STDERR,"insert=".json_encode($inner->rows[array_key_last($inner->rows)])."\n"); exit(1); }
 if ($db->updateRow('UDA_ANAGRAFICA', 'id_uda', 'UDA_B', ['titolo'=>'x'])) { fwrite(STDERR,"update\n"); exit(1); }
 if ($db->deleteRow('UDA_ANAGRAFICA', 'UDA_ORPHAN', 'id_uda')) { fwrite(STDERR,"delete\n"); exit(1); }
+if (!$db->updateRow('UDA_ANAGRAFICA', 'id_uda', 'UDA_A', ['titolo'=>'updated'])) { fwrite(STDERR,"own update\n"); exit(1); }
+if (($inner->lastUpdateWhere['id_uda'] ?? '') !== 'UDA_A' || ($inner->lastUpdateWhere['id_utente_owner'] ?? '') !== 'USR_A') { fwrite(STDERR,"atomic update\n"); exit(1); }
+if (!$db->deleteRow('UDA_ANAGRAFICA', 'UDA_A', 'id_uda')) { fwrite(STDERR,"own delete\n"); exit(1); }
+if (($inner->lastDeleteWhere['id_uda'] ?? '') !== 'UDA_A' || ($inner->lastDeleteWhere['id_utente_owner'] ?? '') !== 'USR_A') { fwrite(STDERR,"atomic delete\n"); exit(1); }
 fwrite(STDOUT, "PASS: ownership fail-closed.\n");

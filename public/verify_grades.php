@@ -523,7 +523,7 @@ if ($cvReady && $cv) {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         function deleteOrphanedGrades() {
-            const orphanedVoti = <?= json_encode(array_column($orphanedVoti, 'id_voto')) ?>;
+            const orphanedVoti = <?= \App\Core\Security\OutputEncoder::json(array_column($orphanedVoti, 'id_voto')) ?>;
 
             if (orphanedVoti.length === 0) {
                 alert('Nessun voto da eliminare');

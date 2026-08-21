@@ -208,21 +208,26 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
         }
         $ownerColumn = $this->getOwnerColumn($sheetName);
 
-        // Per sicurezza, se la tabella è user-scoped verifichiamo che la riga
-        // appartenga all'utente corrente prima di aggiornare.
         if ($ownerColumn !== null) {
-            $existing = $this->inner->findOne($sheetName, $keyField, $keyValue);
-            if ($existing === null) {
-                return false;
-            }
-            if (!array_key_exists($ownerColumn, $existing)
-                || (string)$existing[$ownerColumn] !== $this->userId) {
-                // Riga di un altro utente: non aggiornare
-                return false;
-            }
+            $data[$ownerColumn] = $this->userId;
+            return $this->inner->updateWhere(
+                $sheetName,
+                [$keyField => $keyValue, $ownerColumn => $this->userId],
+                $data
+            );
         }
 
         return $this->inner->updateRow($sheetName, $keyField, $keyValue, $data);
+    }
+
+    public function updateWhere(string $sheetName, array $where, array $data): bool
+    {
+        $ownerColumn = $this->getOwnerColumn($sheetName);
+        if ($ownerColumn !== null) {
+            $where[$ownerColumn] = $this->userId;
+            $data[$ownerColumn] = $this->userId;
+        }
+        return $this->inner->updateWhere($sheetName, $where, $data);
     }
 
     /**
@@ -239,18 +244,22 @@ class UserScopedDatabaseAdapter implements DatabaseAdapterInterface
         $ownerColumn = $this->getOwnerColumn($sheetName);
 
         if ($ownerColumn !== null) {
-            $existing = $this->inner->findOne($sheetName, $keyField, $keyValue);
-            if ($existing === null) {
-                return false;
-            }
-            if (!array_key_exists($ownerColumn, $existing)
-                || (string)$existing[$ownerColumn] !== $this->userId) {
-                // Riga di un altro utente: non eliminare
-                return false;
-            }
+            return $this->inner->deleteWhere(
+                $sheetName,
+                [$keyField => $keyValue, $ownerColumn => $this->userId]
+            );
         }
 
         return $this->inner->deleteRow($sheetName, $keyValue, $keyField);
+    }
+
+    public function deleteWhere(string $sheetName, array $where): bool
+    {
+        $ownerColumn = $this->getOwnerColumn($sheetName);
+        if ($ownerColumn !== null) {
+            $where[$ownerColumn] = $this->userId;
+        }
+        return $this->inner->deleteWhere($sheetName, $where);
     }
 
     /**

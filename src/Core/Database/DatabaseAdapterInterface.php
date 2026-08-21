@@ -64,6 +64,12 @@ interface DatabaseAdapterInterface
     public function updateRow(string $sheetName, string $keyField, $keyValue, array $data): bool;
 
     /**
+     * Aggiorna righe che soddisfano contemporaneamente tutti i criteri.
+     * L'array WHERE non puo essere vuoto.
+     */
+    public function updateWhere(string $sheetName, array $where, array $data): bool;
+
+    /**
      * Elimina una riga
      *
      * @param string $sheetName Nome del foglio/tabella
@@ -73,6 +79,12 @@ interface DatabaseAdapterInterface
      * @throws \Exception Se l'eliminazione fallisce
      */
     public function deleteRow(string $sheetName, $keyValue, string $keyField = 'id'): bool;
+
+    /**
+     * Elimina righe che soddisfano contemporaneamente tutti i criteri.
+     * L'array WHERE non puo essere vuoto.
+     */
+    public function deleteWhere(string $sheetName, array $where): bool;
 
     /**
      * Verifica che un foglio/tabella esista, e lo crea se mancante

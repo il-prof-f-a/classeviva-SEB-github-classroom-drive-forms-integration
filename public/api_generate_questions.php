@@ -51,6 +51,17 @@ try {
         exit;
     }
 
+    $requestAction = (string)($data['action'] ?? 'generate');
+    if (!in_array($requestAction, ['list_models', 'preview_prompt'], true)) {
+        $limiter = new \App\Core\Security\RateLimiter(ROOT_PATH . '/storage/rate_limits');
+        if (!$limiter->allow('ai_generate:' . (string)$_SESSION['user_id'], 20, 600)) {
+            http_response_code(429);
+            header('Retry-After: 600');
+            echo json_encode(['error' => 'Troppe richieste. Riprova tra alcuni minuti.']);
+            exit;
+        }
+    }
+
     // List models
     if (($data['action'] ?? '') === 'list_models') {
         $provider = $data['provider'] ?? null;
@@ -89,5 +100,5 @@ try {
     echo json_encode($response);
 } catch (Exception $e) {
     http_response_code(500);
-    echo json_encode(['error' => $e->getMessage()]);
+    echo json_encode(['error' => \App\Core\Security\PublicError::message($e, 'api_generate_questions')]);
 }

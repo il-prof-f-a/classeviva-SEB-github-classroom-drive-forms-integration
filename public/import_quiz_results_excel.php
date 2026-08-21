@@ -242,6 +242,7 @@ function resolveQuizStudentNames($dbAdapter, array $config, string $userId, ?str
  */
 function parseQuizExcel(string $filePath, string $platform): array
 {
+    \App\Core\Security\SpreadsheetPolicy::assertWithinLimits($filePath);
     $spreadsheet = IOFactory::load($filePath);
 
     $rows = [];
@@ -343,6 +344,8 @@ if ($step === 'upload' && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES
         if ($ext !== 'xlsx') {
             throw new Exception('Il file deve essere in formato .xlsx');
         }
+        \App\Core\Security\UploadPolicy::assertValid((string)$file['name'], (string)$file['tmp_name'], 'spreadsheet');
+        \App\Core\Security\SpreadsheetPolicy::assertWithinLimits((string)$file['tmp_name']);
 
         // Risoluzione provider-neutral: gruppo + roster Classroom per il match nomi.
         $groupId = null;

@@ -5,26 +5,42 @@ declare(strict_types=1);
 $root = dirname(__DIR__);
 $failures = [];
 $passes = 0;
+$phpCommand = escapeshellarg(PHP_BINARY);
+if (PHP_OS_FAMILY === 'Windows') {
+    $extensionDir = rtrim((string)ini_get('extension_dir'), '/\\');
+    foreach (['zip', 'gd'] as $extension) {
+        if (is_file($extensionDir . DIRECTORY_SEPARATOR . 'php_' . $extension . '.dll')) {
+            $phpCommand .= ' -d ' . escapeshellarg('extension=' . $extension);
+        }
+    }
+}
+$nullDevice = PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null';
 
 $securityTests = [
     'baseline sicurezza' => __DIR__ . '/security/baseline_environment.php',
     'identificatori SQL' => __DIR__ . '/security/sql_identifier_policy.php',
     'guardie richiesta' => __DIR__ . '/security/request_guard.php',
+    'copertura CSRF' => __DIR__ . '/security/csrf_coverage.php',
     'superficie web' => __DIR__ . '/security/public_surface.php',
     'policy SSRF' => __DIR__ . '/security/ssrf_policy.php',
     'accesso materiali AI' => __DIR__ . '/security/ai_material_access.php',
     'output encoding' => __DIR__ . '/security/output_encoding.php',
+    'copertura sink output' => __DIR__ . '/security/output_sink_coverage.php',
     'campi segreti' => __DIR__ . '/security/secret_fields.php',
     'ownership fail-closed' => __DIR__ . '/security/ownership_fail_closed.php',
+    'accesso esportazioni' => __DIR__ . '/security/export_access.php',
     'upload policy' => __DIR__ . '/security/upload_policy.php',
+    'limiti fogli di calcolo' => __DIR__ . '/security/spreadsheet_policy.php',
     'archivio GitHub' => __DIR__ . '/security/github_archive_policy.php',
     'sicurezza sessione' => __DIR__ . '/security/session_security.php',
+    'URL di ritorno locali' => __DIR__ . '/security/local_return_url.php',
+    'errori pubblici' => __DIR__ . '/security/public_error.php',
     'cifratura versionata' => __DIR__ . '/security/encryption_versioning.php',
     'header HTTP' => __DIR__ . '/security/http_headers.php',
     'egress integrazioni' => __DIR__ . '/security/integration_egress.php',
 ];
 foreach ($securityTests as $label => $testFile) {
-    exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($testFile) . ' 2>&1', $securityOutput, $securityExitCode);
+    exec($phpCommand . ' ' . escapeshellarg($testFile) . ' 2>&1', $securityOutput, $securityExitCode);
     if ($securityExitCode === 0) {
         $passes++;
         echo "PASS: {$label}\n";
@@ -35,7 +51,7 @@ foreach ($securityTests as $label => $testFile) {
     $securityOutput = [];
 }
 
-$legacyClassesMigrationCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/database/legacy_classes_to_groups.php');
+$legacyClassesMigrationCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/database/legacy_classes_to_groups.php');
 exec($legacyClassesMigrationCommand . ' 2>&1', $legacyClassesMigrationOutput, $legacyClassesMigrationExitCode);
 if ($legacyClassesMigrationExitCode === 0) {
     $passes++;
@@ -45,7 +61,7 @@ if ($legacyClassesMigrationExitCode === 0) {
     echo "FAIL: migrazione classi legacy verso gruppi didattici\n";
 }
 
-$rubricaGroupOnlyCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/public/rubrica_orale_group_only.php');
+$rubricaGroupOnlyCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/public/rubrica_orale_group_only.php');
 exec($rubricaGroupOnlyCommand . ' 2>&1', $rubricaGroupOnlyOutput, $rubricaGroupOnlyExitCode);
 if ($rubricaGroupOnlyExitCode === 0) {
     $passes++;
@@ -55,7 +71,7 @@ if ($rubricaGroupOnlyExitCode === 0) {
     echo "FAIL: rubrica orale gruppo senza materia\n";
 }
 
-$excelImportStudentNamesCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/public/excel_import_student_names.php');
+$excelImportStudentNamesCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/public/excel_import_student_names.php');
 exec($excelImportStudentNamesCommand . ' 2>&1', $excelImportStudentNamesOutput, $excelImportStudentNamesExitCode);
 if ($excelImportStudentNamesExitCode === 0) {
     $passes++;
@@ -65,7 +81,7 @@ if ($excelImportStudentNamesExitCode === 0) {
     echo "FAIL: nomi studenti import Excel\n";
 }
 
-$excelImportSubmitCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/public/excel_import_submit.php');
+$excelImportSubmitCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/public/excel_import_submit.php');
 exec($excelImportSubmitCommand . ' 2>&1', $excelImportSubmitOutput, $excelImportSubmitExitCode);
 if ($excelImportSubmitExitCode === 0) {
     $passes++;
@@ -75,7 +91,7 @@ if ($excelImportSubmitExitCode === 0) {
     echo "FAIL: submit import Excel\n";
 }
 
-$udaTestsImportLinkCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/public/uda_tests_import_link.php');
+$udaTestsImportLinkCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/public/uda_tests_import_link.php');
 exec($udaTestsImportLinkCommand . ' 2>&1', $udaTestsImportLinkOutput, $udaTestsImportLinkExitCode);
 if ($udaTestsImportLinkExitCode === 0) {
     $passes++;
@@ -85,7 +101,7 @@ if ($udaTestsImportLinkExitCode === 0) {
     echo "FAIL: link importazione quiz da uda_tests\n";
 }
 
-$adminEnvCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/admin_env_configuration.php');
+$adminEnvCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/admin_env_configuration.php');
 exec($adminEnvCommand . ' 2>&1', $adminEnvOutput, $adminEnvExitCode);
 if ($adminEnvExitCode === 0) {
     $passes++;
@@ -95,7 +111,7 @@ if ($adminEnvExitCode === 0) {
     echo "FAIL: amministratori configurati tramite ambiente\n";
 }
 
-$envPrecedenceCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/bootstrap_env_precedence.php');
+$envPrecedenceCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/bootstrap_env_precedence.php');
 exec($envPrecedenceCommand . ' 2>&1', $envPrecedenceOutput, $envPrecedenceExitCode);
 if ($envPrecedenceExitCode === 0) {
     $passes++;
@@ -106,7 +122,7 @@ if ($envPrecedenceExitCode === 0) {
     echo "FAIL: precedenza delle variabili ambiente del processo\n";
 }
 
-$classeVivaSessionCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/classeviva_session_auth.php');
+$classeVivaSessionCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/classeviva_session_auth.php');
 exec($classeVivaSessionCommand . ' 2>&1', $classeVivaSessionOutput, $classeVivaSessionExitCode);
 if ($classeVivaSessionExitCode === 0) {
     $passes++;
@@ -116,7 +132,7 @@ if ($classeVivaSessionExitCode === 0) {
     echo "FAIL: autenticazione ClasseViva limitata alla sessione PHP\n";
 }
 
-$localUrlCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/local_url_configuration.php');
+$localUrlCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/local_url_configuration.php');
 exec($localUrlCommand . ' 2>&1', $localUrlOutput, $localUrlExitCode);
 if ($localUrlExitCode === 0) {
     $passes++;
@@ -126,7 +142,7 @@ if ($localUrlExitCode === 0) {
     echo "FAIL: URL e callback OAuth configurati per il locale\n";
 }
 
-$githubFixedCallbackCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/github_fixed_callback.php');
+$githubFixedCallbackCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/github_fixed_callback.php');
 exec($githubFixedCallbackCommand . ' 2>&1', $githubFixedCallbackOutput, $githubFixedCallbackExitCode);
 if ($githubFixedCallbackExitCode === 0) {
     $passes++;
@@ -136,7 +152,7 @@ if ($githubFixedCallbackExitCode === 0) {
     echo "FAIL: callback GitHub fisso e derivato da APP_URL\n";
 }
 
-$googleClockSkewCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/google_id_token_clock_skew.php');
+$googleClockSkewCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/google_id_token_clock_skew.php');
 exec($googleClockSkewCommand . ' 2>&1', $googleClockSkewOutput, $googleClockSkewExitCode);
 if ($googleClockSkewExitCode === 0) {
     $passes++;
@@ -146,7 +162,7 @@ if ($googleClockSkewExitCode === 0) {
     echo "FAIL: tolleranza temporale limitata per ID token Google\n";
 }
 
-$integrationHintsCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/user_integrations_empty_hints.php');
+$integrationHintsCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/user_integrations_empty_hints.php');
 exec($integrationHintsCommand . ' 2>&1', $integrationHintsOutput, $integrationHintsExitCode);
 if ($integrationHintsExitCode === 0) {
     $passes++;
@@ -157,7 +173,7 @@ if ($integrationHintsExitCode === 0) {
 }
 
 if (filter_var(getenv('TEST_MYSQL') ?: false, FILTER_VALIDATE_BOOLEAN)) {
-    $databaseCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/database_mysql.php');
+    $databaseCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/database_mysql.php');
     exec($databaseCommand . ' 2>&1', $databaseOutput, $databaseExitCode);
     if ($databaseExitCode === 0) {
         $passes++;
@@ -166,7 +182,7 @@ if (filter_var(getenv('TEST_MYSQL') ?: false, FILTER_VALIDATE_BOOLEAN)) {
         $failures[] = 'MySQL: ' . implode(' | ', $databaseOutput);
         echo "FAIL: inizializzazione e validazione MySQL\n";
     }
-    $mysqlE2eCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/e2e/new_uda_provider_neutral_mysql.php');
+    $mysqlE2eCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/e2e/new_uda_provider_neutral_mysql.php');
     exec($mysqlE2eCommand . ' 2>&1', $mysqlE2eOutput, $mysqlE2eExitCode);
     if ($mysqlE2eExitCode === 0) {
         $passes++;
@@ -314,7 +330,7 @@ foreach ($requiredProductFiles as $file) {
 $phpFiles = filesMatching($root, 'php');
 $lintFailures = [];
 foreach ($phpFiles as $path) {
-    $command = escapeshellarg(PHP_BINARY) . ' -l ' . escapeshellarg($path) . ' 2>&1';
+    $command = $phpCommand . ' -l ' . escapeshellarg($path) . ' 2>&1';
     exec($command, $output, $exitCode);
     if ($exitCode !== 0) {
         $lintFailures[] = str_replace('\\', '/', substr($path, strlen($root) + 1));
@@ -437,7 +453,7 @@ check(str_contains($devRouter, 'config|database|src|storage|vendor') && str_cont
 
 $ignoredRequired = [];
 $gitVersion = [];
-exec('git --version 2>/dev/null', $gitVersion, $gitExit);
+exec('git --version 2>' . $nullDevice, $gitVersion, $gitExit);
 if ($gitExit === 0) {
     foreach (array_merge($requiredAssets, $requiredProductFiles) as $relative) {
         exec('git -C ' . escapeshellarg($root) . ' check-ignore -q -- ' . escapeshellarg($relative), $ignoreOutput, $ignoreExit);
@@ -533,7 +549,7 @@ $architectureTests = [
 ];
 foreach ($architectureTests as $label => $testFile) {
     $architectureOutput = [];
-    exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($testFile) . ' 2>&1', $architectureOutput, $architectureExitCode);
+    exec($phpCommand . ' ' . escapeshellarg($testFile) . ' 2>&1', $architectureOutput, $architectureExitCode);
     if ($architectureExitCode === 0) {
         $passes++;
         echo "PASS: architettura {$label}\n";
@@ -577,7 +593,7 @@ $editorTests = [
     'forms classroom highlight' => __DIR__ . '/import_questions/test_forms_classroom_highlight.php',
 ];
 foreach ($editorTests as $label => $testFile) {
-    exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($testFile) . ' 2>&1', $editorOutput, $editorExitCode);
+    exec($phpCommand . ' ' . escapeshellarg($testFile) . ' 2>&1', $editorOutput, $editorExitCode);
     if ($editorExitCode === 0) {
         $passes++;
         echo "PASS: UDA editor {$label}\n";
@@ -589,7 +605,7 @@ foreach ($editorTests as $label => $testFile) {
 }
 
 $nodeVersion = [];
-exec('node --version 2>/dev/null', $nodeVersion, $nodeExitCode);
+exec('node --version 2>' . $nullDevice, $nodeVersion, $nodeExitCode);
 if ($nodeExitCode === 0) {
     exec('node ' . escapeshellarg(__DIR__ . '/uda_editor/test_editor_utils.js') . ' 2>&1', $nodeOutput, $nodeTestExitCode);
     if ($nodeTestExitCode === 0) {

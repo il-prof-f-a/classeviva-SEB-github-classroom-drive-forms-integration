@@ -12,6 +12,7 @@ use App\Core\ClasseVivaTokenGuard;
 use App\Core\Database\DatabaseFactory;
 use App\Controllers\OralRubricController;
 use App\Integration\ClasseVivaAPI;
+use App\Core\Security\PublicError;
 
 header('Content-Type: application/json');
 
@@ -52,8 +53,5 @@ try {
 
 } catch (Exception $e) {
     http_response_code(500);
-    echo json_encode([
-        'success' => false,
-        'error' => 'Errore caricamento valutazioni: ' . $e->getMessage()
-    ]);
+    echo json_encode(PublicError::json($e, 'oral rubric load'));
 }

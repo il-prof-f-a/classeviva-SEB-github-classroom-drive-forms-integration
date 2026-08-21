@@ -213,7 +213,7 @@ $courseFields = [
                         <div class="col-lg-6">
                             <details>
                                 <summary>Dettagli JSON</summary>
-                                <pre class="mt-2"><?= htmlspecialchars(json_encode($courseData, JSON_PRETTY_PRINT)) ?></pre>
+                                <pre class="mt-2"><?= htmlspecialchars(json_encode($courseData, JSON_PRETTY_PRINT | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT)) ?></pre>
                             </details>
                         </div>
                     </div>

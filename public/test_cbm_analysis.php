@@ -643,7 +643,7 @@ foreach ($questionStats as $label => $q) {
 </div>
 
 <script>
-const studentSeries = <?= json_encode($studentSeries) ?>;
+const studentSeries = <?= \App\Core\Security\OutputEncoder::json($studentSeries) ?>;
 const ctx = document.getElementById('scatterAccCbm').getContext('2d');
 const datasetPoints = studentSeries.map(s => ({
     x: s.classic_pct,
@@ -781,7 +781,6 @@ document.querySelectorAll('tr.student-row').forEach(row => {
 </script>
 </body>
 </html>
-
 
 
 

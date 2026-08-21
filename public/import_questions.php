@@ -374,6 +374,12 @@ function parseQuestionsFromFile($modalita, $file)
             return buildPreviewFromCSV($file['tmp_name']);
 
         case 'excel':
+            try {
+                \App\Core\Security\UploadPolicy::assertValid((string)$file['name'], (string)$file['tmp_name'], 'spreadsheet');
+                \App\Core\Security\SpreadsheetPolicy::assertWithinLimits((string)$file['tmp_name']);
+            } catch (Throwable $error) {
+                return ['success' => false, 'error' => \App\Core\Security\PublicError::message($error, 'import_questions_upload')];
+            }
             return buildPreviewFromExcel($file['tmp_name']);
 
         default:
@@ -472,7 +478,7 @@ function buildPreviewFromJSONContent(string $jsonContent): array
             "IMPORT JSON ERROR: {$e->getMessage()}\nFirst 200 chars: " . substr($jsonContent, 0, 200) . "\n\n",
             FILE_APPEND
         );
-        return ['success' => false, 'error' => $e->getMessage() . '. Verifica che il contenuto rispetti il template.'];
+        return ['success' => false, 'error' => \App\Core\Security\PublicError::message($e, 'import_questions_json')];
     }
 
     $questions = [];
@@ -758,6 +764,8 @@ function importFromExcel($dbAdapter, $udaId, $file) {
     }
 
     try {
+        \App\Core\Security\UploadPolicy::assertValid((string)($file['name'] ?? ''), (string)$file['tmp_name'], 'spreadsheet');
+        \App\Core\Security\SpreadsheetPolicy::assertWithinLimits((string)$file['tmp_name']);
         $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($file['tmp_name']);
         $worksheet = $spreadsheet->getActiveSheet();
         $rows = $worksheet->toArray();
@@ -1409,6 +1417,8 @@ function buildPreviewFromExistingQuizExcel($file, string $platform): array
     }
 
     try {
+        \App\Core\Security\UploadPolicy::assertValid((string)($file['name'] ?? ''), (string)$file['tmp_name'], 'spreadsheet');
+        \App\Core\Security\SpreadsheetPolicy::assertWithinLimits((string)$file['tmp_name']);
         $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($file['tmp_name']);
         if ($platform === 'kahoot') {
             return buildPreviewFromKahootResultsSpreadsheet($spreadsheet);

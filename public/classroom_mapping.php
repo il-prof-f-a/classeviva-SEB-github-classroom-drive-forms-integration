@@ -444,7 +444,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
         // Carica mappature esistenti dal database
         <?php if (!empty($existingMappings)): ?>
-        const existingMappingsData = <?= json_encode($existingMappings) ?>;
+        const existingMappingsData = <?= \App\Core\Security\OutputEncoder::json($existingMappings) ?>;
 
         // Converte le mappature dal database nel formato dell'applicazione
         existingMappingsData.forEach(function(dbMapping) {

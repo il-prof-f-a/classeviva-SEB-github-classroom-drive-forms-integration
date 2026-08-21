@@ -3,6 +3,7 @@
 namespace App\Core;
 
 use App\Core\Security\UploadPolicy;
+use App\Core\Security\SpreadsheetPolicy;
 
 /**
  * Import/preview helper per domande da file (JSON principalmente).
@@ -158,6 +159,7 @@ class QuestionImporter
         }
         try {
             UploadPolicy::assertValid(basename($path), $path, 'spreadsheet');
+            SpreadsheetPolicy::assertWithinLimits($path);
             $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($path);
             $worksheet = $spreadsheet->getActiveSheet();
             $rows = $worksheet->toArray();

@@ -24,6 +24,7 @@ use App\Core\RuntimeStudentNameService;
 use App\Core\UDAManager;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\UdaGroupRepository;
+use App\Core\Security\PublicError;
 use App\Integration\ClasseVivaAPI;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -218,7 +219,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
         ]);
         exit;
     } catch (Exception $e) {
-        echo json_encode(['ok' => false, 'error' => 'Errore: ' . $e->getMessage()]);
+        echo json_encode(['ok' => false, 'error' => PublicError::message($e, 'laboratory grade save')]);
         exit;
     }
 }
@@ -371,7 +372,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
         exit;
 
     } catch (Exception $e) {
-        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+        echo json_encode(['ok' => false, 'error' => \App\Core\Security\PublicError::message($e, 'laboratorio_griglia_save')]);
         exit;
     }
 }
@@ -1202,13 +1203,13 @@ try {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         // Dati correnti
-        const udaId = <?= json_encode($udaId) ?>;
-        const idClasseCV = <?= json_encode($idClasseCV) ?>;
-        const idMateriaCV = <?= json_encode($idMateriaCV) ?>;
-        const username = <?= json_encode($username) ?>;
+        const udaId = <?= \App\Core\Security\OutputEncoder::json($udaId) ?>;
+        const idClasseCV = <?= \App\Core\Security\OutputEncoder::json($idClasseCV) ?>;
+        const idMateriaCV = <?= \App\Core\Security\OutputEncoder::json($idMateriaCV) ?>;
+        const username = <?= \App\Core\Security\OutputEncoder::json($username) ?>;
 
         // Pesi degli indicatori (per calcolo voto)
-        const pesiIndicatori = <?= json_encode($pesiIndicatori) ?>;
+        const pesiIndicatori = <?= \App\Core\Security\OutputEncoder::json($pesiIndicatori) ?>;
 
         let pendingVoto = null;
 

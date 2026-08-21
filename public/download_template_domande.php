@@ -6,9 +6,9 @@
 
 error_reporting(E_ALL);
 
-// Questo endpoint serve esclusivamente file statici di esempio e non deve
-// passare dal bootstrap applicativo: il bootstrap protegge gli script in
-// /public/ con un redirect al login, trasformando il download in index.php.
+// Anche i download statici passano dal bootstrap per applicare autenticazione
+// e header di sicurezza. Il bridge CSRF esclude esplicitamente questo endpoint.
+require_once __DIR__ . '/../bootstrap.php';
 
 // Mappa formati consentiti -> file fisico
 $allowed = [

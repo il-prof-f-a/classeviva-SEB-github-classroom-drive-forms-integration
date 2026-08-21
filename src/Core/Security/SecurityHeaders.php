@@ -11,21 +11,32 @@ final class SecurityHeaders
     {
         $headers = [
             'X-Content-Type-Options' => 'nosniff',
+            'X-Frame-Options' => 'SAMEORIGIN',
             'Referrer-Policy' => 'strict-origin-when-cross-origin',
             'Permissions-Policy' => 'camera=(), microphone=(), geolocation=(), payment=()',
-            'Content-Security-Policy-Report-Only' => "default-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self' https://accounts.google.com https://github.com; script-src 'self' https://cdn.jsdelivr.net https://apis.google.com 'unsafe-inline'; style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; connect-src 'self' https://api.openai.com https://generativelanguage.googleapis.com",
+            'Content-Security-Policy' => "default-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self' https://accounts.google.com https://github.com; script-src 'self' https://cdn.jsdelivr.net https://apis.google.com 'unsafe-inline'; style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; connect-src 'self' https://api.openai.com https://generativelanguage.googleapis.com",
         ];
         if ($https) $headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains';
         if ($integrationPage) $headers['Cache-Control'] = 'no-store';
         return $headers;
     }
 
-    public static function apply(array $server, string $script = ''): void
+    /** @param array<string,mixed> $server */
+    public static function requestIsHttps(array $server, bool $configuredHttps = false): bool
+    {
+        return $configuredHttps
+            || (!empty($server['HTTPS']) && strtolower((string)$server['HTTPS']) !== 'off');
+    }
+
+    public static function apply(array $server, string $script = '', bool $configuredHttps = false): void
     {
         if (PHP_SAPI === 'cli') return;
-        $forwarded = strtolower((string)($server['HTTP_X_FORWARDED_PROTO'] ?? ''));
-        $https = (!empty($server['HTTPS']) && strtolower((string)$server['HTTPS']) !== 'off') || $forwarded === 'https';
-        $integration = str_contains(strtolower($script), 'integration') || str_contains(strtolower($script), 'api_');
+        header_remove('X-Powered-By');
+        $https = self::requestIsHttps($server, $configuredHttps);
+        $normalizedScript = strtolower(str_replace('\\', '/', $script));
+        $integration = str_contains($normalizedScript, 'integration')
+            || str_contains($normalizedScript, 'api_')
+            || str_contains($normalizedScript, '/api/');
         foreach (self::headers($https, $integration) as $name => $value) header($name . ': ' . $value);
     }
 }

@@ -487,7 +487,7 @@ try {
 } catch (Exception $e) {
     $responsePayload = [
         'success' => false,
-        'error' => $e->getMessage()
+        'error' => \App\Core\Security\PublicError::message($e, 'ajax_get_classroom_topic_resources')
     ];
 }
 

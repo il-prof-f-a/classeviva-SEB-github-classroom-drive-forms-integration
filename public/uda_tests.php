@@ -639,7 +639,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                                 class="btn btn-sm btn-outline-primary mb-1"
                                                 data-bs-toggle="modal"
                                                 data-bs-target="#editTestModal"
-                                                onclick="loadTestForEdit(<?= htmlspecialchars(json_encode($test), ENT_QUOTES) ?>)">
+                                                onclick="loadTestForEdit(<?= htmlspecialchars(json_encode($test, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES) ?>)">
                                             <i class="bi bi-pencil"></i>
                                         </button>
                                         <!-- Pulsante Elimina -->

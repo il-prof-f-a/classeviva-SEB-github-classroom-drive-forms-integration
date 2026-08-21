@@ -89,6 +89,6 @@ try {
     http_response_code(500);
     echo json_encode([
         'success' => false,
-        'error' => $e->getMessage()
+        'error' => \App\Core\Security\PublicError::message($e, 'ajax_load_students_from_db')
     ]);
 }

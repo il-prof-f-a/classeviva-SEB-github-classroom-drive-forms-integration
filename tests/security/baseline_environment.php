@@ -21,6 +21,17 @@ if (!is_file($root . '/vendor/autoload.php')) {
     fwrite(STDERR, "FAIL: vendor incompleto\n");
     exit(1);
 }
+require_once $root . '/vendor/autoload.php';
+foreach ([$root, $root . '/config'] as $envPath) {
+    if (is_file($envPath . '/.env')) {
+        Dotenv\Dotenv::createImmutable($envPath)->safeLoad();
+    }
+}
+foreach ($_ENV as $key => $value) {
+    if (getenv((string)$key) === false) {
+        putenv($key . '=' . $value);
+    }
+}
 $encryption = $root . '/src/Utils/EncryptionHelper.php';
 if (getenv('APP_ENV') !== 'testing' && is_file($encryption)) {
     require_once $encryption;

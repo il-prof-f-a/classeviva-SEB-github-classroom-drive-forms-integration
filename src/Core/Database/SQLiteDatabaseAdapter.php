@@ -37,8 +37,12 @@ class SQLiteDatabaseAdapter implements DatabaseAdapterInterface
     {
         $this->config = $config;
 
-        // Path del database SQLite
-        $this->dbFilePath = ROOT_PATH . '/' . ($config['database']['sqlite']['file'] ?? 'database/uda_master.db');
+        // Path del database SQLite. Il DSN speciale :memory: non e un file e
+        // non deve essere trasformato in un percorso relativo al progetto.
+        $configuredFile = (string)($config['database']['sqlite']['file'] ?? 'database/uda_master.db');
+        $this->dbFilePath = $configuredFile === ':memory:'
+            ? $configuredFile
+            : ROOT_PATH . '/' . $configuredFile;
 
         // Verifica che PDO SQLite sia disponibile
         if (!extension_loaded('pdo_sqlite')) {
@@ -58,9 +62,11 @@ class SQLiteDatabaseAdapter implements DatabaseAdapterInterface
     {
         try {
             // Crea directory se non esiste
-            $dir = dirname($this->dbFilePath);
-            if (!is_dir($dir)) {
-                mkdir($dir, 0755, true);
+            if ($this->dbFilePath !== ':memory:') {
+                $dir = dirname($this->dbFilePath);
+                if (!is_dir($dir)) {
+                    mkdir($dir, 0755, true);
+                }
             }
 
             // Connetti
@@ -276,30 +282,22 @@ class SQLiteDatabaseAdapter implements DatabaseAdapterInterface
         if (\App\Core\StudentReferenceGateway::handles($sheetName)) {
             $data = \App\Core\StudentReferenceGateway::normalizeWrite($this, $sheetName, $data);
         }
+        return $this->updateWhere($sheetName, [$keyField => $keyValue], $data);
+    }
+
+    public function updateWhere(string $sheetName, array $where, array $data): bool
+    {
+        if ($where === [] || $data === []) throw new Exception('UPDATE condizionale privo di criteri o dati');
+        SqlIdentifierValidator::assertSheet($sheetName);
+        SqlIdentifierValidator::assertColumns($sheetName, array_keys($where));
+        SqlIdentifierValidator::assertColumns($sheetName, array_keys($data));
         try {
             $tableName = $this->sanitizeTableName($sheetName);
-
-            // Prepara UPDATE
-            $setClause = [];
-            $params = [];
-            foreach ($data as $field => $value) {
-                $setClause[] = "{$field} = ?";
-                $params[] = $value;
-            }
-            $params[] = $keyValue; // Parametro per WHERE
-
-            $sql = sprintf(
-                "UPDATE %s SET %s WHERE %s = ?",
-                $tableName,
-                implode(', ', $setClause),
-                $keyField
-            );
-
-            $stmt = $this->pdo->prepare($sql);
-            $stmt->execute($params);
-
+            $set = array_map(static fn(string $field): string => $field . ' = ?', array_keys($data));
+            $conditions = array_map(static fn(string $field): string => $field . ' = ?', array_keys($where));
+            $stmt = $this->pdo->prepare('UPDATE ' . $tableName . ' SET ' . implode(', ', $set) . ' WHERE ' . implode(' AND ', $conditions));
+            $stmt->execute(array_merge(array_values($data), array_values($where)));
             return $stmt->rowCount() > 0;
-
         } catch (PDOException $e) {
             throw new Exception("Errore aggiornamento '{$sheetName}': " . $e->getMessage());
         }
@@ -318,15 +316,20 @@ class SQLiteDatabaseAdapter implements DatabaseAdapterInterface
         if ($sheetName === 'GITHUB_CLASSROOMS') {
             return \App\Core\ProviderNeutralMappingService::deleteLegacy($this, 'github_classroom', (string)$keyValue);
         }
+        return $this->deleteWhere($sheetName, [$keyField => $keyValue]);
+    }
+
+    public function deleteWhere(string $sheetName, array $where): bool
+    {
+        if ($where === []) throw new Exception('DELETE condizionale privo di criteri');
+        SqlIdentifierValidator::assertSheet($sheetName);
+        SqlIdentifierValidator::assertColumns($sheetName, array_keys($where));
         try {
             $tableName = $this->sanitizeTableName($sheetName);
-
-            $sql = "DELETE FROM {$tableName} WHERE {$keyField} = ?";
-            $stmt = $this->pdo->prepare($sql);
-            $stmt->execute([$keyValue]);
-
+            $conditions = array_map(static fn(string $field): string => $field . ' = ?', array_keys($where));
+            $stmt = $this->pdo->prepare('DELETE FROM ' . $tableName . ' WHERE ' . implode(' AND ', $conditions));
+            $stmt->execute(array_values($where));
             return $stmt->rowCount() > 0;
-
         } catch (PDOException $e) {
             throw new Exception("Errore eliminazione da '{$sheetName}': " . $e->getMessage());
         }

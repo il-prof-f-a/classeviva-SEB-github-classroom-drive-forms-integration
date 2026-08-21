@@ -248,7 +248,7 @@ if ($selectedClassId && $selectedSubjectId) {
                         <?php foreach ($classiMaterie as $class): ?>
                             <option value="<?= htmlspecialchars($class['id']) ?>"
                                     <?= $class['id'] === $selectedClassId ? 'selected' : '' ?>
-                                    data-subjects='<?= json_encode($class['subjects']) ?>'>
+                                    data-subjects='<?= \App\Core\Security\OutputEncoder::json($class['subjects']) ?>'>
                                 <?= htmlspecialchars($class['name']) ?>
                             </option>
                         <?php endforeach; ?>
@@ -468,7 +468,7 @@ if ($selectedClassId && $selectedSubjectId) {
         // Mappa classi -> materie
         const classSubjectsMap = {};
         <?php foreach ($classiMaterie as $class): ?>
-            classSubjectsMap['<?= $class['id'] ?>'] = <?= json_encode($class['subjects']) ?>;
+            classSubjectsMap[<?= \App\Core\Security\OutputEncoder::json((string)$class['id']) ?>] = <?= \App\Core\Security\OutputEncoder::json($class['subjects']) ?>;
         <?php endforeach; ?>
 
         const selectedSubjectId = '<?= $selectedSubjectId ?? '' ?>';

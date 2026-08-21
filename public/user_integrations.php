@@ -75,24 +75,12 @@ if ($flash) {
 }
 $errorMessage = null;
 
-$normalizeReturnUrl = static function (?string $url): string {
-    $url = trim((string)$url);
-    if ($url === '') {
-        return '';
-    }
-    $parts = parse_url($url);
-    if ($parts === false) {
-        return '';
-    }
-    if (!empty($parts['scheme']) || !empty($parts['host'])) {
-        $currentHost = $_SERVER['HTTP_HOST'] ?? '';
-        $targetHost = $parts['host'] ?? '';
-        if ($currentHost !== '' && $targetHost !== '' && strcasecmp($currentHost, $targetHost) !== 0) {
-            return '';
-        }
-    }
-    return $url;
-};
+$allowedReturnScripts = array_map('basename', glob(__DIR__ . '/*.php') ?: []);
+$normalizeReturnUrl = static fn(?string $url): string => \App\Core\Security\LocalReturnUrl::normalize(
+    $url,
+    $allowedReturnScripts,
+    (string)($_SERVER['HTTP_HOST'] ?? '')
+);
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $returnToCandidate = $_GET['return_to'] ?? '';

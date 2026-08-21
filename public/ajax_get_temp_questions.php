@@ -61,5 +61,5 @@ try {
     echo json_encode(['success' => true, 'count' => count($questions), 'questions' => $questions], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 } catch (Throwable $e) {
     http_response_code(500);
-    echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    echo json_encode(['success' => false, 'error' => \App\Core\Security\PublicError::message($e, 'ajax_get_temp_questions')]);
 }

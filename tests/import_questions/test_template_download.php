@@ -18,8 +18,8 @@ foreach ([
     }
 }
 
-if (str_contains($endpoint, "require_once __DIR__ . '/../bootstrap.php'")) {
-    fwrite(STDERR, "FAIL: l'endpoint di download non deve applicare il redirect di autenticazione del bootstrap\n");
+if (!str_contains($endpoint, "require_once __DIR__ . '/../bootstrap.php'")) {
+    fwrite(STDERR, "FAIL: l'endpoint di download deve applicare autenticazione e header del bootstrap\n");
     exit(1);
 }
 

@@ -29,7 +29,7 @@ try {
         } catch (Exception $e) {
             echo json_encode([
                 'success' => false,
-                'error' => $e->getMessage()
+                'error' => \App\Core\Security\PublicError::message($e, 'ajax_get_classroom_topics')
             ]);
             exit;
         }
@@ -65,6 +65,6 @@ try {
 } catch (Exception $e) {
     echo json_encode([
         'success' => false,
-        'error' => $e->getMessage()
+        'error' => \App\Core\Security\PublicError::message($e, 'ajax_get_classroom_topics')
     ]);
 }

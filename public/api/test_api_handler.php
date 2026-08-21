@@ -27,6 +27,7 @@ use Google\Service\Forms;
 use Google\Service\Drive;
 use App\Core\Security\Authorization;
 use App\Core\Security\Csrf;
+use App\Core\Security\PublicError;
 
 header('Content-Type: application/json');
 
@@ -62,7 +63,8 @@ try {
         jsonResponse(false, '', null, 'Azione non valida');
     }
 } catch (Exception $e) {
-    jsonResponse(false, '', null, $e->getMessage());
+    $publicError = PublicError::json($e, 'integration test handler');
+    jsonResponse(false, '', null, $publicError['error']);
 }
 
 /**

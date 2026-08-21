@@ -1,6 +1,11 @@
 <?php
 // Script per generare rubrica_orale_v2.php
 
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 $content = <<<'PHPCODE'
 <?php
 /**
@@ -430,6 +435,7 @@ $valutazioniSalvate = [];
 PHPCODE;
 
 // Continua con l'HTML nel prossimo blocco
-file_put_contents(__DIR__ . '/rubrica_orale_v2.php', $content);
+$target = dirname(__DIR__) . '/public/rubrica_orale_v2.php';
+file_put_contents($target, $content);
 echo "Parte 1 scritta!\n";
 ?>

@@ -484,7 +484,7 @@ $mediaVoti = $totaleRisposte > 0 ? array_sum(array_column($formResponses, 'voto_
 <?php endif; ?>
 
 <script>
-const studentSeries = <?= json_encode($studentSeries) ?>;
+const studentSeries = <?= \App\Core\Security\OutputEncoder::json($studentSeries) ?>;
 let scatterChart = null;
 let currentPoints = [];
 let selectedStudentKey = null;
@@ -788,7 +788,7 @@ function showStudentLevels(email) {
     if (!email) return;
     const panel = document.getElementById('cbmStudentPanel');
     const key = email.toLowerCase();
-    const levels = <?= json_encode($cbmByStudent) ?>;
+    const levels = <?= \App\Core\Security\OutputEncoder::json($cbmByStudent) ?>;
     const data = levels[key] || null;
     if (!panel || !data) {
         if (panel) panel.textContent = 'Nessun dato CBM per questo studente.';

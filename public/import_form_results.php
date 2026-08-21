@@ -710,7 +710,7 @@ if ($step === 'read_responses' && $testId) {
                     'unmatched' => array_values(array_unique($unmatched)),
                 ];
             } catch (Exception $e) {
-                $resolution = ['group_id' => null, 'matches' => [], 'unmatched' => [], 'error' => $e->getMessage()];
+                $resolution = ['group_id' => null, 'matches' => [], 'unmatched' => [], 'error' => \App\Core\Security\PublicError::message($e, 'import_form_name_resolution')];
             }
         }
 

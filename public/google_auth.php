@@ -17,6 +17,7 @@ use App\Core\Database\DatabaseFactory;
 use App\Core\UserIntegrationManager;
 
 $error_message = null;
+$show_retry_link = false;
 $success_message = null;
 $token_info = null;
 $googleRedirectUri = $config['google']['redirect_uri'] ?? env('GOOGLE_REDIRECT_URI');
@@ -135,7 +136,7 @@ if (isset($_GET['code'])) {
     } catch (Exception $e) {
         $error_message = "Errore durante l'autenticazione: " . $e->getMessage();
         // Aggiungi link per riprovare
-        $error_message .= ' <a href="google_auth.php" class="alert-link">Click qui per riprovare</a>';
+        $show_retry_link = true;
     }
 }
 
@@ -281,7 +282,10 @@ if (isset($_GET['success'])) {
 <?php if ($error_message): ?>
                     <div class="alert alert-danger alert-dismissible fade show">
                         <i class="bi bi-exclamation-triangle-fill"></i>
-                        <strong>Errore:</strong> <?= $error_message ?>
+                        <strong>Errore:</strong> <?= \App\Core\Security\OutputEncoder::html($error_message) ?>
+                        <?php if ($show_retry_link): ?>
+                            <a href="google_auth.php" class="alert-link">Click qui per riprovare</a>
+                        <?php endif; ?>
                         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                     </div>
 

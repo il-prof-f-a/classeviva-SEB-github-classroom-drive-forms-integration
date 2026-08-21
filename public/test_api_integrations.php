@@ -1045,7 +1045,7 @@ async function loadDriveFolders() {
         const response = await fetch('api/test_api_handler.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'action=load_data&type=drive_folders&csrf_token=' + encodeURIComponent(<?= json_encode($csrfToken) ?>)
+            body: 'action=load_data&type=drive_folders&csrf_token=' + encodeURIComponent(<?= \App\Core\Security\OutputEncoder::json($csrfToken) ?>)
         });
         const result = await response.json();
         if (result.success && result.data) {
@@ -1075,7 +1075,7 @@ async function loadClassroomCourses() {
         const response = await fetch('api/test_api_handler.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'action=load_data&type=classroom_courses&csrf_token=' + encodeURIComponent(<?= json_encode($csrfToken) ?>)
+            body: 'action=load_data&type=classroom_courses&csrf_token=' + encodeURIComponent(<?= \App\Core\Security\OutputEncoder::json($csrfToken) ?>)
         });
         const result = await response.json();
         if (result.success && result.data) {
@@ -1107,7 +1107,7 @@ async function loadCvClasses() {
         const response = await fetch('api/test_api_handler.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'action=load_data&type=cv_classes&csrf_token=' + encodeURIComponent(<?= json_encode($csrfToken) ?>)
+            body: 'action=load_data&type=cv_classes&csrf_token=' + encodeURIComponent(<?= \App\Core\Security\OutputEncoder::json($csrfToken) ?>)
         });
         const result = await response.json();
         if (result.success && result.data) {

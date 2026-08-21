@@ -19,24 +19,12 @@ if (empty($_SESSION['user_id'])) {
     exit;
 }
 
-$normalizeReturnUrl = static function (?string $url): string {
-    $url = trim((string)$url);
-    if ($url === '') {
-        return '';
-    }
-    $parts = parse_url($url);
-    if ($parts === false) {
-        return '';
-    }
-    if (!empty($parts['scheme']) || !empty($parts['host'])) {
-        $currentHost = $_SERVER['HTTP_HOST'] ?? '';
-        $targetHost = $parts['host'] ?? '';
-        if ($currentHost !== '' && $targetHost !== '' && strcasecmp($currentHost, $targetHost) !== 0) {
-            return '';
-        }
-    }
-    return $url;
-};
+$allowedReturnScripts = array_map('basename', glob(__DIR__ . '/*.php') ?: []);
+$normalizeReturnUrl = static fn(?string $url): string => \App\Core\Security\LocalReturnUrl::normalize(
+    $url,
+    $allowedReturnScripts,
+    (string)($_SERVER['HTTP_HOST'] ?? '')
+);
 
 $flashKey = 'cv_quick_login_flash';
 $returnToCandidate = $_POST['return_to'] ?? ($_SERVER['HTTP_REFERER'] ?? '');
@@ -88,7 +76,7 @@ try {
     $username = null;
     $password = null;
     $_SESSION[$flashKey] = [
-        'error' => $e->getMessage(),
+        'error' => \App\Core\Security\PublicError::message($e, 'refresh_classeviva_token'),
         'return_to' => $returnTo,
     ];
 }

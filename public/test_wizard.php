@@ -249,6 +249,8 @@ function importFromExcelWizard($dbAdapter, string $udaId, ?array $file): array
     }
 
     try {
+        \App\Core\Security\UploadPolicy::assertValid((string)($file['name'] ?? ''), (string)$file['tmp_name'], 'spreadsheet');
+        \App\Core\Security\SpreadsheetPolicy::assertWithinLimits((string)$file['tmp_name']);
         $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($file['tmp_name']);
         $worksheet = $spreadsheet->getActiveSheet();
         $rows = $worksheet->toArray();
@@ -1321,4 +1323,3 @@ try {
     </script>
 </body>
 </html>
-

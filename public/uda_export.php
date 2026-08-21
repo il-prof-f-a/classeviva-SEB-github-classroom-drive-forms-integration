@@ -10,7 +10,9 @@ error_reporting(E_ALL);
 $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
+use App\Core\ExportAccessService;
 use App\Core\ExportManager;
+use App\Core\Security\PublicError;
 
 $db = DatabaseFactory::createWithInitialization($config, true);
 $exportManager = new ExportManager($db, $config);
@@ -19,10 +21,14 @@ $message = null;
 $error = null;
 $anteprima = null;
 $fileGenerato = null;
+$fileToken = null;
+$userId = (string)($_SESSION['user_id'] ?? '');
 
 // Recupera ID UDA
 $udaId = $_GET['id'] ?? $_GET['id_uda'] ?? $_POST['id_uda'] ?? null;
-$action = $_POST['action'] ?? $_GET['action'] ?? null;
+$action = $_SERVER['REQUEST_METHOD'] === 'POST'
+    ? ($_POST['action'] ?? null)
+    : ($_GET['action'] ?? null);
 
 if (!$udaId) {
     header('Location: index.php');
@@ -43,17 +49,24 @@ try {
 
         if (file_exists($filePath)) {
             $fileGenerato = basename($filePath);
+            $fileToken = (new ExportAccessService(ROOT_PATH . '/storage/exports'))
+                ->register($_SESSION, $userId, (string)$udaId, $filePath);
             $message = "Documento generato con successo!";
         } else {
             throw new Exception("Errore durante la generazione del documento");
         }
     }
 
-    if ($action === 'download' && isset($_GET['file'])) {
-        $fileName = basename($_GET['file']);
-        $filePath = ROOT_PATH . '/storage/exports/' . $fileName;
+    if ($action === 'download' && isset($_GET['token'])) {
+        $filePath = (new ExportAccessService(ROOT_PATH . '/storage/exports'))->resolve(
+            $_SESSION,
+            (string)$_GET['token'],
+            $userId,
+            (string)$udaId
+        );
 
-        if (file_exists($filePath)) {
+        if ($filePath !== null && file_exists($filePath)) {
+            $fileName = basename($filePath);
             header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
             header('Content-Disposition: attachment; filename="' . $fileName . '"');
             header('Content-Length: ' . filesize($filePath));
@@ -65,7 +78,7 @@ try {
     }
 
 } catch (Exception $e) {
-    $error = $e->getMessage();
+    $error = PublicError::message($e, 'uda export');
 }
 
 ?>
@@ -112,8 +125,8 @@ try {
         <?php if ($message): ?>
             <div class="alert alert-success alert-dismissible fade show">
                 <i class="bi bi-check-circle"></i> <?= htmlspecialchars($message) ?>
-                <?php if ($fileGenerato): ?>
-                    <a href="?id=<?= urlencode($udaId) ?>&action=download&file=<?= urlencode($fileGenerato) ?>" class="btn btn-sm btn-success ms-3">
+                <?php if ($fileGenerato && $fileToken): ?>
+                    <a href="?id=<?= urlencode($udaId) ?>&action=download&token=<?= urlencode($fileToken) ?>" class="btn btn-sm btn-success ms-3">
                         <i class="bi bi-download"></i> Scarica Documento
                     </a>
                 <?php endif; ?>

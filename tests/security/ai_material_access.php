@@ -15,6 +15,8 @@ $db = new class implements DatabaseAdapterInterface {
     public function insertRow(string $s, array $d): bool { return true; }
     public function updateRow(string $s, string $k, $v, array $d): bool { return true; }
     public function deleteRow(string $s, $v, string $k = 'id'): bool { return true; }
+    public function updateWhere(string $s, array $w, array $d): bool { return true; }
+    public function deleteWhere(string $s, array $w): bool { return true; }
     public function ensureSheetExists(string $s): bool { return true; }
     public function getConnection() { return null; }
     public function createBackup(): string { return ''; }

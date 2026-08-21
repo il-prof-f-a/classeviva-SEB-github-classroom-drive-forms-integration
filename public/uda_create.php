@@ -979,12 +979,12 @@ try {
         let domandaCounter = 0;
         let selectedGroupIds = [];
 
-        const cvClassSubjects = <?= json_encode($cvClassSubjects, JSON_UNESCAPED_UNICODE) ?>;
+        const cvClassSubjects = <?= \App\Core\Security\OutputEncoder::json($cvClassSubjects) ?>;
         const classroomMappingIndex = <?= json_encode($classroomMappingIndex, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
         const githubMappingIndex = <?= json_encode($githubMappingIndex, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
         const teachingGroupCatalog = <?= json_encode(array_values($teachingGroupCatalogRows), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
         const teachingGroupCatalogIndex = <?= json_encode($teachingGroupCatalogIndex, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
-        const obiettiviCatalog = <?= json_encode(array_values($allObiettivi), JSON_UNESCAPED_UNICODE) ?>;
+        const obiettiviCatalog = <?= \App\Core\Security\OutputEncoder::json(array_values($allObiettivi)) ?>;
         const pickerApiKey = "<?= htmlspecialchars($pickerApiKey) ?>";
         const pickerClientId = "<?= htmlspecialchars($pickerClientId) ?>";
         let pickerInited = false;

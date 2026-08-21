@@ -361,7 +361,7 @@ include __DIR__ . '/partials/app_header.php';
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    const modelsFallback = <?= json_encode($aiModels) ?>;
+    const modelsFallback = <?= \App\Core\Security\OutputEncoder::json($aiModels) ?>;
     const providerSelect = document.getElementById('ai_provider');
     const modelSelect = document.getElementById('ai_model');
     const promptPreview = document.getElementById('ai_prompt_preview');
@@ -370,7 +370,7 @@ include __DIR__ . '/partials/app_header.php';
     const copyBtn = document.getElementById('ai_copy_btn');
     const csrfToken = <?= json_encode($csrfToken, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     const attachmentsList = <?= json_encode($attachmentsList, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
-    const obiettiviList = <?= json_encode($obiettiviList, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+    const obiettiviList = <?= \App\Core\Security\OutputEncoder::json($obiettiviList) ?>;
     const profName = <?= json_encode($profName, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     const alertPlaceholder = document.createElement('div');
     alertPlaceholder.className = 'mt-2';

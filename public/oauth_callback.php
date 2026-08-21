@@ -6,6 +6,7 @@ use Google\Client;
 use App\Core\GoogleIdTokenVerifier;
 use App\Core\Database\DatabaseFactory;
 use App\Core\TestAccessPolicy;
+use App\Core\Security\PublicError;
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -135,6 +136,6 @@ try {
     exit;
 
 } catch (Exception $e) {
-    header('Location: login.php?error=' . urlencode($e->getMessage()));
+    header('Location: login.php?error=' . urlencode(PublicError::message($e, 'google oauth callback')));
     exit;
 }

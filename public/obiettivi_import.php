@@ -26,7 +26,8 @@ $error = null;
 $risultatoImport = null;
 
 // Gestione azioni
-$action = $_GET['action'] ?? $_POST['action'] ?? null;
+$action = $_POST['action'] ?? null;
+$downloadAction = $_GET['action'] ?? null;
 // Supporta id_uda da uda_view.php per preselezionare l'UDA
 $preselectedUdaId = $_GET['id_uda'] ?? null;
 
@@ -34,7 +35,7 @@ try {
     // Recupera UDA per selezione
     $udas = $udaManager->getAllUDAs();
 
-    if ($action === 'download_template') {
+    if ($downloadAction === 'download_template') {
         // Genera e scarica template
         $templatePath = ROOT_PATH . '/storage/template_obiettivi.xlsx';
 

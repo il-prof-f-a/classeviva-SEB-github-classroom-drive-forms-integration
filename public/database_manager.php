@@ -470,7 +470,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     } catch (Exception $e) {
         $actionResult = [
             'success' => false,
-            'error' => $e->getMessage()
+            'error' => \App\Core\Security\PublicError::message($e, 'database_manager')
         ];
         $actionType = $action;
     }

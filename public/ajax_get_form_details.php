@@ -153,7 +153,7 @@ try {
     http_response_code(400);
     echo json_encode([
         'success' => false,
-        'error' => $e->getMessage()
+        'error' => \App\Core\Security\PublicError::message($e, 'ajax_get_form_details')
     ]);
 }
 

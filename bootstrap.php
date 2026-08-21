@@ -16,10 +16,6 @@ if (file_exists(ROOT_PATH . '/vendor/autoload.php')) {
     require_once ROOT_PATH . '/vendor/autoload.php';
 }
 
-if (class_exists(\App\Core\Security\SecurityHeaders::class)) {
-    \App\Core\Security\SecurityHeaders::apply($_SERVER, (string)($_SERVER['SCRIPT_NAME'] ?? ''));
-}
-
 // Carica variabili d'ambiente (.env in root o in config/.env)
 $envPaths = [ROOT_PATH, ROOT_PATH . '/config'];
 foreach ($envPaths as $envPath) {
@@ -51,11 +47,21 @@ if (!function_exists('env')) {
     }
 }
 
+$configuredAppScheme = strtolower((string)(parse_url((string)env('APP_URL', ''), PHP_URL_SCHEME) ?? ''));
+$configuredHttps = $configuredAppScheme === 'https';
+if (class_exists(\App\Core\Security\SecurityHeaders::class)) {
+    \App\Core\Security\SecurityHeaders::apply(
+        $_SERVER,
+        (string)($_SERVER['SCRIPT_NAME'] ?? ''),
+        $configuredHttps
+    );
+}
+
 $sessionIdleTimeout = max(60, (int)env('SESSION_IDLE_TIMEOUT', 3600));
 if (php_sapi_name() !== 'cli' && session_status() === PHP_SESSION_NONE) {
-    $forwardedProto = strtolower((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''));
-    $isHttps = (!empty($_SERVER['HTTPS']) && strtolower((string)$_SERVER['HTTPS']) !== 'off')
-        || $forwardedProto === 'https';
+    $isHttps = class_exists(\App\Core\Security\SecurityHeaders::class)
+        ? \App\Core\Security\SecurityHeaders::requestIsHttps($_SERVER, $configuredHttps)
+        : $configuredHttps;
     ini_set('session.use_strict_mode', '1');
     ini_set('session.gc_maxlifetime', (string)$sessionIdleTimeout);
     session_set_cookie_params([
@@ -244,6 +250,7 @@ function buildConfigFromEnv(): array {
                 'smtp_host' => env('MAIL_HOST', ''),
                 'smtp_port' => env('MAIL_PORT', 587),
                 'smtp_allowed_ports' => [465, 587],
+                'smtp_allowed_hosts' => array_values(array_filter([strtolower(trim((string)env('MAIL_HOST', '')))])),
                 'smtp_encryption' => env('MAIL_ENCRYPTION', 'tls'),
                 'smtp_user' => env('MAIL_USERNAME', ''),
                 'smtp_password' => env('MAIL_PASSWORD', ''),
@@ -630,6 +637,42 @@ if (php_sapi_name() !== 'cli') {
                 }
                 header('Location: ' . $loginUrl);
                 exit;
+            }
+
+            $publicMarker = '/public/';
+            $publicOffset = strpos($scriptLower, $publicMarker);
+            $relativePublicScript = $publicOffset === false
+                ? ''
+                : ltrim(substr(str_replace('\\', '/', $script), $publicOffset + strlen($publicMarker)), '/');
+            $securitySurface = require ROOT_PATH . '/config/security_surface.php';
+            $mutatingScripts = array_map(
+                static fn(string $path): string => strtolower(str_replace('\\', '/', $path)),
+                $securitySurface['mutating'] ?? []
+            );
+            $requestMethod = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+
+            if ($requestMethod === 'POST' && in_array(strtolower($relativePublicScript), $mutatingScripts, true)) {
+                try {
+                    \App\Core\Security\RequestGuard::assertMutation($_SERVER, $_SESSION, $_POST);
+                } catch (\Throwable $securityError) {
+                    http_response_code(403);
+                    $accept = strtolower((string)($_SERVER['HTTP_ACCEPT'] ?? ''));
+                    $isJsonRequest = str_starts_with(strtolower($relativePublicScript), 'ajax_')
+                        || str_starts_with(strtolower($relativePublicScript), 'api/')
+                        || str_contains($accept, 'application/json');
+                    if ($isJsonRequest) {
+                        header('Content-Type: application/json; charset=utf-8');
+                        echo json_encode(['success' => false, 'error' => 'Richiesta non autorizzata. Ricarica la pagina e riprova.']);
+                    } else {
+                        header('Content-Type: text/plain; charset=utf-8');
+                        echo 'Richiesta non autorizzata. Ricarica la pagina e riprova.';
+                    }
+                    exit;
+                }
+            }
+
+            if (\App\Core\Security\Csrf::shouldInstallHtmlBridge($_SERVER, $_GET)) {
+                \App\Core\Security\Csrf::installHtmlBridge($_SESSION);
             }
         }
     }

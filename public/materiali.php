@@ -878,7 +878,7 @@ if (!empty($selectedUdaId)) {
     <script>
         const pickerApiKey = "<?= htmlspecialchars($pickerApiKey) ?>";
         const pickerClientId = "<?= htmlspecialchars($pickerClientId) ?>";
-        const selectedUdaId = <?= json_encode($selectedUdaId) ?>;
+        const selectedUdaId = <?= \App\Core\Security\OutputEncoder::json($selectedUdaId) ?>;
         let pickerInited = false;
         let tokenClient = null;
         let driveAccessToken = null;

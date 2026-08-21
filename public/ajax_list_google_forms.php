@@ -66,7 +66,7 @@ try {
     echo json_encode([
         'success' => false,
         'error_code' => $errorCode,
-        'error' => $e->getMessage(),
+        'error' => \App\Core\Security\PublicError::message($e, 'ajax_list_google_forms'),
         'required_scopes' => GoogleFormsCatalog::requiredScopes(),
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }

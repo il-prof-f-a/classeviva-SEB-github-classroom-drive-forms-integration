@@ -171,7 +171,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
                                 <input type="checkbox" name="rows[]" value="<?= htmlspecialchars($row[$primaryKey] ?? '') ?>">
                             </td>
                             <?php foreach ($row as $value): ?>
-                                <td><?= htmlspecialchars(is_scalar($value) ? $value : json_encode($value)) ?></td>
+                                <td><?= htmlspecialchars(is_scalar($value) ? $value : json_encode($value, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT)) ?></td>
                             <?php endforeach; ?>
                         </tr>
                     <?php endforeach; ?>

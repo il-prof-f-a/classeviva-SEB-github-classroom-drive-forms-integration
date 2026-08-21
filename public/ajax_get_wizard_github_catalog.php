@@ -132,6 +132,6 @@ try {
     $json([
         'success' => false,
         'error_code' => 'github_catalog_unavailable',
-        'error' => $e->getMessage()
+        'error' => \App\Core\Security\PublicError::message($e, 'ajax_get_wizard_github_catalog')
     ], 500);
 }

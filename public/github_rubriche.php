@@ -135,7 +135,7 @@ if ($selectedTestId === '' && $selectedRubricId !== '') {
     }
 }
 
-$action = (string)($_POST['action'] ?? $_GET['action'] ?? '');
+$action = (string)($_POST['action'] ?? '');
 
 try {
     if ($action === 'delete' && !empty($_POST['id_rubrica'])) {

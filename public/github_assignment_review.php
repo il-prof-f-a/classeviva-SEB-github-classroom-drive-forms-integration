@@ -28,8 +28,15 @@ function jsonResponse($data, $status = 200)
     exit;
 }
 
-$action = $_GET['action'] ?? null;
-if ($action === 'commit_details') {
+$requestMethod = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+$getAction = $requestMethod === 'GET' ? ($_GET['action'] ?? null) : null;
+$jsonRequest = [];
+if ($requestMethod === 'POST' && str_contains(strtolower((string)($_SERVER['CONTENT_TYPE'] ?? '')), 'application/json')) {
+    $decodedRequest = json_decode((string)file_get_contents('php://input'), true);
+    $jsonRequest = is_array($decodedRequest) ? $decodedRequest : [];
+}
+$postAction = $requestMethod === 'POST' ? ($_POST['action'] ?? $jsonRequest['action'] ?? null) : null;
+if ($getAction === 'commit_details') {
     try {
         if (!$isAuthenticated) {
             throw new Exception('Non autenticato su GitHub');
@@ -75,7 +82,7 @@ if ($action === 'commit_details') {
     } catch (Exception $e) {
         jsonResponse([
             'ok' => false,
-            'error' => $e->getMessage()
+            'error' => \App\Core\Security\PublicError::message($e, 'github_commit_details')
         ], 400);
     }
 }
@@ -182,7 +189,7 @@ function ghDefaultGitRubricDefinition(): array
     ];
 }
 
-if ($action === 'rubric_load') {
+if ($getAction === 'rubric_load') {
     try {
         $studentId = trim((string)($_GET['student_id'] ?? ''));
         if ($studentId === '') {
@@ -227,17 +234,13 @@ if ($action === 'rubric_load') {
             'saved_json' => $savedJson
         ]);
     } catch (Exception $e) {
-        jsonResponse(['ok' => false, 'error' => $e->getMessage()], 400);
+        jsonResponse(['ok' => false, 'error' => \App\Core\Security\PublicError::message($e, 'github_rubric_load')], 400);
     }
 }
 
-if ($action === 'rubric_save') {
+if ($postAction === 'rubric_save') {
     try {
-        $raw = file_get_contents('php://input');
-        $payload = json_decode($raw, true);
-        if (!is_array($payload)) {
-            $payload = $_POST;
-        }
+        $payload = $jsonRequest !== [] ? $jsonRequest : $_POST;
 
         $studentId = trim((string)($payload['student_id'] ?? ''));
         if ($studentId === '') {
@@ -301,7 +304,7 @@ if ($action === 'rubric_save') {
             jsonResponse(['ok' => true, 'inserted' => true, 'id_valutazione' => $idVal]);
         }
     } catch (Exception $e) {
-        jsonResponse(['ok' => false, 'error' => $e->getMessage()], 400);
+        jsonResponse(['ok' => false, 'error' => \App\Core\Security\PublicError::message($e, 'github_rubric_save')], 400);
     }
 }
 
@@ -564,17 +567,23 @@ function ghComputeLocWithClocIfAvailable($rootDir)
     return ['totals' => $totals, 'by_language' => $byLang, 'raw' => $data];
 }
 
-if ($action === 'repo_loc') {
+if ($postAction === 'repo_loc') {
     try {
         if (!$isAuthenticated) {
             throw new Exception('Non autenticato su GitHub');
         }
 
+        $limiter = new \App\Core\Security\RateLimiter(ROOT_PATH . '/storage/rate_limits');
+        if (!$limiter->allow('github_repo_loc:' . $userId, 20, 600)) {
+            header('Retry-After: 600');
+            jsonResponse(['ok' => false, 'error' => 'Troppe analisi richieste. Riprova tra alcuni minuti.'], 429);
+        }
+
         set_time_limit(180);
 
-        $repoFull = trim((string)($_GET['repo'] ?? ''));
-        $ref = trim((string)($_GET['ref'] ?? ''));
-        $force = (string)($_GET['force'] ?? '0') === '1';
+        $repoFull = trim((string)($_POST['repo'] ?? ''));
+        $ref = trim((string)($_POST['ref'] ?? ''));
+        $force = (string)($_POST['force'] ?? '0') === '1';
 
         if (!preg_match('~^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$~', $repoFull)) {
             throw new Exception('Repository non valido');
@@ -781,7 +790,7 @@ if ($action === 'repo_loc') {
     } catch (Exception $e) {
         jsonResponse([
             'ok' => false,
-            'error' => $e->getMessage()
+            'error' => \App\Core\Security\PublicError::message($e, 'github_repo_loc')
         ], 400);
     }
 }
@@ -1756,7 +1765,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             url.searchParams.set('sha', sha);
             url.searchParams.set('with_comments', withComments ? '1' : '0');
 
-            const res = await fetch(url.toString(), {headers: {'Accept': 'application/json'}});
+            const res = await fetch(url.toString(), {method: 'POST', headers: {'Accept': 'application/json'}});
             const data = await res.json();
 
             if (!data.ok) {
@@ -1844,13 +1853,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
             container.innerHTML = '<div class="text-muted">Calcolo LOC...</div>';
 
-            const url = new URL(window.location.href);
-            url.searchParams.set('action', 'repo_loc');
-            url.searchParams.set('repo', repoFull);
-            url.searchParams.set('ref', ref);
-            url.searchParams.set('force', force ? '1' : '0');
-
-            const res = await fetch(url.toString(), {headers: {'Accept': 'application/json'}});
+            const body = new URLSearchParams({action: 'repo_loc', repo: repoFull, ref, force: force ? '1' : '0'});
+            const res = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body});
             const data = await res.json();
 
             if (!data.ok) {
@@ -2056,10 +2060,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             });
 
 	        const RUBRIC_CTX = {
-	            test_id: <?= json_encode((string)$testId) ?>,
-	            id_uda: <?= json_encode((string)($test['id_uda'] ?? '')) ?>,
-	            id_gruppo: <?= json_encode((string)($idGruppo ?? '')) ?>,
-	            rubric_editor_url: <?= json_encode('github_rubriche.php?test_id=' . urlencode((string)$testId)) ?>
+	            test_id: <?= \App\Core\Security\OutputEncoder::json((string)$testId) ?>,
+	            id_uda: <?= \App\Core\Security\OutputEncoder::json((string)($test['id_uda'] ?? '')) ?>,
+	            id_gruppo: <?= \App\Core\Security\OutputEncoder::json((string)($idGruppo ?? '')) ?>,
+	            rubric_editor_url: <?= \App\Core\Security\OutputEncoder::json('github_rubriche.php?test_id=' . urlencode((string)$testId)) ?>
 	        };
 
 		        const rubricPanelEl = document.getElementById('rubricPanel');
@@ -2242,11 +2246,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                    if (now - rubricLastSavedAt < 400) return;
 
 	                    setSaveStatus('muted', 'Salvataggio...');
-	                    const url = new URL(window.location.href);
-	                    url.searchParams.set('action', 'rubric_save');
-	                    url.searchParams.set('test_id', RUBRIC_CTX.test_id);
-
 	                    const payload = {
+	                        action: 'rubric_save',
 	                        student_id: rubricContext.student_id,
 	                        nome_studente: rubricContext.nome_studente || '',
 	                        id_gruppo: RUBRIC_CTX.id_gruppo || '',
@@ -2268,7 +2269,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                        }
 	                    };
 
-	                    const res = await fetch(url.toString(), {
+	                    const res = await fetch(window.location.href, {
 	                        method: 'POST',
 	                        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
 	                        body: JSON.stringify(payload)
@@ -2405,12 +2406,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            // Carica LOC (usa endpoint esistente, con cache)
 	            if (repoFull) {
 	                try {
-	                    const locUrl = new URL(window.location.href);
-	                    locUrl.searchParams.set('action', 'repo_loc');
-	                    locUrl.searchParams.set('repo', repoFull);
-	                    locUrl.searchParams.set('ref', ref || 'main');
-	                    locUrl.searchParams.set('force', '0');
-	                    const locRes = await fetch(locUrl.toString(), {headers: {'Accept': 'application/json'}});
+	                    const locBody = new URLSearchParams({action: 'repo_loc', repo: repoFull, ref: ref || 'main', force: '0'});
+                    const locRes = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body: locBody});
 	                    const locData = await locRes.json();
 	                    const el = document.getElementById('rubricLocSummary');
 	                    if (el) {

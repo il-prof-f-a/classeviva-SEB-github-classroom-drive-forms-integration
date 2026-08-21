@@ -775,7 +775,7 @@ foreach ($studentiCV as $cv) {
 
         // Accetta tutti i suggerimenti
         function applyAllSuggestions() {
-            const suggestions = <?= json_encode($suggerimenti) ?>;
+            const suggestions = <?= \App\Core\Security\OutputEncoder::json($suggerimenti) ?>;
 
             Object.keys(suggestions).forEach(cvId => {
                 const gcId = suggestions[cvId].gc_id;

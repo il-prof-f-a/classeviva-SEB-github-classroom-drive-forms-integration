@@ -273,29 +273,22 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
         if (\App\Core\StudentReferenceGateway::handles($sheetName)) {
             $data = \App\Core\StudentReferenceGateway::normalizeWrite($this, $sheetName, $data);
         }
+        return $this->updateWhere($sheetName, [$keyField => $keyValue], $data);
+    }
+
+    public function updateWhere(string $sheetName, array $where, array $data): bool
+    {
+        if ($where === [] || $data === []) throw new Exception('UPDATE condizionale privo di criteri o dati');
+        SqlIdentifierValidator::assertSheet($sheetName);
+        SqlIdentifierValidator::assertColumns($sheetName, array_keys($where));
+        SqlIdentifierValidator::assertColumns($sheetName, array_keys($data));
         try {
             $tableName = $this->sanitizeTableName($sheetName);
-
-            $setClause = [];
-            $params = [];
-            foreach ($data as $field => $value) {
-                $setClause[] = "`{$field}` = ?";
-                $params[] = $value;
-            }
-            $params[] = $keyValue;
-
-            $sql = sprintf(
-                "UPDATE `%s` SET %s WHERE `%s` = ?",
-                $tableName,
-                implode(', ', $setClause),
-                $keyField
-            );
-
-            $stmt = $this->pdo->prepare($sql);
-            $stmt->execute($params);
-
+            $set = array_map(static fn(string $field): string => '`' . $field . '` = ?', array_keys($data));
+            $conditions = array_map(static fn(string $field): string => '`' . $field . '` = ?', array_keys($where));
+            $stmt = $this->pdo->prepare('UPDATE `' . $tableName . '` SET ' . implode(', ', $set) . ' WHERE ' . implode(' AND ', $conditions));
+            $stmt->execute(array_merge(array_values($data), array_values($where)));
             return $stmt->rowCount() > 0;
-
         } catch (PDOException $e) {
             throw new Exception("Errore aggiornamento '{$sheetName}': " . $e->getMessage());
         }
@@ -314,15 +307,20 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
         if ($sheetName === 'GITHUB_CLASSROOMS') {
             return \App\Core\ProviderNeutralMappingService::deleteLegacy($this, 'github_classroom', (string)$keyValue);
         }
+        return $this->deleteWhere($sheetName, [$keyField => $keyValue]);
+    }
+
+    public function deleteWhere(string $sheetName, array $where): bool
+    {
+        if ($where === []) throw new Exception('DELETE condizionale privo di criteri');
+        SqlIdentifierValidator::assertSheet($sheetName);
+        SqlIdentifierValidator::assertColumns($sheetName, array_keys($where));
         try {
             $tableName = $this->sanitizeTableName($sheetName);
-
-            $sql = "DELETE FROM `{$tableName}` WHERE `{$keyField}` = ?";
-            $stmt = $this->pdo->prepare($sql);
-            $stmt->execute([$keyValue]);
-
+            $conditions = array_map(static fn(string $field): string => '`' . $field . '` = ?', array_keys($where));
+            $stmt = $this->pdo->prepare('DELETE FROM `' . $tableName . '` WHERE ' . implode(' AND ', $conditions));
+            $stmt->execute(array_values($where));
             return $stmt->rowCount() > 0;
-
         } catch (PDOException $e) {
             throw new Exception("Errore eliminazione da '{$sheetName}': " . $e->getMessage());
         }

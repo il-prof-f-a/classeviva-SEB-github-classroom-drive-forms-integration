@@ -107,7 +107,7 @@ $questionCardDisplayLabel = $questionCardTemplate ? '' : $questionCardLabel;
                                     data-bs-toggle="modal" data-bs-target="#addQuestionModal"
                                     data-edit="true"
                                     data-id="<?= htmlspecialchars($questionCardData['id_domanda'] ?? '', ENT_QUOTES) ?>"
-                                    data-editor-payload="<?= htmlspecialchars(json_encode($questionCardEditPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), ENT_QUOTES) ?>">
+                                    data-editor-payload="<?= htmlspecialchars(json_encode($questionCardEditPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES) ?>">
                                 <i class="bi bi-pencil"></i>
                             </button>
                             <form method="POST" class="d-inline" onsubmit="return confirm('Sicuro di voler eliminare questa domanda?');">

@@ -23,6 +23,7 @@ use App\Core\UdaGroupRepository;
 use App\Core\RubricManager;
 use App\Core\RuntimeStudentNameResolver;
 use App\Core\RuntimeStudentNameService;
+use App\Core\Security\PublicError;
 use App\Integration\ClasseVivaAPI;
 use App\Integration\GoogleDriveAPI;
 
@@ -35,7 +36,7 @@ $cvReady = $classeVivaState['ready'];
 $cvNotice = $classeVivaState['notice'] ?? 'Token ClasseViva non disponibile.';
 $userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
 
-$action = $_POST['action'] ?? $_GET['action'] ?? 'step0';
+$action = $_POST['action'] ?? 'step0';
 $message = null;
 $error = null;
 $rubrica = null;
@@ -456,6 +457,8 @@ if ($action === 'import_file') {
             $error = "Formato file non valido. Accettati solo file .xlsx";
         } else {
             try {
+                \App\Core\Security\UploadPolicy::assertValid((string)$originalName, (string)$tmpPath, 'rubric');
+                \App\Core\Security\SpreadsheetPolicy::assertWithinLimits((string)$tmpPath);
                 // Salva il file temporaneamente in storage/uploads
                 $uploadDir = ROOT_PATH . '/storage/uploads';
                 if (!is_dir($uploadDir)) {
@@ -1020,7 +1023,7 @@ if ($action === 'aggiorna_voto_finale') {
 
     } catch (Exception $e) {
         error_log("Errore salvataggio voto rubrica: " . $e->getMessage());
-        echo json_encode(['success' => false, 'message' => 'Errore salvataggio: ' . $e->getMessage()]);
+        echo json_encode(['success' => false, 'message' => PublicError::message($e, 'oral rubric grade save')]);
         exit;
     }
 }
@@ -1811,7 +1814,7 @@ if ($idUdaSelezionata && $idClasseDaGet) {
 }
 
 } catch (Exception $e) {
-    $error = "ERRORE FATALE: " . $e->getMessage();
+    $error = PublicError::message($e, 'oral rubric page');
     error_log("Errore rubrica_orale_v2.php: " . $e->getMessage() . "\n" . $e->getTraceAsString());
 
     $action = 'step0';
@@ -2478,15 +2481,15 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         // Dati valutazioni da DATABASE (non più sessioni)
-        const valutazioniStudenti = <?= json_encode($valutazioniPerStudente ?? []) ?>;
+        const valutazioniStudenti = <?= \App\Core\Security\OutputEncoder::json($valutazioniPerStudente ?? []) ?>;
         const domandeDefault = {
-            domanda_1: <?= json_encode($domanda1Default ?? '') ?>,
-            domanda_2: <?= json_encode($domanda2Default ?? '') ?>,
-            domanda_3: <?= json_encode($domanda3Default ?? '') ?>
+            domanda_1: <?= \App\Core\Security\OutputEncoder::json($domanda1Default ?? '') ?>,
+            domanda_2: <?= \App\Core\Security\OutputEncoder::json($domanda2Default ?? '') ?>,
+            domanda_3: <?= \App\Core\Security\OutputEncoder::json($domanda3Default ?? '') ?>
         };
 
         // Dati rubrica da PHP (indicatori con livelli e descrizioni)
-        const rubricaData = <?= $rubrica ? json_encode([
+        const rubricaData = <?= $rubrica ? \App\Core\Security\OutputEncoder::json([
             'indicatori_fissi' => array_values(array_map(function($ind, $idx) {
                 return [
                     'id' => 'ind_' . $idx,
@@ -2503,7 +2506,7 @@ if (!isset($valutazioniSalvate) || !is_array($valutazioniSalvate)) {
                     'livelli' => $ind['livelli']
                 ];
             }, array_slice($rubrica->indicatori, 3, 3), range(0, 2)))
-        ]) : json_encode(['indicatori_fissi' => [], 'indicatori_contenuto' => []]) ?>;
+        ]) : \App\Core\Security\OutputEncoder::json(['indicatori_fissi' => [], 'indicatori_contenuto' => []]) ?>;
 
         function evidenziaRigaStudente(idStudente) {
             const id = idStudente ? String(idStudente) : '';

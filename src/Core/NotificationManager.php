@@ -137,14 +137,31 @@ class NotificationManager
         if (is_string($allowedPorts)) {
             $allowedPorts = array_map('intval', preg_split('/\s*,\s*/', $allowedPorts, -1, PREG_SPLIT_NO_EMPTY));
         }
-        (new OutboundUrlPolicy([$smtpHost], $allowedPorts))->assertAllowed(
+        $allowedHosts = $emailConfig['smtp_allowed_hosts'] ?? [];
+        if (is_string($allowedHosts)) {
+            $allowedHosts = preg_split('/\s*,\s*/', $allowedHosts, -1, PREG_SPLIT_NO_EMPTY);
+        }
+        $allowedHosts = array_values(array_filter(array_map('strtolower', is_array($allowedHosts) ? $allowedHosts : [])));
+        $resolvedIps = (new OutboundUrlPolicy($allowedHosts, $allowedPorts))->resolveAllowed(
             'https://' . (filter_var($smtpHost, FILTER_VALIDATE_IP) ? '[' . $smtpHost . ']' : $smtpHost)
             . ':' . (int)($emailConfig['smtp_port'] ?? 587)
         );
+        $resolvedHost = $resolvedIps[0];
 
         // Configurazione SMTP
         $mail->isSMTP();
-        $mail->Host = $smtpHost;
+        $mail->Host = str_contains($resolvedHost, ':') ? '[' . $resolvedHost . ']' : $resolvedHost;
+        $mail->Helo = $smtpHost;
+        $mail->SMTPOptions = [
+            'ssl' => [
+                'verify_peer' => true,
+                'verify_peer_name' => true,
+                'allow_self_signed' => false,
+                'peer_name' => $smtpHost,
+                'SNI_enabled' => true,
+                'SNI_server_name' => $smtpHost,
+            ],
+        ];
         $mail->SMTPAuth = true;
         $mail->Username = $emailConfig['smtp_user'];
         $mail->Password = $emailConfig['smtp_password'];

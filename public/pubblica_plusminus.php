@@ -275,11 +275,10 @@ $__pubblica_done = true;
 exit;
 
 } catch (Exception $e) {
-    echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    echo json_encode(['ok' => false, 'error' => \App\Core\Security\PublicError::message($e, 'pubblica_plusminus')]);
     $__pubblica_done = true;
     exit;
 }
-
 
 
 

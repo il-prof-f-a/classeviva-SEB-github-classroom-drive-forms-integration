@@ -453,11 +453,11 @@ $username = $_SESSION['username'] ?? 'docente';
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script>
-        const udaId = <?= json_encode($udaId) ?>;
-        const idClasseCV = <?= json_encode($idClasseCV) ?>;
-        const idMateriaCV = <?= json_encode($idMateriaCV) ?>;
-        const idStudenteCV = <?= json_encode($idStudenteCV) ?>;
-        const username = <?= json_encode($username) ?>;
+        const udaId = <?= \App\Core\Security\OutputEncoder::json($udaId) ?>;
+        const idClasseCV = <?= \App\Core\Security\OutputEncoder::json($idClasseCV) ?>;
+        const idMateriaCV = <?= \App\Core\Security\OutputEncoder::json($idMateriaCV) ?>;
+        const idStudenteCV = <?= \App\Core\Security\OutputEncoder::json($idStudenteCV) ?>;
+        const username = <?= \App\Core\Security\OutputEncoder::json($username) ?>;
 
         let pendingEvidenza = null;
 

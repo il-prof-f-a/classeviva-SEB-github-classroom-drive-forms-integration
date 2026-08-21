@@ -33,6 +33,12 @@ final class OutboundUrlPolicy
 
     public function assertAllowed(string $url): void
     {
+        $this->resolveAllowed($url);
+    }
+
+    /** @return list<string> */
+    public function resolveAllowed(string $url): array
+    {
         $parts = parse_url($url);
         if (!is_array($parts) || strtolower((string)($parts['scheme'] ?? '')) !== 'https'
             || !empty($parts['user']) || !empty($parts['pass'])) {
@@ -52,5 +58,6 @@ final class OutboundUrlPolicy
                 throw new RuntimeException('Destinazione di rete non pubblica');
             }
         }
+        return array_values(array_unique($ips));
     }
 }

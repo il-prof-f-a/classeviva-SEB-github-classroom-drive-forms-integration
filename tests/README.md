@@ -19,6 +19,11 @@ La baseline di sicurezza richiede PHP 8.2--8.4, le estensioni runtime dichiarate
 nel `composer.json`, `vendor/autoload.php` completo e una `ENCRYPTION_KEY` in ogni
 ambiente non di test.
 
+Su Windows il runner abilita automaticamente `zip` e `gd` nei processi PHP figli
+quando le relative DLL sono presenti nella directory delle estensioni. Nel profilo
+full l'assenza di `ZipArchive`, Git o Node non viene considerata un successo: i test
+che dipendono da tali prerequisiti devono essere realmente eseguiti.
+
 Copre il contratto di pubblicabilità: file di distribuzione, asset applicativi, lint PHP, include letterali, configurazione `.env`, endpoint diagnostici, URL specifici dello staging, autoload Composer e regole Git. La suite verifica anche il ciclo ClasseViva session-only: scambio token REST verso `PHPSESSID`, assenza di credenziali e token nel database, timeout, rinnovo e logout.
 
 Il test di integrazione MySQL viene eseguito separatamente tramite Docker Compose e `scripts/setup_database.php --validate`.

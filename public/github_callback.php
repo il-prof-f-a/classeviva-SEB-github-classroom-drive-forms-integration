@@ -7,6 +7,8 @@
 require_once '../bootstrap.php';
 
 use App\Integration\GitHubIntegration;
+use App\Core\Security\PublicError;
+use App\Core\Security\LocalReturnUrl;
 
 // Verifica state per sicurezza CSRF
 $state = $_GET['state'] ?? null;
@@ -22,7 +24,9 @@ $code = $_GET['code'] ?? null;
 if (!$code) {
     $error = $_GET['error'] ?? 'unknown';
     $errorDescription = $_GET['error_description'] ?? 'Autenticazione annullata o fallita';
-    die("Errore GitHub OAuth: {$error} - {$errorDescription}");
+    error_log('GitHub OAuth rifiutato: ' . (string)$error . ' - ' . (string)$errorDescription);
+    http_response_code(400);
+    die('Autenticazione GitHub annullata o non riuscita.');
 }
 
 try {
@@ -50,21 +54,12 @@ try {
     $returnTo = $_SESSION['github_oauth_return_to'] ?? null;
     unset($_SESSION['github_oauth_return_to']);
 
-    $safeReturnTo = null;
-    if (is_string($returnTo) && $returnTo !== '') {
-        // Evita open redirect: accetta solo URL relative (senza schema/host)
-        if (strpos($returnTo, "\n") === false && strpos($returnTo, "\r") === false) {
-            $parsed = parse_url($returnTo);
-            $hasHost = !empty($parsed['host']) || !empty($parsed['scheme']);
-            $path = $parsed['path'] ?? '';
-            if (!$hasHost && $path !== '') {
-                // Permetti solo redirect dentro /public/
-                if (strpos($path, '/public/') !== false || str_starts_with($path, 'github_') || str_starts_with($path, 'uda_')) {
-                    $safeReturnTo = $returnTo;
-                }
-            }
-        }
-    }
+    $allowedScripts = array_map('basename', glob(__DIR__ . '/*.php') ?: []);
+    $safeReturnTo = LocalReturnUrl::normalize(
+        is_string($returnTo) ? $returnTo : null,
+        $allowedScripts,
+        (string)($_SERVER['HTTP_HOST'] ?? '')
+    );
 
     if ($safeReturnTo) {
         header('Location: ' . $safeReturnTo);
@@ -74,5 +69,6 @@ try {
     exit;
 
 } catch (Exception $e) {
-    die("Errore nell'autenticazione GitHub: " . htmlspecialchars($e->getMessage()));
+    http_response_code(500);
+    die(htmlspecialchars(PublicError::message($e, 'github oauth callback')));
 }

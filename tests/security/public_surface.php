@@ -21,8 +21,21 @@ foreach ($surface['admin'] as $relative) {
 }
 foreach (glob($root . '/public/*.php') ?: [] as $path) {
     $source = file_get_contents($path) ?: '';
-    if (preg_match('/\$_GET\s*\[\s*["\']action["\']\s*\]\s*===?\s*["\'](?:delete|publish_gc|logout_github)["\']/i', $source)) {
-        $errors[] = 'mutazione GET rilevata: ' . basename($path);
+    $mutatingValue = '(?:delete[^"\']*|remove[^"\']*|reset[^"\']*|save[^"\']*|update[^"\']*|create[^"\']*|publish[^"\']*|revoke[^"\']*|import[^"\']*|upload[^"\']*|logout[^"\']*|repo_loc)';
+    if (preg_match('/\$_GET\s*\[\s*["\']action["\']\s*\]\s*===?\s*["\']' . $mutatingValue . '["\']/i', $source)) {
+        $errors[] = 'mutazione GET diretta rilevata: ' . basename($path);
+        continue;
+    }
+    preg_match_all(
+        '/\$([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[^;]*\$_GET\s*\[\s*["\']action["\']\s*\][^;]*;/i',
+        $source,
+        $assignments
+    );
+    foreach (array_unique($assignments[1] ?? []) as $variable) {
+        if (preg_match('/\$' . preg_quote($variable, '/') . '\s*===?\s*["\']' . $mutatingValue . '["\']/i', $source)) {
+            $errors[] = 'mutazione GET indiretta rilevata: ' . basename($path) . ' ($' . $variable . ')';
+            break;
+        }
     }
 }
 
