@@ -509,6 +509,7 @@ $architectureTests = [
     'grade register target' => __DIR__ . '/domain/grade_register_target.php',
     'grade import name resolution' => __DIR__ . '/domain/grade_import_name_resolution.php',
     'runtime student name service' => __DIR__ . '/domain/runtime_student_name_service.php',
+    'runtime student name roster' => __DIR__ . '/domain/runtime_student_name_roster.php',
     'classroom import provider-neutral' => __DIR__ . '/public/classroom_import_provider_neutral.php',
     'forms import provider-neutral' => __DIR__ . '/public/forms_import_provider_neutral.php',
     'forms score normalization integration' => __DIR__ . '/public/forms_score_normalization_integration.php',

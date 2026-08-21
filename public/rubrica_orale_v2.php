@@ -1693,7 +1693,7 @@ if ($idClasseDaGet) {
             foreach ($runtimeStudents as $runtimeStudent) {
                 $studenti[] = [
                     'id' => $runtimeStudent['id_studente'],
-                    'id_studente_internal' => $runtimeStudent['id_studente'],
+                    'id_studente_internal' => (string)($runtimeStudent['id_studente_internal'] ?? ''),
                     'provider' => $runtimeStudent['provider'],
                     'nome_completo' => $runtimeStudent['nome_completo'],
                     'cognome' => $runtimeStudent['cognome'],

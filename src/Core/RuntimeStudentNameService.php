@@ -39,7 +39,7 @@ final class RuntimeStudentNameService
     }
 
     /**
-     * @return list<array{id_studente:string,nome:string,cognome:string,nome_completo:string,provider:string}>
+     * @return list<array{id_studente:string,id_studente_internal:string,nome:string,cognome:string,nome_completo:string,provider:string}>
      */
     public function resolveGroupStudents(string $groupId): array
     {
@@ -49,24 +49,16 @@ final class RuntimeStudentNameService
         }
 
         $memberships = (new GroupStudentRepository($this->db, $this->userId))->listForGroup($groupId);
-        if ($memberships === []) {
-            return [];
-        }
-
-        $identities = new StudentIdentityRepository($this->db, $this->userId);
-        $identitiesByStudent = [];
-        foreach ($memberships as $membership) {
-            $studentId = trim((string)($membership['id_studente'] ?? ''));
-            if ($studentId !== '') {
-                $identitiesByStudent[$studentId] = $identities->listForStudent($studentId);
-            }
-        }
 
         $integrations = array_values(array_filter(
             (new TeachingGroupIntegrationRepository($this->db, $this->userId))->listForGroup($groupId),
             static fn(array $integration): bool => ($integration['stato'] ?? 'attivo') !== 'disattivo'
         ));
         $providerPriority = $this->providerPriority($integrations);
+
+        // Carica i roster dei provider nell'ordine di priorità, anche in assenza di
+        // membership interne: il gruppo può essere collegato solo a Google Classroom
+        // o solo a GitHub Classroom, senza alcuna mappatura ClasseViva.
         $providerRosters = [];
         $loadedContexts = [];
         foreach ($integrations as $integration) {
@@ -83,6 +75,49 @@ final class RuntimeStudentNameService
                 );
             } catch (\Throwable $exception) {
                 error_log('Errore roster runtime ' . $provider . ': ' . $exception->getMessage());
+            }
+        }
+
+        // Nessuna membership interna: costruisci la lista direttamente dal roster
+        // del primo provider disponibile (priorità ClasseViva → Google → GitHub).
+        if ($memberships === []) {
+            foreach ($providerPriority as $provider) {
+                $roster = $providerRosters[$provider] ?? [];
+                if ($roster === []) {
+                    continue;
+                }
+                $result = [];
+                $seen = [];
+                foreach ($roster as $student) {
+                    if (!is_array($student)) {
+                        continue;
+                    }
+                    $externalId = trim((string)($student['external_user_id'] ?? $student['id'] ?? ''));
+                    $name = trim((string)($student['display_name'] ?? $student['name'] ?? ''));
+                    if ($externalId === '' || $name === '' || isset($seen[$externalId])) {
+                        continue;
+                    }
+                    $seen[$externalId] = true;
+                    $result[] = [
+                        'id_studente' => $externalId,
+                        'id_studente_internal' => '',
+                        'nome' => $name,
+                        'cognome' => '',
+                        'nome_completo' => $name,
+                        'provider' => $provider,
+                    ];
+                }
+                return $result;
+            }
+            return [];
+        }
+
+        $identities = new StudentIdentityRepository($this->db, $this->userId);
+        $identitiesByStudent = [];
+        foreach ($memberships as $membership) {
+            $studentId = trim((string)($membership['id_studente'] ?? ''));
+            if ($studentId !== '') {
+                $identitiesByStudent[$studentId] = $identities->listForStudent($studentId);
             }
         }
 
@@ -103,6 +138,7 @@ final class RuntimeStudentNameService
             $provider = is_array($detail) ? trim((string)($detail['provider'] ?? '')) : '';
             $result[] = [
                 'id_studente' => $studentId,
+                'id_studente_internal' => $studentId,
                 'nome' => $name,
                 'cognome' => '',
                 'nome_completo' => $name,
