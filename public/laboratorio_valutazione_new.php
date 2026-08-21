@@ -527,7 +527,7 @@ $username = $_SESSION['username'] ?? 'docente';
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
     <script>
         const udaId = <?= \App\Core\Security\OutputEncoder::json($udaId) ?>;
         const gruppoId = <?= \App\Core\Security\OutputEncoder::json($gruppoId) ?>;
