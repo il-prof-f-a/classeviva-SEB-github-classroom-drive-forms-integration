@@ -108,7 +108,9 @@ if (isset($_SESSION['user_id'])) {
                             <div class="alert alert-warning">
                                 <h6><i class="bi bi-hourglass-split"></i> Software in fase di test</h6>
                                 <p class="mb-2">
-                                    Questo software è in fase di test e verrà presto pubblicato su <strong>uda-smart.it</strong>.
+                                    Questo software è <strong>open source</strong>: il codice sorgente è disponibile su
+                                    <a href="https://github.com/il-prof-f-a/classeviva-SEB-github-classroom-drive-forms-integration" target="_blank" rel="noopener">GitHub</a>
+                                    per un'installazione autonoma.
                                 </p>
                                 <p class="mb-3">Inserisci qui la tua email per rimanere aggiornato:</p>
 
