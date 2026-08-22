@@ -112,7 +112,7 @@ if (isset($_SESSION['user_id'])) {
                                     <a href="https://github.com/il-prof-f-a/classeviva-SEB-github-classroom-drive-forms-integration" target="_blank" rel="noopener">GitHub</a>
                                     per un'installazione autonoma.
                                 </p>
-                                <p class="mb-3">Inserisci qui la tua email per rimanere aggiornato:</p>
+                                <p class="mb-3">Se vuoi rimanere aggiornato sulle nuove funzionalità sviluppate, iscriviti alla newsletter:</p>
 
                                 <?php if ($testAccessError !== null): ?>
                                     <div class="alert alert-danger py-2"><?= htmlspecialchars($testAccessError) ?></div>
