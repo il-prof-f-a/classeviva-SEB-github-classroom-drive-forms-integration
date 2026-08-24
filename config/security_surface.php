@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 return [
     'mutating' => [
+        'accept_assignment.php',
         'ajax_cancella_evidenza.php',
         'ajax_elimina_evidenza.php',
         'ajax_inserisci_evidenza.php',

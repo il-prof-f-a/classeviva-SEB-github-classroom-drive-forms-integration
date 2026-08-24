@@ -21,6 +21,8 @@ require_once '../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
 use App\Core\GitHubAssignmentService;
+use App\Core\Security\Csrf;
+use App\Core\Security\PublicError;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupStudentService;
 use App\Core\UserIntegrationManager;
@@ -164,8 +166,10 @@ if (isset($_GET['logout'])) {
     exit;
 }
 
+$csrfToken = Csrf::token($_SESSION);
+
 $showAccept = false;
-$acceptUrl = '';
+$acceptAction = '';
 $repoUrl = '';
 
 if ($github->isAuthenticated() && $error === null) {
@@ -214,32 +218,39 @@ if ($github->isAuthenticated() && $error === null) {
                     header('Location: ' . $repoUrl);
                     exit;
                 }
-                $acceptUrl = 'accept_assignment.php' . ($code !== '' ? '?code=' . urlencode($code) : '?assignment=' . urlencode($slug)) . '&accept=1';
-                if (isset($_GET['accept'])) {
-                    if ($teacherToken === '') {
-                        $error = "Token docente non disponibile. Il docente deve ricreare l'assignment.";
-                    } elseif ($org === '') {
-                        $error = 'Organizzazione GitHub non configurata per questo assignment.';
-                    } else {
-                        [$owner, $repoName] = parse_repo($repoUrl);
-                        if ($owner === '' || $repoName === '') {
-                            $error = 'URL repository non valido.';
+                $acceptAction = 'accept_assignment.php' . ($code !== '' ? '?code=' . urlencode($code) : '?assignment=' . urlencode($slug));
+                if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['accept'])) {
+                    try {
+                        Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? null);
+                    } catch (Throwable $e) {
+                        $error = PublicError::message($e, 'github acceptance');
+                    }
+                    if ($error === null) {
+                        if ($teacherToken === '') {
+                            $error = "Token docente non disponibile. Il docente deve ricreare l'assignment.";
+                        } elseif ($org === '') {
+                            $error = 'Organizzazione GitHub non configurata per questo assignment.';
                         } else {
-                            $teacher = new GitHubIntegration($config);
-                            $teacher->setAccessToken($teacherToken);
-                            $teacher->addOrgMember($org, $username);
-                            $teacher->addCollaborator($owner, $repoName, $username);
-                            // id_map può essere NULL nei link creati dalla pagina di creazione,
-                            // quindi aggiorniamo per (id_assignment, id_studente), la chiave reale.
-                            $pdo = $db->getConnection();
-                            if ($pdo instanceof \PDO) {
-                                $stmt = $pdo->prepare(
-                                    'UPDATE GITHUB_ASSIGNMENT_STUDENT_LINKS SET github_username = ?, accepted_at = ? WHERE id_assignment = ? AND id_studente = ?'
-                                );
-                                $stmt->execute([$username, date('Y-m-d H:i:s'), (string)($link['id_assignment'] ?? ''), (string)($link['id_studente'] ?? '')]);
+                            [$owner, $repoName] = parse_repo($repoUrl);
+                            if ($owner === '' || $repoName === '') {
+                                $error = 'URL repository non valido.';
+                            } else {
+                                $teacher = new GitHubIntegration($config);
+                                $teacher->setAccessToken($teacherToken);
+                                $teacher->addOrgMember($org, $username);
+                                $teacher->addCollaborator($owner, $repoName, $username);
+                                // id_map può essere NULL nei link creati dalla pagina di creazione,
+                                // quindi aggiorniamo per (id_assignment, id_studente), la chiave reale.
+                                $pdo = $db->getConnection();
+                                if ($pdo instanceof \PDO) {
+                                    $stmt = $pdo->prepare(
+                                        'UPDATE GITHUB_ASSIGNMENT_STUDENT_LINKS SET github_username = ?, accepted_at = ? WHERE id_assignment = ? AND id_studente = ?'
+                                    );
+                                    $stmt->execute([$username, date('Y-m-d H:i:s'), (string)($link['id_assignment'] ?? ''), (string)($link['id_studente'] ?? '')]);
+                                }
+                                header('Location: ' . $repoUrl);
+                                exit;
                             }
-                            header('Location: ' . $repoUrl);
-                            exit;
                         }
                     }
                 } else {
@@ -248,7 +259,7 @@ if ($github->isAuthenticated() && $error === null) {
             }
         }
     } catch (Throwable $e) {
-        $error = 'Errore: ' . $e->getMessage();
+        $error = PublicError::message($e, 'github acceptance');
     }
 }
 
@@ -293,9 +304,13 @@ if (!$github->isAuthenticated() && $error === null && ($code !== '' || $slug !==
 
             <?php elseif ($showAccept): ?>
                 <p class="text-muted">Sei nell'elenco dell'assignment ma non hai ancora accettato la repository.</p>
-                <a href="<?= h($acceptUrl) ?>" class="btn btn-primary btn-lg">
-                    <i class="bi bi-check-circle"></i> Accetta e apri la repository
-                </a>
+                <form method="post" action="<?= h($acceptAction) ?>">
+                    <input type="hidden" name="accept" value="1">
+                    <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                    <button type="submit" class="btn btn-primary btn-lg">
+                        <i class="bi bi-check-circle"></i> Accetta e apri la repository
+                    </button>
+                </form>
 
             <?php else: ?>
                 <p class="text-muted">Accedi con GitHub per ricevere l'accesso alla tua repository.
