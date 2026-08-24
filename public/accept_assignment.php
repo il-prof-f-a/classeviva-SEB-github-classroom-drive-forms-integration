@@ -23,6 +23,7 @@ use App\Core\Database\DatabaseFactory;
 use App\Core\GitHubAssignmentService;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupStudentService;
+use App\Core\UserIntegrationManager;
 use App\Integration\ClasseVivaAPI;
 use App\Integration\GitHubIntegration;
 use App\Integration\GoogleClassroomAPI;
@@ -113,16 +114,28 @@ if ($test !== null && $error === null) {
     if ($encToken !== '') {
         try { $teacherToken = (string)EncryptionHelper::decrypt($encToken); } catch (Throwable $e) { $teacherToken = ''; }
     }
-    // Ricostruisce le credenziali OAuth del docente (client_id/secret) dall'integrazione utente.
+    // Ricostruisce le configurazioni del docente dai provider per-utente: la pagina è
+    // pubblica (studente non loggato), quindi il bootstrap non le ha caricate. Servono in
+    // particolare il token Google (per il roster Classroom) e il profilo (template email).
     if ($ownerId !== '') {
         try {
-            $rows = $db->findWhere('INTEGRAZIONI_UTENTE', ['provider' => 'github', 'id_utente' => $ownerId]);
-            if (!empty($rows)) {
-                $ghCfg = EncryptionHelper::decrypt((string)($rows[0]['config_json'] ?? ''));
-                if (is_array($ghCfg) && !empty($ghCfg['client_id'])) {
-                    $config['github']['client_id'] = (string)$ghCfg['client_id'];
-                    $config['github']['client_secret'] = (string)($ghCfg['client_secret'] ?? '');
-                }
+            $uim = new UserIntegrationManager($db, $ownerId);
+            $ghCfg = $uim->getConfig('github');
+            if (!empty($ghCfg['client_id'])) {
+                $config['github']['client_id'] = (string)$ghCfg['client_id'];
+                $config['github']['client_secret'] = (string)($ghCfg['client_secret'] ?? '');
+            }
+            $googleCfg = $uim->getConfig('google');
+            if (!empty($googleCfg['token']) && is_array($googleCfg['token'])) {
+                $config['google']['oauth_token'] = $googleCfg['token'];
+            }
+            $cvCfg = $uim->getConfig('classeviva');
+            if (!empty($cvCfg)) {
+                $config['classeviva'] = array_merge($config['classeviva'] ?? [], $cvCfg);
+            }
+            $profileCfg = $uim->getConfig('profile');
+            if (!empty($profileCfg)) {
+                $config['user_profile'] = $profileCfg;
             }
         } catch (Throwable $e) {
             // non bloccante
