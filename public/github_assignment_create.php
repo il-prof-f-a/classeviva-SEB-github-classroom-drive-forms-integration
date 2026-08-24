@@ -353,6 +353,9 @@ include __DIR__ . '/partials/app_header.php';
                                 <option value="<?= h((string)$t['id_template']) ?>"><?= h((string)($t['nome'] ?? $t['id_template'])) ?><?= ($t['categoria'] ?? '') !== '' ? ' — ' . h((string)$t['categoria']) : '' ?></option>
                             <?php endforeach; ?>
                         </select>
+                        <a href="github_repo_templates.php" target="_blank" class="btn btn-sm btn-outline-secondary mt-1">
+                            <i class="bi bi-pencil-square"></i> Gestisci template
+                        </a>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label">Org GitHub</label>
