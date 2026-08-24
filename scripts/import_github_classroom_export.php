@@ -308,16 +308,18 @@ foreach ($planLinks as $l) {
 }
 echo "Link studente inseriti: {$inserted}\n";
 
-// 3) Pulizia link orfani (id_assignment numerico o non più valido)
+// 3) Pulizia link orfani (id_assignment numerico o non più valido). DELETE diretto
+//    perché alcuni vecchi link hanno id_map NULL (deleteRow per chiave fallirebbe).
 $removed = 0;
-foreach ($db->findAll('GITHUB_ASSIGNMENT_STUDENT_LINKS') as $link) {
-    $idAssignment = (string)($link['id_assignment'] ?? '');
-    $isNumeric = ctype_digit($idAssignment);
-    $isOrphan = !isset($validTestIds[$idAssignment]) && !$db->findOne('TEST', 'id_test', $idAssignment);
-    if ($isNumeric || $isOrphan) {
-        $db->deleteRow('GITHUB_ASSIGNMENT_STUDENT_LINKS', (string)($link['id_map'] ?? ''), 'id_map');
-        $removed++;
-    }
+$pdo = $db->getConnection();
+if ($pdo instanceof PDO) {
+    $stmt = $pdo->prepare(
+        "DELETE FROM GITHUB_ASSIGNMENT_STUDENT_LINKS
+         WHERE id_assignment REGEXP '^[0-9]+$'
+            OR id_assignment NOT IN (SELECT id_test FROM TEST WHERE piattaforma = 'github')"
+    );
+    $stmt->execute();
+    $removed = (int)$stmt->rowCount();
 }
 echo "Link orfani rimossi: {$removed}\n";
 echo "Import completato.\n";
