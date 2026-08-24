@@ -21,6 +21,7 @@ use App\Integration\GitHubIntegration;
 use App\Integration\GoogleClassroomAPI;
 use App\Integration\ClasseVivaAPI;
 use App\Core\NotificationManager;
+use App\Utils\EncryptionHelper;
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -189,6 +190,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $links[] = ['student' => $s, 'repo_url' => $repoUrl, 'code' => $acceptanceCode];
             }
 
+            $teacherReposUrl = ($org !== '' && $prefix !== '')
+                ? 'https://github.com/search?q=' . urlencode("user:{$org} {$prefix} in:name") . '&type=repositories'
+                : '';
+
             $db->insertRow('TEST', [
                 'id_test' => $idTest,
                 'id_uda' => $idUda,
@@ -204,7 +209,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'note' => (string)$formData['note'],
                 'id_utente' => $userId,
                 'url_studenti' => $genericLink,
-                'url_docente' => $genericLink,
+                'url_docente' => $teacherReposUrl,
                 'url_assignment_student' => $genericLink,
                 'url_assignment_teacher' => app_url('public/github_assignment_review.php') . '?test_id=' . urlencode($idTest),
                 'github_config_json' => json_encode([
@@ -213,6 +218,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'repo_prefix' => $prefix,
                     'template_id' => $templateId,
                     'modalita_invito' => $modes,
+                    'teacher_token' => EncryptionHelper::encrypt((string)($_SESSION['github_access_token'] ?? '')),
                 ], JSON_THROW_ON_ERROR),
             ]);
 
@@ -276,12 +282,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
 </head>
-<body class="bg-light">
-<div class="container py-4" style="max-width: 980px;">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h1 class="h5 mb-0"><i class="bi bi-github"></i> Crea Assignment GitHub</h1>
-        <a href="uda_tests.php?id=<?= h($idUda) ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Torna ai test</a>
-    </div>
+<body>
+<?php
+$pageTitle = '<i class="bi bi-github"></i> Crea Assignment GitHub';
+$pageSubtitle = 'UDA: ' . ($uda['titolo'] ?? '');
+$headerActions = '<a class="nav-link" href="uda_tests.php?id=' . urlencode($idUda) . '"><i class="bi bi-arrow-left"></i> Torna ai test</a>';
+$pageActions = '';
+include __DIR__ . '/partials/app_header.php';
+?>
+<div class="container mt-4">
 
     <?php if ($error !== null): ?><div class="alert alert-danger"><?= h($error) ?></div><?php endif; ?>
     <?php if (!empty($_SESSION['github_assignment_success'])): ?><div class="alert alert-success"><?= h((string)$_SESSION['github_assignment_success']) ?></div><?php unset($_SESSION['github_assignment_success']); endif; ?>
@@ -383,5 +392,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
     </div>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

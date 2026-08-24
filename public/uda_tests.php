@@ -559,6 +559,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     if (empty($urlDocente) && strpos($urlStudenti, 'docs.google.com/forms') !== false && str_contains($urlStudenti, '/viewform')) {
                                         $urlDocente = str_replace('/viewform', '/edit', $urlStudenti);
                                     }
+                                    // Per gli assignment GitHub il link docente è il filtro repo su GitHub (org + prefisso).
+                                    if ($piattaforma === 'github') {
+                                        $ghCfg = json_decode((string)($test['github_config_json'] ?? '{}'), true);
+                                        $ghOrg = trim((string)(is_array($ghCfg) ? ($ghCfg['org'] ?? '') : ''));
+                                        $ghPrefix = trim((string)(is_array($ghCfg) ? ($ghCfg['repo_prefix'] ?? '') : ''));
+                                        if ($ghOrg !== '' && $ghPrefix !== '') {
+                                            $urlDocente = 'https://github.com/search?q=' . urlencode("user:{$ghOrg} {$ghPrefix} in:name") . '&type=repositories';
+                                        }
+                                    }
                                     ?>
                                     <!-- Link Studenti -->
                                     <?php if (!empty($urlStudenti)): ?>

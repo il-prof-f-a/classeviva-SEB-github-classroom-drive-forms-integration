@@ -10,15 +10,23 @@
  *  1. OAuth GitHub (read:user user:email) -> email.
  *  2. Se l'email non è in elenco -> chiede di cambiare account.
  *  3. Se è in elenco e NON ha ancora accettato -> mostra "Accetta".
- *  4. "Accetta" -> aggiunge all'org + collaborator, registra, redirect alla repo.
+ *  4. "Accetta" -> aggiunge all'org + collaborator (token docente), registra, redirect.
  *  5. Se ha già accettato -> redirect diretto alla repo.
+ *
+ * Le email non sono persistite: vengono risolte just-in-time dai roster del gruppo
+ * (Google Classroom primario, ClasseViva fallback) e confrontate con le email OAuth.
  */
 
 require_once '../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
-use App\Utils\EncryptionHelper;
+use App\Core\GitHubAssignmentService;
+use App\Core\TeachingGroupIntegrationRepository;
+use App\Core\TeachingGroupStudentService;
+use App\Integration\ClasseVivaAPI;
 use App\Integration\GitHubIntegration;
+use App\Integration\GoogleClassroomAPI;
+use App\Utils\EncryptionHelper;
 
 function h(string $v): string { return htmlspecialchars($v, ENT_QUOTES, 'UTF-8'); }
 
@@ -30,59 +38,107 @@ function parse_repo(string $url): array {
     return ['', ''];
 }
 
-function find_student_by_email(PDO $pdo, string $email): ?array {
-    $email = strtolower(trim($email));
-    if ($email === '') return null;
-    $st = $pdo->prepare('SELECT * FROM test_students WHERE lower(email) = ? LIMIT 1');
-    $st->execute([$email]);
-    $r = $st->fetch(PDO::FETCH_ASSOC);
-    return $r ?: null;
+/** Risolve email/nome degli studenti del gruppo (Google Classroom primario, ClasseViva fallback). */
+function resolve_group_emails($db, array $config, string $groupId, string $ownerId): array {
+    $profile = $config['user_profile'] ?? [];
+    $emailTemplate = (string)($profile['school_student_email_template'] ?? '');
+    $emailDomain = (string)($profile['school_email_domain'] ?? '');
+    $integrations = new TeachingGroupIntegrationRepository($db, $ownerId);
+    $gcCourse = '';
+    $cvClass = '';
+    foreach ($integrations->listForGroup($groupId) as $it) {
+        if (($it['stato'] ?? 'attivo') === 'disattivo') continue;
+        $p = (string)($it['provider'] ?? '');
+        if ($p === 'google_classroom') $gcCourse = (string)($it['external_context_id'] ?? '');
+        elseif ($p === 'classeviva') $cvClass = (string)($it['external_context_id'] ?? '');
+    }
+    $rosters = [];
+    if ($gcCourse !== '') {
+        try { $rosters['google_classroom'] = (new GoogleClassroomAPI($config))->getCourseStudents($gcCourse); }
+        catch (Throwable $e) { $rosters['google_classroom'] = []; }
+    }
+    if ($cvClass !== '') {
+        try { $rosters['classeviva'] = (new ClasseVivaAPI($config))->getStudentiClasse($cvClass); }
+        catch (Throwable $e) { $rosters['classeviva'] = []; }
+    }
+    $matrix = (new TeachingGroupStudentService($db, $ownerId))->matrix($groupId);
+    return (new GitHubAssignmentService($emailTemplate, $emailDomain))->resolveStudents($matrix, $rosters);
 }
 
 $code = trim((string)($_GET['code'] ?? ''));
-$assignmentSlug = trim((string)($_GET['assignment'] ?? ''));
+$slug = trim((string)($_GET['assignment'] ?? ''));
 
-// --- DB temporaneo condiviso ---
-$tempDb = ROOT_PATH . '/storage/temp/github_assignment_test.db';
-$pdo = new PDO('sqlite:' . $tempDb, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-$pdo->exec('CREATE TABLE IF NOT EXISTS test_students (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, email TEXT, source TEXT, repo_name TEXT, repo_url TEXT, invite_status TEXT, error TEXT, created_at TEXT)');
-$pdo->exec('CREATE TABLE IF NOT EXISTS test_config (k TEXT PRIMARY KEY, v TEXT)');
-try { $pdo->exec('ALTER TABLE test_students ADD COLUMN github_username TEXT'); } catch (Throwable $e) {}
-try { $pdo->exec('ALTER TABLE test_students ADD COLUMN code TEXT'); } catch (Throwable $e) {}
+$db = DatabaseFactory::createWithInitialization($config, true);
 
-$teacherId = (string)($pdo->query("SELECT v FROM test_config WHERE k = 'teacher_id'")->fetchColumn() ?: '');
-$teacherToken = (string)($pdo->query("SELECT v FROM test_config WHERE k = 'teacher_token'")->fetchColumn() ?: '');
-$expectedSlug = (string)($pdo->query("SELECT v FROM test_config WHERE k = 'assignment_slug'")->fetchColumn() ?: '');
+// --- carica test + link dal dominio reale (TEST + GITHUB_ASSIGNMENT_STUDENT_LINKS) ---
+$test = null;
+$link = null;
+$error = null;
+$testId = '';
+$studentId = '';
+$org = '';
+$groupId = '';
+$ownerId = '';
+$teacherToken = '';
 
-// --- ricostruisci le credenziali OAuth GitHub del docente ---
-$credsError = null;
-if ($teacherId !== '') {
-    try {
-        $db = DatabaseFactory::createWithInitialization($config, true);
-        $rows = $db->findWhere('INTEGRAZIONI_UTENTE', ['provider' => 'github', 'id_utente' => $teacherId]);
-        $ghCfg = !empty($rows) ? EncryptionHelper::decrypt((string)($rows[0]['config_json'] ?? '')) : null;
-        if (is_array($ghCfg) && !empty($ghCfg['client_id'])) {
-            $config['github']['client_id'] = (string)$ghCfg['client_id'];
-            $config['github']['client_secret'] = (string)($ghCfg['client_secret'] ?? '');
-        } else {
-            $credsError = 'Configurazione GitHub del docente non trovata.';
+if ($code !== '') {
+    $links = $db->findWhere('GITHUB_ASSIGNMENT_STUDENT_LINKS', ['acceptance_code' => $code]);
+    $link = $links[0] ?? null;
+    if (!$link) {
+        $error = 'Codice non valido o assignment non trovato.';
+    } else {
+        $testId = trim((string)($link['id_assignment'] ?? ''));
+        $test = $db->findOne('TEST', 'id_test', $testId);
+        if (!$test) $error = 'Assignment non trovato.';
+        else $studentId = trim((string)($link['id_studente'] ?? ''));
+    }
+} elseif ($slug !== '') {
+    foreach ($db->findWhere('TEST', ['piattaforma' => 'github']) as $t) {
+        $cfg = json_decode((string)($t['github_config_json'] ?? '{}'), true);
+        if (is_array($cfg) && (string)($cfg['slug'] ?? '') === $slug) { $test = $t; break; }
+    }
+    if (!$test) $error = 'Assignment non valido.';
+    else $testId = trim((string)($test['id_test'] ?? ''));
+} else {
+    $error = 'Parametri mancanti. Usa il link ricevuto dal docente.';
+}
+
+if ($test !== null && $error === null) {
+    $cfg = json_decode((string)($test['github_config_json'] ?? '{}'), true);
+    $cfg = is_array($cfg) ? $cfg : [];
+    $org = (string)($cfg['org'] ?? '');
+    $groupId = trim((string)($test['id_gruppo'] ?? ''));
+    $ownerId = trim((string)($test['id_utente'] ?? ''));
+    $encToken = (string)($cfg['teacher_token'] ?? '');
+    if ($encToken !== '') {
+        try { $teacherToken = (string)EncryptionHelper::decrypt($encToken); } catch (Throwable $e) { $teacherToken = ''; }
+    }
+    // Ricostruisce le credenziali OAuth del docente (client_id/secret) dall'integrazione utente.
+    if ($ownerId !== '') {
+        try {
+            $rows = $db->findWhere('INTEGRAZIONI_UTENTE', ['provider' => 'github', 'id_utente' => $ownerId]);
+            if (!empty($rows)) {
+                $ghCfg = EncryptionHelper::decrypt((string)($rows[0]['config_json'] ?? ''));
+                if (is_array($ghCfg) && !empty($ghCfg['client_id'])) {
+                    $config['github']['client_id'] = (string)$ghCfg['client_id'];
+                    $config['github']['client_secret'] = (string)($ghCfg['client_secret'] ?? '');
+                }
+            }
+        } catch (Throwable $e) {
+            // non bloccante
         }
-    } catch (Throwable $e) {
-        $credsError = $e->getMessage();
     }
 }
 
 $github = new GitHubIntegration($config);
 $github->loadTokenFromSession();
 
-// Riconosce lo studente tramite cookie persistente (evita di richiedere l'accesso ogni volta).
-if (!$github->isAuthenticated() && isset($_COOKIE['github_student_login'])) {
+// Cookie persistente: evita di richiedere l'accesso ogni volta.
+if (!$github->isAuthenticated() && isset($_COOKIE['github_student_login']) && $link !== null) {
     $cookieLogin = (string)$_COOKIE['github_student_login'];
-    $st = $pdo->prepare('SELECT * FROM test_students WHERE github_username = ? LIMIT 1');
-    $st->execute([$cookieLogin]);
-    $cookieStudent = $st->fetch(PDO::FETCH_ASSOC);
-    if ($cookieStudent && !empty($cookieStudent['repo_url'])) {
-        header('Location: ' . (string)$cookieStudent['repo_url']);
+    $repoUrl = trim((string)($link['student_repository_url'] ?? ''));
+    if ((string)($link['github_username'] ?? '') === $cookieLogin && $repoUrl !== '') {
+        header('Location: ' . $repoUrl);
         exit;
     }
 }
@@ -90,13 +146,11 @@ if (!$github->isAuthenticated() && isset($_COOKIE['github_student_login'])) {
 if (isset($_GET['logout'])) {
     $github->logout();
     setcookie('github_student_login', '', ['expires' => time() - 3600, 'path' => '/']);
-    $q = $code !== '' ? '?code=' . urlencode($code) : '?assignment=' . urlencode($assignmentSlug);
-    header('Location: ' . $_SERVER['PHP_SELF'] . $q);
+    $q = $code !== '' ? '?code=' . urlencode($code) : '?assignment=' . urlencode($slug);
+    header('Location: accept_assignment.php' . $q);
     exit;
 }
 
-$error = $credsError;
-$student = null;
 $showAccept = false;
 $acceptUrl = '';
 $repoUrl = '';
@@ -109,61 +163,66 @@ if ($github->isAuthenticated() && $error === null) {
         $emails = $github->getUserEmails();
         $ghEmails = array_values(array_filter(array_map(static fn($e) => strtolower(trim((string)($e['email'] ?? ''))), $emails)));
 
+        $resolved = ($groupId !== '' && $ownerId !== '') ? resolve_group_emails($db, $config, $groupId, $ownerId) : [];
+
         if ($code !== '') {
-            $st = $pdo->prepare('SELECT * FROM test_students WHERE code = ?');
-            $st->execute([$code]);
-            $student = $st->fetch(PDO::FETCH_ASSOC) ?: null;
-            if (!$student) {
-                $error = 'Codice non valido o assignment non trovato.';
-            } else {
-                $expectedEmail = strtolower(trim((string)($student['email'] ?? '')));
-                if (!in_array($expectedEmail, $ghEmails, true)) {
-                    $error = "La tua email GitHub non corrisponde a quella dell'assignment. Attesa: " . $expectedEmail . " | Nel tuo account GitHub: " . (empty($ghEmails) ? '(nessuna)' : implode(', ', $ghEmails)) . ".";
-                }
+            $expectedEmail = '';
+            foreach ($resolved as $s) {
+                if ((string)($s['id_studente'] ?? '') === $studentId) { $expectedEmail = strtolower(trim((string)($s['email'] ?? ''))); break; }
             }
-        } elseif ($assignmentSlug !== '') {
-            if ($expectedSlug === '' || $assignmentSlug !== $expectedSlug) {
-                $error = 'Assignment non valido.';
-            } else {
-                foreach ($ghEmails as $ge) {
-                    $student = find_student_by_email($pdo, $ge);
-                    if ($student !== null) break;
-                }
-                if ($student === null) {
-                    $error = "Non sei nell'elenco di questo assignment. Controlla di usare l'account GitHub con la tua email istituzionale (" . (empty($ghEmails) ? 'nessuna email letta' : implode(', ', $ghEmails)) . ").";
-                }
+            if ($expectedEmail === '') {
+                $error = 'Email studente non risolta (verifica i roster Google Classroom/ClasseViva del gruppo).';
+            } elseif (!in_array($expectedEmail, $ghEmails, true)) {
+                $error = "La tua email GitHub non corrisponde a quella dell'assignment. Attesa: " . $expectedEmail . " | Nel tuo account GitHub: " . (empty($ghEmails) ? '(nessuna)' : implode(', ', $ghEmails)) . ".";
             }
-        } else {
-            $error = 'Parametri mancanti. Usa il link ricevuto dal docente.';
+        } elseif ($slug !== '') {
+            $matched = null;
+            foreach ($resolved as $s) {
+                $e = strtolower(trim((string)($s['email'] ?? '')));
+                if ($e !== '' && in_array($e, $ghEmails, true)) { $matched = $s; break; }
+            }
+            if ($matched === null) {
+                $error = "Non sei nell'elenco di questo assignment. Controlla di usare l'account GitHub con la tua email istituzionale (" . (empty($ghEmails) ? 'nessuna email letta' : implode(', ', $ghEmails)) . ").";
+            } else {
+                $studentId = (string)($matched['id_studente'] ?? '');
+                $links = $db->findWhere('GITHUB_ASSIGNMENT_STUDENT_LINKS', ['id_assignment' => $testId, 'id_studente' => $studentId]);
+                $link = $links[0] ?? null;
+                if (!$link) $error = 'Assignment non trovato per il tuo account.';
+            }
         }
 
-        if ($student !== null && $error === null) {
-            $repoUrl = (string)($student['repo_url'] ?? '');
+        if ($link !== null && $error === null) {
+            $repoUrl = trim((string)($link['student_repository_url'] ?? ''));
             if ($repoUrl === '') {
                 $error = 'La repository non è ancora pronta. Contatta il docente.';
             } else {
-                $accepted = !empty($student['github_username']);
+                $accepted = (trim((string)($link['github_username'] ?? '')) !== '');
                 if ($accepted) {
                     header('Location: ' . $repoUrl);
                     exit;
                 }
-
-                $acceptUrl = 'accept_assignment.php' . ($code !== '' ? '?code=' . urlencode($code) : '?assignment=' . urlencode($assignmentSlug)) . '&accept=1';
-
+                $acceptUrl = 'accept_assignment.php' . ($code !== '' ? '?code=' . urlencode($code) : '?assignment=' . urlencode($slug)) . '&accept=1';
                 if (isset($_GET['accept'])) {
-                    [$org, $repo] = parse_repo($repoUrl);
-                    if ($org === '' || $repo === '') {
-                        $error = 'URL repository non valido.';
-                    } elseif ($teacherToken === '') {
-                        $error = 'Token docente non disponibile. Il docente deve rilanciare "Crea assignment".';
+                    if ($teacherToken === '') {
+                        $error = "Token docente non disponibile. Il docente deve ricreare l'assignment.";
+                    } elseif ($org === '') {
+                        $error = 'Organizzazione GitHub non configurata per questo assignment.';
                     } else {
-                        $teacher = new GitHubIntegration($config);
-                        $teacher->setAccessToken($teacherToken);
-                        $teacher->addOrgMember($org, $username);
-                        $teacher->addCollaborator($org, $repo, $username);
-                        $pdo->prepare('UPDATE test_students SET github_username = ? WHERE id = ?')->execute([$username, $student['id']]);
-                        header('Location: ' . $repoUrl);
-                        exit;
+                        [$owner, $repoName] = parse_repo($repoUrl);
+                        if ($owner === '' || $repoName === '') {
+                            $error = 'URL repository non valido.';
+                        } else {
+                            $teacher = new GitHubIntegration($config);
+                            $teacher->setAccessToken($teacherToken);
+                            $teacher->addOrgMember($org, $username);
+                            $teacher->addCollaborator($owner, $repoName, $username);
+                            $db->updateRow('GITHUB_ASSIGNMENT_STUDENT_LINKS', 'id_map', (string)($link['id_map'] ?? ''), [
+                                'github_username' => $username,
+                                'accepted_at' => date('Y-m-d H:i:s'),
+                            ]);
+                            header('Location: ' . $repoUrl);
+                            exit;
+                        }
                     }
                 } else {
                     $showAccept = true;
@@ -179,8 +238,8 @@ $_SESSION['github_student_client_id'] = $config['github']['client_id'] ?? '';
 $_SESSION['github_student_client_secret'] = $config['github']['client_secret'] ?? '';
 
 $authUrl = '';
-if (!$github->isAuthenticated() && $error === null && ($code !== '' || $assignmentSlug !== '')) {
-    $returnTo = $code !== '' ? 'accept_assignment.php?code=' . urlencode($code) : 'accept_assignment.php?assignment=' . urlencode($assignmentSlug);
+if (!$github->isAuthenticated() && $error === null && ($code !== '' || $slug !== '')) {
+    $returnTo = $code !== '' ? 'accept_assignment.php?code=' . urlencode($code) : 'accept_assignment.php?assignment=' . urlencode($slug);
     $authUrl = $github->getAuthorizationUrl(null, $returnTo, 'read:user user:email');
 }
 ?>
@@ -199,7 +258,7 @@ if (!$github->isAuthenticated() && $error === null && ($code !== '' || $assignme
         <div class="card-body text-center">
             <h1 class="h4 mb-3"><i class="bi bi-github"></i> Accetta assignment</h1>
 
-            <?php if ($code === '' && $assignmentSlug === ''): ?>
+            <?php if ($code === '' && $slug === ''): ?>
                 <p class="text-danger">Parametri mancanti. Usa il link ricevuto dal docente.</p>
 
             <?php elseif ($error !== null): ?>
@@ -207,7 +266,7 @@ if (!$github->isAuthenticated() && $error === null && ($code !== '' || $assignme
                 <?php if ($github->isAuthenticated()): ?>
                 <form method="get" class="d-inline">
                     <?php if ($code !== ''): ?><input type="hidden" name="code" value="<?= h($code) ?>"><?php endif; ?>
-                    <?php if ($assignmentSlug !== ''): ?><input type="hidden" name="assignment" value="<?= h($assignmentSlug) ?>"><?php endif; ?>
+                    <?php if ($slug !== ''): ?><input type="hidden" name="assignment" value="<?= h($slug) ?>"><?php endif; ?>
                     <button type="submit" name="logout" value="1" class="btn btn-outline-secondary btn-sm">
                         <i class="bi bi-box-arrow-left"></i> Cambia account GitHub
                     </button>
