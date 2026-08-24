@@ -75,8 +75,21 @@ if ($teacherId !== '') {
 $github = new GitHubIntegration($config);
 $github->loadTokenFromSession();
 
+// Riconosce lo studente tramite cookie persistente (evita di richiedere l'accesso ogni volta).
+if (!$github->isAuthenticated() && isset($_COOKIE['github_student_login'])) {
+    $cookieLogin = (string)$_COOKIE['github_student_login'];
+    $st = $pdo->prepare('SELECT * FROM test_students WHERE github_username = ? LIMIT 1');
+    $st->execute([$cookieLogin]);
+    $cookieStudent = $st->fetch(PDO::FETCH_ASSOC);
+    if ($cookieStudent && !empty($cookieStudent['repo_url'])) {
+        header('Location: ' . (string)$cookieStudent['repo_url']);
+        exit;
+    }
+}
+
 if (isset($_GET['logout'])) {
     $github->logout();
+    setcookie('github_student_login', '', ['expires' => time() - 3600, 'path' => '/']);
     $q = $code !== '' ? '?code=' . urlencode($code) : '?assignment=' . urlencode($assignmentSlug);
     header('Location: ' . $_SERVER['PHP_SELF'] . $q);
     exit;
@@ -92,6 +105,7 @@ if ($github->isAuthenticated() && $error === null) {
     try {
         $user = $github->getUser();
         $username = (string)($user['login'] ?? '');
+        setcookie('github_student_login', $username, ['expires' => time() + 2592000, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax']);
         $emails = $github->getUserEmails();
         $ghEmails = array_values(array_filter(array_map(static fn($e) => strtolower(trim((string)($e['email'] ?? ''))), $emails)));
 
