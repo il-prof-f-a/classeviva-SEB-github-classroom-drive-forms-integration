@@ -37,6 +37,18 @@ $csrfToken = Csrf::token($_SESSION);
 $github = new GitHubIntegration($config);
 $github->loadTokenFromSession();
 $ghAuthed = $github->isAuthenticated();
+// Verifica che il token sia ancora valido (fresco): se getUser fallisce, il token è scaduto/revocato.
+if ($ghAuthed) {
+    try {
+        $github->getUser();
+    } catch (Throwable $e) {
+        $ghAuthed = false;
+    }
+}
+$githubAuthUrl = '';
+if (!$ghAuthed && !empty($config['github']['client_id'] ?? '')) {
+    $githubAuthUrl = $github->getAuthorizationUrl(null, (string)($_SERVER['REQUEST_URI'] ?? 'github_assignment_create.php'));
+}
 
 $idUda = trim((string)($_GET['id_uda'] ?? ''));
 if ($idUda === '') {
@@ -291,6 +303,17 @@ $pageActions = '';
 include __DIR__ . '/partials/app_header.php';
 ?>
 <div class="container mt-4">
+
+    <?php if (!$ghAuthed): ?>
+        <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div><i class="bi bi-github"></i> <strong>Autenticazione GitHub richiesta</strong> — il token non è presente o non è più valido.</div>
+            <?php if ($githubAuthUrl !== ''): ?>
+                <a href="<?= h($githubAuthUrl) ?>" class="btn btn-dark"><i class="bi bi-github"></i> Autorizza GitHub</a>
+            <?php else: ?>
+                <a href="user_integrations.php#github-section" class="btn btn-outline-dark"><i class="bi bi-gear"></i> Configura le credenziali GitHub</a>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
 
     <?php if ($error !== null): ?><div class="alert alert-danger"><?= h($error) ?></div><?php endif; ?>
     <?php if (!empty($_SESSION['github_assignment_success'])): ?><div class="alert alert-success"><?= h((string)$_SESSION['github_assignment_success']) ?></div><?php unset($_SESSION['github_assignment_success']); endif; ?>
