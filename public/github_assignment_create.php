@@ -189,6 +189,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } catch (Throwable $e) {
                 }
                 $db->insertRow('GITHUB_ASSIGNMENT_STUDENT_LINKS', [
+                    'id_map' => 'GHMAP_' . bin2hex(random_bytes(10)),
                     'id_assignment' => $idTest,
                     'id_studente' => (string)$s['id_studente'],
                     'student_repository_url' => $repoUrl,

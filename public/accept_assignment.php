@@ -216,10 +216,15 @@ if ($github->isAuthenticated() && $error === null) {
                             $teacher->setAccessToken($teacherToken);
                             $teacher->addOrgMember($org, $username);
                             $teacher->addCollaborator($owner, $repoName, $username);
-                            $db->updateRow('GITHUB_ASSIGNMENT_STUDENT_LINKS', 'id_map', (string)($link['id_map'] ?? ''), [
-                                'github_username' => $username,
-                                'accepted_at' => date('Y-m-d H:i:s'),
-                            ]);
+                            // id_map può essere NULL nei link creati dalla pagina di creazione,
+                            // quindi aggiorniamo per (id_assignment, id_studente), la chiave reale.
+                            $pdo = $db->getConnection();
+                            if ($pdo instanceof \PDO) {
+                                $stmt = $pdo->prepare(
+                                    'UPDATE GITHUB_ASSIGNMENT_STUDENT_LINKS SET github_username = ?, accepted_at = ? WHERE id_assignment = ? AND id_studente = ?'
+                                );
+                                $stmt->execute([$username, date('Y-m-d H:i:s'), (string)($link['id_assignment'] ?? ''), (string)($link['id_studente'] ?? '')]);
+                            }
                             header('Location: ' . $repoUrl);
                             exit;
                         }
