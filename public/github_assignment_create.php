@@ -110,7 +110,7 @@ function resolve_students(array $config, $db, string $userId, string $groupId, s
     }
     $matrix = $svc->matrix($groupId);
     $as = new GitHubAssignmentService($emailTemplate, $emailDomain);
-    return $as->resolveStudents($matrix, $rosters);
+    return $as->resolveStudents($matrix, $rosters, 'google_classroom');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {

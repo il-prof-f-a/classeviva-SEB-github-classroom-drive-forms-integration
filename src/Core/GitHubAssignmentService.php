@@ -71,9 +71,10 @@ final class GitHubAssignmentService
     /**
      * @param list<array<string,mixed>> $matrix            output di TeachingGroupStudentService::matrix()
      * @param array<string,list<array<string,mixed>>> $rosterByProvider es. ['google_classroom'=>[{id,name,email}], 'classeviva'=>[{id,nome,cognome}]]
+     * @param string $listaPreferita provider da provare per primo: 'classeviva' (default) oppure 'google_classroom'
      * @return list<array{id_studente:string,email:string,nome:string}>
      */
-    public function resolveStudents(array $matrix, array $rosterByProvider): array
+    public function resolveStudents(array $matrix, array $rosterByProvider, string $listaPreferita = 'classeviva'): array
     {
         $result = [];
         foreach ($matrix as $row) {
@@ -83,10 +84,13 @@ final class GitHubAssignmentService
             }
             $email = '';
             $nome = '';
-            // Priorità: prima Google Classroom (email reale), poi ClasseViva (email generata
-            // dal template). Se uno studente ha entrambe le identità, deve vincere l'email
-            // Google reale, non quella generata da ClasseViva.
-            foreach (['google_classroom', 'classeviva'] as $preferredProvider) {
+            // Ordine di priorità: prima $listaPreferita, poi gli altri provider.
+            // Di default parte da ClasseViva; per usare l'email Google reale passa 'google_classroom'.
+            $order = ['classeviva', 'google_classroom'];
+            if ($listaPreferita !== '' && in_array($listaPreferita, $order, true)) {
+                $order = array_values(array_unique(array_merge([$listaPreferita], $order)));
+            }
+            foreach ($order as $preferredProvider) {
                 foreach (($row['identities'] ?? []) as $identity) {
                     if ((string)($identity['provider'] ?? '') !== $preferredProvider) {
                         continue;

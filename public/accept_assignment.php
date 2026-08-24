@@ -62,7 +62,7 @@ function resolve_group_emails($db, array $config, string $groupId, string $owner
         catch (Throwable $e) { $rosters['classeviva'] = []; }
     }
     $matrix = (new TeachingGroupStudentService($db, $ownerId))->matrix($groupId);
-    return (new GitHubAssignmentService($emailTemplate, $emailDomain))->resolveStudents($matrix, $rosters);
+    return (new GitHubAssignmentService($emailTemplate, $emailDomain))->resolveStudents($matrix, $rosters, 'google_classroom');
 }
 
 $code = trim((string)($_GET['code'] ?? ''));

@@ -89,7 +89,7 @@ function gh_assignments_resolve_students(array $config, $db, string $userId, str
     }
     $matrix = $svc->matrix($groupId);
     $as = new GitHubAssignmentService($emailTemplate, $emailDomain);
-    return $as->resolveStudents($matrix, $rosters);
+    return $as->resolveStudents($matrix, $rosters, 'google_classroom');
 }
 
 // ---- Azioni POST ----

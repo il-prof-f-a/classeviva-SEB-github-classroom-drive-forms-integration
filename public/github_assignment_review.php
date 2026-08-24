@@ -137,7 +137,7 @@ function gh_review_resolve_students(string $groupId): array
     $emailTemplate = (string)($profile['school_student_email_template'] ?? '');
     $emailDomain = (string)($profile['school_email_domain'] ?? '');
     $matrix = $svc->matrix($groupId);
-    return (new GitHubAssignmentService($emailTemplate, $emailDomain))->resolveStudents($matrix, $rosters);
+    return (new GitHubAssignmentService($emailTemplate, $emailDomain))->resolveStudents($matrix, $rosters, 'google_classroom');
 }
 
 // Carica test

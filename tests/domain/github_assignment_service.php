@@ -44,7 +44,7 @@ $matrix = [
     ['id_studente' => 'STD_1', 'identities' => [['provider' => 'google_classroom', 'external_user_id' => 'G1']]],
     ['id_studente' => 'STD_2', 'identities' => [['provider' => 'classeviva', 'external_user_id' => 'CV2']]],
     ['id_studente' => 'STD_3', 'identities' => [['provider' => 'classeviva', 'external_user_id' => 'CV9']]],
-    // Priorità: classeviva elencata PRIMA, ma deve vincere l'email Google reale.
+    // STD_4 ha entrambe le identità: il default usa ClasseViva, il parametro lista_preferita usa Google.
     ['id_studente' => 'STD_4', 'identities' => [
         ['provider' => 'classeviva', 'external_user_id' => 'CV4'],
         ['provider' => 'google_classroom', 'external_user_id' => 'G4'],
@@ -69,7 +69,17 @@ if (($byId['STD_3']['email'] ?? '') !== '') {
     $failures[] = 'studente non in roster deve avere email vuota';
 }
 if (($byId['STD_4']['email'] ?? '') !== 'email@email.it') {
-    $failures[] = 'priorità Google Classroom errata: ' . ($byId['STD_4']['email'] ?? '(vuota)');
+    $failures[] = 'default (ClasseViva prima) errato: ' . ($byId['STD_4']['email'] ?? '(vuota)');
+}
+
+// Con lista_preferita='google_classroom' deve vincere l'email Google reale.
+$resolvedGoogle = $svc->resolveStudents($matrix, $rosters, 'google_classroom');
+$byIdGoogle = [];
+foreach ($resolvedGoogle as $r) {
+    $byIdGoogle[$r['id_studente']] = $r;
+}
+if (($byIdGoogle['STD_4']['email'] ?? '') !== 'email@email.it') {
+    $failures[] = 'lista_preferita google_classroom errata: ' . ($byIdGoogle['STD_4']['email'] ?? '(vuota)');
 }
 
 if ($failures !== []) {
