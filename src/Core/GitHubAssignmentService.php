@@ -83,32 +83,46 @@ final class GitHubAssignmentService
             }
             $email = '';
             $nome = '';
-            foreach (($row['identities'] ?? []) as $identity) {
-                $provider = (string)($identity['provider'] ?? '');
-                $externalId = trim((string)($identity['external_user_id'] ?? ''));
-                if ($provider === '' || $externalId === '') {
-                    continue;
-                }
-                $roster = $rosterByProvider[$provider] ?? [];
-                foreach ($roster as $entry) {
-                    if ((string)($entry['id'] ?? '') !== $externalId) {
+            // Priorità: prima Google Classroom (email reale), poi ClasseViva (email generata
+            // dal template). Se uno studente ha entrambe le identità, deve vincere l'email
+            // Google reale, non quella generata da ClasseViva.
+            foreach (['google_classroom', 'classeviva'] as $preferredProvider) {
+                foreach (($row['identities'] ?? []) as $identity) {
+                    if ((string)($identity['provider'] ?? '') !== $preferredProvider) {
                         continue;
                     }
-                    if ($provider === 'google_classroom') {
-                        $email = trim((string)($entry['email'] ?? ''));
-                        $nome = trim((string)($entry['name'] ?? ''));
-                    } elseif ($provider === 'classeviva') {
-                        $email = StudentEmailResolver::generate(
-                            $this->emailTemplate,
-                            $this->emailDomain,
-                            (string)($entry['nome'] ?? ''),
-                            (string)($entry['cognome'] ?? '')
-                        );
-                        $nome = trim(trim((string)($entry['cognome'] ?? '') . ' ' . (string)($entry['nome'] ?? '')));
+                    $externalId = trim((string)($identity['external_user_id'] ?? ''));
+                    if ($externalId === '') {
+                        continue;
                     }
-                    if ($email !== '') {
-                        break 2;
+                    $found = false;
+                    foreach ($rosterByProvider[$preferredProvider] ?? [] as $entry) {
+                        if ((string)($entry['id'] ?? '') !== $externalId) {
+                            continue;
+                        }
+                        if ($preferredProvider === 'google_classroom') {
+                            $email = trim((string)($entry['email'] ?? ''));
+                            $nome = trim((string)($entry['name'] ?? ''));
+                        } else {
+                            $email = StudentEmailResolver::generate(
+                                $this->emailTemplate,
+                                $this->emailDomain,
+                                (string)($entry['nome'] ?? ''),
+                                (string)($entry['cognome'] ?? '')
+                            );
+                            $nome = trim(trim((string)($entry['cognome'] ?? '') . ' ' . (string)($entry['nome'] ?? '')));
+                        }
+                        if ($email !== '') {
+                            $found = true;
+                            break;
+                        }
                     }
+                    if ($found) {
+                        break;
+                    }
+                }
+                if ($email !== '') {
+                    break;
                 }
             }
             $result[] = ['id_studente' => $idStudente, 'email' => $email, 'nome' => $nome];

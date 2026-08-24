@@ -44,10 +44,15 @@ $matrix = [
     ['id_studente' => 'STD_1', 'identities' => [['provider' => 'google_classroom', 'external_user_id' => 'G1']]],
     ['id_studente' => 'STD_2', 'identities' => [['provider' => 'classeviva', 'external_user_id' => 'CV2']]],
     ['id_studente' => 'STD_3', 'identities' => [['provider' => 'classeviva', 'external_user_id' => 'CV9']]],
+    // Priorità: classeviva elencata PRIMA, ma deve vincere l'email Google reale.
+    ['id_studente' => 'STD_4', 'identities' => [
+        ['provider' => 'classeviva', 'external_user_id' => 'CV4'],
+        ['provider' => 'google_classroom', 'external_user_id' => 'G4'],
+    ]],
 ];
 $rosters = [
-    'google_classroom' => [['id' => 'G1', 'name' => 'Mario Rossi', 'email' => 'email@email.it']],
-    'classeviva' => [['id' => 'CV2', 'nome' => 'Anna', 'cognome' => 'Bianchi']],
+    'google_classroom' => [['id' => 'G1', 'name' => 'Mario Rossi', 'email' => 'email@email.it'], ['id' => 'G4', 'name' => 'Maria Bianchi', 'email' => 'email@email.it']],
+    'classeviva' => [['id' => 'CV2', 'nome' => 'Anna', 'cognome' => 'Bianchi'], ['id' => 'CV4', 'nome' => 'Maria', 'cognome' => 'Bianchi']],
 ];
 $resolved = $svc->resolveStudents($matrix, $rosters);
 $byId = [];
@@ -62,6 +67,9 @@ if (($byId['STD_2']['email'] ?? '') !== 'email@email.it') {
 }
 if (($byId['STD_3']['email'] ?? '') !== '') {
     $failures[] = 'studente non in roster deve avere email vuota';
+}
+if (($byId['STD_4']['email'] ?? '') !== 'email@email.it') {
+    $failures[] = 'priorità Google Classroom errata: ' . ($byId['STD_4']['email'] ?? '(vuota)');
 }
 
 if ($failures !== []) {
