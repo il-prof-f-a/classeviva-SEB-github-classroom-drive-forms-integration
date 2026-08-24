@@ -18,7 +18,7 @@ foreach ([
         $failures[] = "wiring dominio mancante: {$wiring}";
     }
 }
-foreach (['syncRoster', 'matrix', 'linkIdentities', 'unlinkIdentity', 'save_student_mapping', 'sync_students', 'unlink_identity', 'assertRosterIdentity', 'listAcceptedAssignments', 'syncedCount'] as $studentsNeedle) {
+foreach (['syncRoster', 'matrix', 'linkIdentities', 'unlinkIdentity', 'save_student_mapping', 'sync_students', 'unlink_identity', 'assertRosterIdentity', 'syncedCount'] as $studentsNeedle) {
     if (!str_contains($markup, $studentsNeedle)) {
         $failures[] = "gestione studenti incompleta: {$studentsNeedle}";
     }
@@ -102,7 +102,7 @@ if (!str_contains($markup, 'return_to') || !str_contains($markup, 'LocalReturnUr
 if (!preg_match("/(?:href|action)=[\"'][^\"']*(?:teaching_groups|uda_create)\\.php[^\"']*[\"']/i", $markup)) {
     $failures[] = 'link locale editor/wizard mancante';
 }
-foreach (['classeviva', 'google_classroom', 'github_classroom'] as $provider) {
+foreach (['classeviva', 'google_classroom'] as $provider) {
     if (!str_contains($markup, $provider)) {
         $failures[] = "provider mancante nel markup: {$provider}";
     }
@@ -110,16 +110,20 @@ foreach (['classeviva', 'google_classroom', 'github_classroom'] as $provider) {
 if (!preg_match('/Autorizz|autorizz|collegat|Non disponibile/i', $markup)) {
     $failures[] = 'stato autorizzazione provider mancante';
 }
-foreach (['user_integrations.php#classeviva-section', 'user_integrations.php#google-section', 'user_integrations.php#github-section'] as $authLink) {
+foreach (['user_integrations.php#classeviva-section', 'user_integrations.php#google-section'] as $authLink) {
     if (!str_contains($markup, $authLink)) {
         $failures[] = "link autorizzazione mancante: {$authLink}";
     }
 }
 if (!str_contains($markup, "'classeviva' => 'classeviva_context'")
     || !str_contains($markup, "'google_classroom' => 'google_course_id'")
-    || !str_contains($markup, "'github_classroom' => 'github_classroom_id'")
     || str_contains($markup, 'name="external_context_id"')) {
     $failures[] = 'catalogo provider deve usare select provider-specifici';
+}
+foreach (['GITHUB_ASSIGNMENT_STUDENT_LINKS', 'GitHub (username)', 'github_username'] as $githubUsernameNeedle) {
+    if (!str_contains($markup, $githubUsernameNeedle)) {
+        $failures[] = "username GitHub in sola lettura mancante: {$githubUsernameNeedle}";
+    }
 }
 foreach (['classe_materia', 'course', 'roster'] as $resourceType) {
     if (!str_contains($markup, $resourceType)) {

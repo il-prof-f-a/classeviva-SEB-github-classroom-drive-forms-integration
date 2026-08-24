@@ -28,7 +28,7 @@ foreach (['teaching_groups.php?return_to=uda_create.php#2', 'teachingGroupCatalo
         failWizardMarkup("elemento mappatura mancante: {$needle}");
     }
 }
-foreach (['ClasseVivaTokenGuard', "\$classevivaState['ready']", "listForWizard(true)", "['google_classroom', 'github_classroom']"] as $needle) {
+foreach (['ClasseVivaTokenGuard', "\$classevivaState['ready']", "listForWizard(true)", "['google_classroom']"] as $needle) {
     if (strpos($markup, $needle) === false) {
         failWizardMarkup("guard o validazione gruppi mancante: {$needle}");
     }

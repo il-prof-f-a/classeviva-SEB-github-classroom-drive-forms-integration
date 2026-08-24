@@ -272,15 +272,12 @@ try {
             continue;
         }
         $google = $integrationRepo->findForGroupProvider($gid, 'google_classroom');
-        $github = $integrationRepo->findForGroupProvider($gid, 'github_classroom');
         $hasCv = ProviderCapabilityResolver::supportsForGroup($dbAdapter, $userId, $gid, 'classeviva', 'publish_grade');
         $gruppi[] = [
             'id_gruppo' => $gid,
             'nome_gruppo' => (string)($group['nome_gruppo'] ?? ('Gruppo ' . $gid)),
             'google_course_id' => $google !== null ? (string)($google['external_context_id'] ?? '') : '',
             'google_course_name' => $google !== null ? (string)($google['external_name'] ?? '') : '',
-            'github_classroom_id' => $github !== null ? (string)($github['external_context_id'] ?? '') : '',
-            'github_classroom_name' => $github !== null ? (string)($github['external_name'] ?? '') : '',
             'has_cv' => $hasCv,
         ];
     }
@@ -617,16 +614,6 @@ try {
                                             <?php else: ?>
                                                 <a href="map_classes.php?group_id=<?= urlencode($gruppo['id_gruppo']) ?>" class="btn btn-sm btn-outline-primary mb-2">
                                                     <i class="bi bi-diagram-3"></i> Collega Classroom
-                                                </a>
-                                            <?php endif; ?>
-                                            <?php if ($gruppo['github_classroom_id'] !== ''): ?>
-                                                <div class="alert py-1 px-2 mb-2" style="background-color: #f3e8ff; border-color: #663399; color: #663399;">
-                                                    <i class="bi bi-github"></i>
-                                                    GitHub: <?= htmlspecialchars($gruppo['github_classroom_name'] ?: $gruppo['github_classroom_id']) ?>
-                                                </div>
-                                            <?php else: ?>
-                                                <a href="github_classroom_mapping.php?group_id=<?= urlencode($gruppo['id_gruppo']) ?>" class="btn btn-sm mt-2" style="background-color: #663399; color: white; border-color: #663399;">
-                                                    <i class="bi bi-github"></i> Collega GitHub
                                                 </a>
                                             <?php endif; ?>
                                             <?php if ($gruppo['has_cv']): ?>

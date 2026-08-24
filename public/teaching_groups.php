@@ -15,7 +15,6 @@ use App\Core\TeachingGroupService;
 use App\Core\TeachingGroupStudentService;
 use App\Core\RuntimeStudentNameService;
 use App\Integration\ClasseVivaAPI;
-use App\Integration\GitHubIntegration;
 use App\Integration\GoogleClassroomAPI;
 use App\Utils\LocalReturnUrl;
 
@@ -79,7 +78,7 @@ if ($csrfToken === '') {
     $csrfToken = bin2hex(random_bytes(32));
     $_SESSION['teaching_groups_csrf'] = $csrfToken;
 }
-$providerErrors = array_fill_keys(['classeviva', 'google_classroom', 'github_classroom'], null);
+$providerErrors = array_fill_keys(['classeviva', 'google_classroom'], null);
 $postText = static function (string $key, string $default = ''): string {
     $value = $_POST[$key] ?? $default;
     return is_scalar($value) ? trim((string)$value) : $default;
@@ -88,17 +87,14 @@ $postText = static function (string $key, string $default = ''): string {
 $providerLabels = [
     'classeviva' => 'ClasseViva',
     'google_classroom' => 'Google Classroom',
-    'github_classroom' => 'GitHub Classroom',
 ];
 $providerAuthLinks = [
     'classeviva' => 'user_integrations.php#classeviva-section',
     'google_classroom' => 'user_integrations.php#google-section',
-    'github_classroom' => 'user_integrations.php#github-section',
 ];
 $providerFields = [
     'classeviva' => 'classeviva_context',
     'google_classroom' => 'google_course_id',
-    'github_classroom' => 'github_classroom_id',
 ];
 $providerReady = array_fill_keys(array_keys($providerLabels), false);
 $providerOptions = array_fill_keys(array_keys($providerLabels), []);
@@ -183,37 +179,7 @@ try {
     $providerErrors['google_classroom'] = 'Servizio Google Classroom non disponibile o scope insufficienti.';
 }
 
-try {
-    $github = new GitHubIntegration($config);
-    $providerReady['github_classroom'] = $github->loadTokenFromSession() && $github->isAuthenticated();
-    if ($providerReady['github_classroom']) {
-        $classrooms = [];
-        $classrooms = is_array($classrooms)
-            ? ($classrooms['classrooms'] ?? ($classrooms['data'] ?? $classrooms))
-            : [];
-        foreach ($classrooms as $classroom) {
-            if (!is_array($classroom)) {
-                continue;
-            }
-            $classroomId = trim((string)($classroom['id'] ?? $classroom['classroom_id'] ?? ''));
-            if ($classroomId !== '') {
-                $providerOptions['github_classroom'][] = ['value' => $classroomId, 'context' => $classroomId, 'subject' => '', 'label' => (string)($classroom['name'] ?? $classroomId)];
-            }
-        }
-    }
-} catch (Throwable $exception) {
-    $providerReady['github_classroom'] = false;
-    $providerErrors['github_classroom'] = 'Servizio GitHub Classroom non disponibile: ' . $exception->getMessage();
-}
-
 $githubAuthUrl = null;
-if (!($providerReady['github_classroom'] ?? false) && isset($github) && !empty($config['github']['client_id'] ?? '')) {
-    try {
-        $githubAuthUrl = $github->getAuthorizationUrl(null, (string)($_SERVER['REQUEST_URI'] ?? 'teaching_groups.php'));
-    } catch (Throwable $ignored) {
-        $githubAuthUrl = null;
-    }
-}
 
 $redirectAfterAction = static function (string $message, array $flashData = []) use ($returnTo): never {
     $_SESSION['teaching_groups_flash'] = ['success' => $message] + $flashData;
@@ -651,7 +617,6 @@ $nameSimilarity = static function (string $a, string $b): float {
     $maxLength = max(strlen($a), strlen($b));
     return 1 - (levenshtein($a, $b) / $maxLength);
 };
-$githubFetchDebug = ['assignments' => 0, 'accepted' => 0, 'first_keys' => [], 'assignment_accepted' => -1, 'assignment_submissions' => -1, 'accepted_raw' => ''];
 $fetchRoster = static function (string $provider, string $contextId) use ($runtimeNameService): array {
     return $runtimeNameService->providerRoster($provider, $contextId);
 };
@@ -690,9 +655,6 @@ if ($selectedGroupRecord !== null) {
             $rosterErrors[$provider] = 'Roster ' . ($providerLabels[$provider] ?? $provider) . ' non disponibile: ' . $exception->getMessage();
             $rosters[$provider] = [];
         }
-        if ($provider === 'github_classroom' && ($rosters[$provider] ?? []) === [] && !isset($rosterErrors[$provider])) {
-            $rosterErrors[$provider] = 'Roster GitHub Classroom vuoto per "' . ($providerLink['external_name'] ?? $contextId) . '" (ID ' . $contextId . '): ' . $githubFetchDebug['assignments'] . ' assignment, accepted-field=' . $githubFetchDebug['assignment_accepted'] . ', submissions=' . $githubFetchDebug['assignment_submissions'] . ', listAcceptedAssignments=' . $githubFetchDebug['accepted'] . ' righe. Raw accepted: ' . $githubFetchDebug['accepted_raw'];
-        }
     }
     $anchorProvider = $configuredProviders[0] ?? null;
     if ($anchorProvider !== null) {
@@ -725,6 +687,40 @@ if ($selectedGroupRecord !== null) {
         } catch (Throwable $ignored) {
             $existingMappings = [];
         }
+        // Username GitHub (sola lettura): studenti che hanno accettato almeno un assignment.
+        $githubByAnchor = [];
+        $githubStudentAnchors = [];
+        foreach ($studentService->matrix($selectedGroupId) as $matrixRow) {
+            $matrixStudentId = (string)($matrixRow['id_studente'] ?? '');
+            if ($matrixStudentId === '') {
+                continue;
+            }
+            foreach (($matrixRow['identities'] ?? []) as $matrixIdentity) {
+                if (($matrixIdentity['provider'] ?? '') === $anchorProvider) {
+                    $anchorExternal = (string)($matrixIdentity['external_user_id'] ?? '');
+                    if ($anchorExternal !== '') {
+                        $githubStudentAnchors[$matrixStudentId] = $anchorExternal;
+                    }
+                    break;
+                }
+            }
+        }
+        if ($githubStudentAnchors !== []) {
+            $githubByStudent = [];
+            foreach ($dbAdapter->findAll('GITHUB_ASSIGNMENT_STUDENT_LINKS') as $linkRow) {
+                $linkStudentId = (string)($linkRow['id_studente'] ?? '');
+                $linkUsername = trim((string)($linkRow['github_username'] ?? ''));
+                if (isset($githubStudentAnchors[$linkStudentId]) && $linkUsername !== '') {
+                    $githubByStudent[$linkStudentId] = $linkUsername;
+                }
+            }
+            foreach ($githubStudentAnchors as $matrixStudentId => $anchorExternal) {
+                if (isset($githubByStudent[$matrixStudentId])) {
+                    $githubByAnchor[$anchorExternal] = $githubByStudent[$matrixStudentId];
+                }
+            }
+        }
+
         $preselected = [];
         foreach ($targetProviders as $targetProvider) {
             $targetRoster = $targetRosters[$targetProvider] ?? [];
@@ -796,7 +792,6 @@ $skipOnboardingBanner = true;
         <?php if ($studentSyncFlash['display_names'] !== []): ?><ul class="mb-0"><?php foreach ($studentSyncFlash['display_names'] as $displayName): ?><li><?= $escape($displayName) ?></li><?php endforeach; ?></ul><?php endif; ?>
     </div><?php endif; ?>
 
-    <?php if ($githubAuthUrl !== null): ?><div class="d-flex justify-content-end mb-3"><a href="<?= $escape($githubAuthUrl) ?>" class="btn btn-dark">Autorizza GitHub</a></div><?php endif; ?>
 
 
     <?php if ($tab === 'students'): ?>
@@ -817,7 +812,7 @@ $skipOnboardingBanner = true;
                         <input type="hidden" name="id_gruppo" value="<?= $escape($selectedGroupId) ?>">
                         <div class="table-responsive mt-3">
                             <table class="table table-sm align-middle">
-                                <thead><tr><th scope="col"><?= $escape($providerLabels[$anchorProvider] ?? $anchorProvider) ?></th><?php foreach ($targetProviders as $targetProvider): ?><th scope="col"><?= $escape($providerLabels[$targetProvider] ?? $targetProvider) ?></th><?php endforeach; ?></tr></thead>
+                                <thead><tr><th scope="col"><?= $escape($providerLabels[$anchorProvider] ?? $anchorProvider) ?></th><?php foreach ($targetProviders as $targetProvider): ?><th scope="col"><?= $escape($providerLabels[$targetProvider] ?? $targetProvider) ?></th><?php endforeach; ?><th scope="col">GitHub (username)</th></tr></thead>
                                 <tbody>
                                 <?php foreach ($anchorRoster as $anchorIndex => $anchorEntry): $anchorExternal = (string)($anchorEntry['external_user_id'] ?? ''); $anchorName = (string)($anchorEntry['display_name'] ?? ''); ?>
                                     <tr>
@@ -827,6 +822,7 @@ $skipOnboardingBanner = true;
                                         <?php foreach ($targetProviders as $targetProvider): $targetSelected = $preselected[$targetProvider][$anchorExternal] ?? ''; ?>
                                         <td><select class="form-select form-select-sm" name="mappings[<?= $anchorIndex ?>][matches][<?= $escape($targetProvider) ?>]"><option value="">Non mappare</option><?php foreach ($targetRosters[$targetProvider] ?? [] as $targetEntry): $targetExternal = (string)($targetEntry['external_user_id'] ?? ''); $targetName = (string)($targetEntry['display_name'] ?? ''); ?><option value="<?= $escape($targetExternal) ?>" <?= $targetSelected === $targetExternal ? 'selected' : '' ?>><?= $targetName !== '' ? $escape($targetName) . ' (' . $escape($targetExternal) . ')' : $escape($targetExternal) ?></option><?php endforeach; ?></select></td>
                                         <?php endforeach; ?>
+                                        <td><?php $ghUser = $githubByAnchor[$anchorExternal] ?? ''; ?><?php if ($ghUser !== ''): ?><code class="small"><?= $escape($ghUser) ?></code><?php else: ?><span class="text-muted small">—</span><?php endif; ?></td>
                                     </tr>
                                 <?php endforeach; ?>
                                 </tbody>

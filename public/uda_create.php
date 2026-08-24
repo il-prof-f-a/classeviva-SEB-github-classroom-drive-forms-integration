@@ -178,7 +178,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
         $selectedIntegration = false;
         foreach ($selectedGroupRows as $groupRow) {
-            foreach (['google_classroom', 'github_classroom'] as $provider) {
+            foreach (['google_classroom'] as $provider) {
                 $providerLink = ($groupRow['providers'] ?? [])[$provider] ?? null;
                 if (is_array($providerLink) && trim((string)($providerLink['external_context_id'] ?? '')) !== '') {
                     $selectedIntegration = true;
@@ -1575,7 +1575,6 @@ try {
 
         function wizardMappedProviderContext() {
             const googleCourses = new Map();
-            const githubClassrooms = new Map();
             selectedGroupIds.forEach(groupId => {
                 const group = teachingGroupCatalogIndex[groupId] || {};
                 const gc = group.providers?.google_classroom || null;
@@ -1583,17 +1582,10 @@ try {
                     const id = String(gc.external_context_id).trim();
                     if (id) googleCourses.set(id, String(gc.external_name || id).trim() || id);
                 }
-                const gh = group.providers?.github_classroom || null;
-                if (gh?.external_context_id) {
-                    const id = String(gh.external_context_id).trim();
-                    if (id) githubClassrooms.set(id, String(gh.external_name || id).trim() || id);
-                }
             });
             return {
                 googleCourseId: googleCourses.size === 1 ? [...googleCourses.keys()][0] : '',
                 googleCourseName: googleCourses.size === 1 ? googleCourses.values().next().value : '',
-                githubClassroomId: githubClassrooms.size === 1 ? [...githubClassrooms.keys()][0] : '',
-                githubClassroomName: githubClassrooms.size === 1 ? githubClassrooms.values().next().value : '',
             };
         }
 
@@ -2067,8 +2059,7 @@ try {
                     const className = String(group.nome_classe || group.nome_gruppo || 'Classe');
                     const subjectName = String(group.nome_materia || 'Materia');
                     const classroom = group.providers?.google_classroom?.external_name || group.providers?.google_classroom?.external_context_id || 'Non configurata';
-                    const github = group.providers?.github_classroom?.external_name || group.providers?.github_classroom?.external_context_id || 'Non configurata';
-                    return `<li><strong>${escapeWizardHtml(className)}</strong> · ${escapeWizardHtml(subjectName)}<br><small>Google: ${escapeWizardHtml(classroom)} · GitHub: ${escapeWizardHtml(github)}</small></li>`;
+                    return `<li><strong>${escapeWizardHtml(className)}</strong> · ${escapeWizardHtml(subjectName)}<br><small>Google: ${escapeWizardHtml(classroom)}</small></li>`;
                 }).join('');
                 container.innerHTML = `<div class="alert alert-info border mb-0"><div class="d-flex justify-content-between align-items-start gap-2"><div><strong>Assegnazioni e mappature</strong><ul class="mb-0 mt-1">${items}</ul></div><a class="btn btn-sm btn-outline-primary flex-shrink-0" href="uda_create.php#2">Modifica mappature</a></div></div>`;
             });
@@ -2082,7 +2073,7 @@ try {
                 container.innerHTML = '<div class="alert alert-light border mb-0"><i class="bi bi-info-circle"></i> Nessun gruppo selezionato.</div>';
                 return;
             }
-            const providerLabels = { classeviva: 'ClasseViva', google_classroom: 'Google Classroom', github_classroom: 'GitHub Classroom' };
+            const providerLabels = { classeviva: 'ClasseViva', google_classroom: 'Google Classroom' };
             container.innerHTML = groups.map(group => {
                 const providers = group.providers || {};
                 const badges = Object.keys(providerLabels).map(provider => {
@@ -2782,8 +2773,7 @@ try {
                 const className = String(group.nome_classe || group.nome_gruppo || '');
                 const subjectName = String(group.nome_materia || '');
                 const classroom = group.providers?.google_classroom?.external_name || group.providers?.google_classroom?.external_context_id || 'Non configurata';
-                const github = group.providers?.github_classroom?.external_name || group.providers?.github_classroom?.external_context_id || 'Non configurata';
-                return `<li><strong>${escapeWizardHtml(className || 'Classe')}</strong> · ${escapeWizardHtml(subjectName || 'Materia')}<br><small>Google: ${escapeWizardHtml(classroom.trim())} · GitHub: ${escapeWizardHtml(github.trim())}</small></li>`;
+                return `<li><strong>${escapeWizardHtml(className || 'Classe')}</strong> · ${escapeWizardHtml(subjectName || 'Materia')}<br><small>Google: ${escapeWizardHtml(classroom.trim())}</small></li>`;
             }).join('');
             html += `
                 <div class="card mb-3">

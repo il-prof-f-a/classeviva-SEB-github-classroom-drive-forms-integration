@@ -16,7 +16,7 @@ foreach (['CLASSI ASSEGNATE', 'CLASSI_ASSEGNATE'] as $forbidden) {
         $failures[] = "sezione/tabella legacy ancora presente: {$forbidden}";
     }
 }
-foreach (['GRUPPI DIDATTICI', 'id_gruppo', 'google_classroom', 'github_classroom', 'findForGroupProvider'] as $required) {
+foreach (['GRUPPI DIDATTICI', 'id_gruppo', 'google_classroom', 'findForGroupProvider'] as $required) {
     if (strpos($source, $required) === false) {
         $failures[] = "riferimento provider-neutral assente: {$required}";
     }
