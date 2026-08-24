@@ -25,8 +25,6 @@ foreach (array_keys($pages) as $page) {
 $require('github_mapping', "REQUEST_METHOD'] === 'POST'", 'delete GitHub non e\u0300 vincolato a POST');
 $require('github_mapping', "'action') === 'delete'", 'delete GitHub non e\u0300 vincolato all\'azione delete');
 $require('github_mapping', "listGithubClassroomMappings()", 'delete GitHub non verifica ownership della mappatura');
-$require('github_mapping', 'listAssignments', 'GitHub non limita l\'assignment al roster selezionato');
-$require('github_mapping', 'listAcceptedAssignments', 'GitHub non verifica il roster accettato prima di modificare');
 $require('map_students', 'TeachingGroupCatalogService', 'map_students non valida il gruppo con il catalogo owner-scoped');
 $require('map_students', 'findForWizard', 'map_students non verifica ownership/stato del gruppo');
 $require('map_classes', 'TeachingGroupCatalogService', 'map_classes non usa il catalogo provider-neutral');

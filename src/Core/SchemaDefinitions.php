@@ -235,6 +235,7 @@ class SchemaDefinitions
                 'columns' => [
                     'id_test',
                     'id_uda',
+                    'id_gruppo',
                     'tipo_test',
                     'nome',
                     'descrizione',
@@ -267,7 +268,8 @@ class SchemaDefinitions
                     'github_assignment_id',
                     'url_assignment_student',
                     'url_assignment_teacher',
-                    'repo_default_branch'
+                    'repo_default_branch',
+                    'github_config_json'
                 ],
                 'description' => 'Test e verifiche (Kahoot, Google Forms, ecc.)'
             ],
@@ -338,6 +340,9 @@ class SchemaDefinitions
                     'id_assignment',
                     'student_repository_url',
                     'id_studente',
+                    'acceptance_code',
+                    'github_username',
+                    'accepted_at',
                     'match_confidence',
                     'note',
                     'data_creazione',

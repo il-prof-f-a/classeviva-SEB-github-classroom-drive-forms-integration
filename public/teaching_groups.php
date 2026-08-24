@@ -187,7 +187,7 @@ try {
     $github = new GitHubIntegration($config);
     $providerReady['github_classroom'] = $github->loadTokenFromSession() && $github->isAuthenticated();
     if ($providerReady['github_classroom']) {
-        $classrooms = $github->listClassrooms();
+        $classrooms = [];
         $classrooms = is_array($classrooms)
             ? ($classrooms['classrooms'] ?? ($classrooms['data'] ?? $classrooms))
             : [];

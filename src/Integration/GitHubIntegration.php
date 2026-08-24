@@ -103,63 +103,6 @@ class GitHubIntegration
     }
 
     /**
-     * Lista tutti i GitHub Classrooms dell'utente
-     */
-    public function listClassrooms($page = 1, $perPage = 30)
-    {
-        return $this->apiRequest('GET', '/classrooms', null, [
-            'page' => $page,
-            'per_page' => $perPage
-        ]);
-    }
-
-    /**
-     * Ottiene dettagli di un classroom specifico
-     */
-    public function getClassroom($classroomId)
-    {
-        return $this->apiRequest('GET', "/classrooms/{$classroomId}");
-    }
-
-    /**
-     * Lista assignment di un classroom
-     */
-    public function listAssignments($classroomId, $page = 1, $perPage = 30)
-    {
-        return $this->apiRequest('GET', "/classrooms/{$classroomId}/assignments", null, [
-            'page' => $page,
-            'per_page' => $perPage
-        ]);
-    }
-
-    /**
-     * Ottiene dettagli di un assignment
-     */
-    public function getAssignment($assignmentId)
-    {
-        return $this->apiRequest('GET', "/assignments/{$assignmentId}");
-    }
-
-    /**
-     * Lista le accepted assignments (roster con repo) per un assignment
-     */
-    public function listAcceptedAssignments($assignmentId, $page = 1, $perPage = 100)
-    {
-        return $this->apiRequest('GET', "/assignments/{$assignmentId}/accepted_assignments", null, [
-            'page' => $page,
-            'per_page' => $perPage
-        ]);
-    }
-
-    /**
-     * Recupera i grades (username + roster_identifier) di un assignment
-     */
-    public function getAssignmentGrades($assignmentId)
-    {
-        return $this->apiRequest('GET', "/assignments/{$assignmentId}/grades");
-    }
-
-    /**
      * Elenco commit di un repository
      */
     public function listRepoCommits($owner, $repo, $since = null, $until = null, $perPage = 20, $page = 1)

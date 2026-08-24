@@ -1517,17 +1517,12 @@ try {
                             </div>
                             <div class="test-github-catalog d-none">
                                 <div class="test-github-mapped">
-                                    <label class="form-label">GitHub Classroom associata</label>
-                                    <select class="form-select test-github-classroom mb-2">
-                                        <option value="">Caricamento classroom...</option>
-                                    </select>
                                     <label class="form-label">Cerca assignment</label>
                                     <input type="search" class="form-control test-github-search mb-2" placeholder="Cerca per titolo o slug..." autocomplete="off">
                                     <div class="list-group test-github-list" role="listbox"></div>
                                 </div>
                                 <div class="test-github-nomap d-none">
-                                    <div class="alert alert-warning py-2 mb-2">Nessuna GitHub Classroom mappata alla classe-materia selezionata.</div>
-                                    <a class="btn btn-sm btn-outline-primary" href="teaching_groups.php?return_to=uda_create.php#6">Crea la mappatura</a>
+                                    <div class="alert alert-warning py-2 mb-2">Nessun assignment GitHub per i gruppi selezionati.</div>
                                 </div>
                             </div>
                         </div>
@@ -1694,7 +1689,7 @@ try {
                 const assignmentInput = wizardTestField(wrapper, 'input[name="test_github_assignment_id[]"]');
                 const studentAssignmentInput = wizardTestField(wrapper, 'input[name="test_url_assignment_student[]"]');
                 const teacherAssignmentInput = wizardTestField(wrapper, 'input[name="test_url_assignment_teacher[]"]');
-                if (classroomInput) classroomInput.value = String(item.github_classroom_id || wrapper.querySelector('.test-github-classroom')?.value || '');
+                if (classroomInput) classroomInput.value = String(item.github_classroom_id || '');
                 if (assignmentInput) assignmentInput.value = String(item.github_assignment_id || item.id || '');
                 if (studentAssignmentInput) studentAssignmentInput.value = String(item.student_url || '');
                 if (teacherAssignmentInput) teacherAssignmentInput.value = String(item.teacher_url || '');
@@ -1795,29 +1790,20 @@ try {
             };
 
             const loadGithub = async () => {
-                const ctx = wizardMappedProviderContext();
-                const classroomId = ctx.githubClassroomId;
+                showOnly(githubBox, 'Assignment GitHub creati per i gruppi selezionati.');
                 const mappedBox = wrapper.querySelector('.test-github-mapped');
                 const nomapBox = wrapper.querySelector('.test-github-nomap');
-                if (!classroomId) {
-                    showOnly(githubBox, '');
-                    mappedBox?.classList.add('d-none');
-                    nomapBox?.classList.remove('d-none');
-                    setWizardCatalogStatus(wrapper, '', 'info');
-                    return;
-                }
-                showOnly(githubBox, 'Assignment della GitHub Classroom mappata.');
                 nomapBox?.classList.add('d-none');
                 mappedBox?.classList.remove('d-none');
-                const select = wrapper.querySelector('.test-github-classroom');
-                setWizardCatalogOptions(select, [{ id: classroomId, name: ctx.githubClassroomName || classroomId }], 'Classroom mappata');
-                if (select) select.disabled = true;
-                const classroomInput = wizardTestField(wrapper, 'input[name="test_github_classroom_id[]"]');
-                if (classroomInput) classroomInput.value = classroomId;
                 try {
-                    const data = await fetchWizardCatalog('ajax_get_wizard_github_catalog.php', { id_gruppo: [...selectedGroupIds], classroom_id: classroomId });
+                    const data = await fetchWizardCatalog('ajax_get_wizard_github_catalog.php', { id_gruppo: [...selectedGroupIds] });
                     githubPicker?.setItems(data.assignments || []);
-                    setWizardCatalogStatus(wrapper, (data.assignments || []).length + ' assignment disponibili.', 'success');
+                    const count = (data.assignments || []).length;
+                    if (!count) {
+                        mappedBox?.classList.add('d-none');
+                        nomapBox?.classList.remove('d-none');
+                    }
+                    setWizardCatalogStatus(wrapper, count + ' assignment disponibili.', count ? 'success' : 'info');
                 } catch (error) {
                     setWizardCatalogStatus(wrapper, error.message, 'warning');
                 }

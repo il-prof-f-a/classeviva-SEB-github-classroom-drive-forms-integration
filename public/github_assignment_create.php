@@ -1,716 +1,387 @@
 <?php
 /**
- * Creazione Assignment GitHub
- * Workflow guidato per creare assignment GitHub e collegarli alla UDA
+ * Creazione Assignment GitHub (metodologia REST, senza GitHub Classroom).
+ *
+ * Flow:
+ *  Step 1: gruppo didattico + template repo + org GitHub + nome + tipo + deadline.
+ *  Step 2: anteprima studenti (email risolte via API, solo id_studente persistiti),
+ *          scelta modalità invito (email con link personale / pubblicazione Classroom
+ *          con link generico), quindi creazione repo + TEST + link studente.
  */
 
 require_once '../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
-use App\Core\ProviderNeutralMappingService;
-use App\Models\UDA;
+use App\Core\GitHubAssignmentService;
+use App\Core\TeachingGroupIntegrationRepository;
+use App\Core\TeachingGroupStudentService;
+use App\Core\Security\Authorization;
+use App\Core\Security\Csrf;
 use App\Integration\GitHubIntegration;
+use App\Integration\GoogleClassroomAPI;
+use App\Integration\ClasseVivaAPI;
+use App\Core\NotificationManager;
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+Authorization::assertAuthenticated($_SESSION);
 
 $pageTitle = "Crea Assignment GitHub";
 
-// Verifica parametro UDA
-$idUda = $_GET['id_uda'] ?? '';
-if (!$idUda) {
-    header('Location: index.php');
-    exit;
-}
+$db = DatabaseFactory::createWithInitialization($config, true);
+$userId = (string)($_SESSION['user_id'] ?? '');
+$csrfToken = Csrf::token($_SESSION);
 
-// Inizializza servizi
-$dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 $github = new GitHubIntegration($config);
-$mappingService = new ProviderNeutralMappingService($dbAdapter, (string)($_SESSION['user_id'] ?? 'system'));
+$github->loadTokenFromSession();
+$ghAuthed = $github->isAuthenticated();
 
-// Carica UDA direttamente dal DatabaseAdapter
-$udaData = $dbAdapter->findUDAById($idUda);
-if (!$udaData) {
+$idUda = trim((string)($_GET['id_uda'] ?? ''));
+if ($idUda === '') {
     header('Location: index.php');
     exit;
 }
-$uda = UDA::fromArray($udaData);
-
-// Carica token GitHub da sessione
-$github->loadTokenFromSession();
-$isAuthenticated = $github->isAuthenticated();
-
-$successMessage = null;
-$errorMessage = null;
-$step = $_GET['step'] ?? 'form';
-$createdTestId = trim((string)($_GET['test_id'] ?? ''));
-
-// Flash success (post-redirect-get)
-if (!empty($_SESSION['github_assignment_success_message'])) {
-    $successMessage = (string)$_SESSION['github_assignment_success_message'];
-    unset($_SESSION['github_assignment_success_message']);
-}
-if (!empty($_SESSION['github_assignment_created_test_id']) && $createdTestId === '') {
-    $createdTestId = (string)$_SESSION['github_assignment_created_test_id'];
+$uda = $db->findUDAById($idUda);
+if (!$uda) {
+    header('Location: index.php');
+    exit;
 }
 
-// Carica repository templates
-$templates = $dbAdapter->findAll('GITHUB_REPO_TEMPLATES');
-$activeTemplates = array_filter($templates, function($t) {
-    return $t['attivo'] === 'si';
-});
+// Gruppi collegati alla UDA
+$groups = [];
+foreach ($db->findWhere('UDA_GRUPPI', ['id_uda' => $idUda, 'id_utente' => $userId]) as $link) {
+    $g = $db->findOne('GRUPPI_DIDATTICI', 'id_gruppo', (string)($link['id_gruppo'] ?? ''));
+    if (is_array($g) && !empty($g['id_gruppo'])) {
+        $groups[] = $g;
+    }
+}
 
-// Carica mappature GitHub Classroom (provider-neutral, da GRUPPI_INTEGRAZIONI)
-$githubMappings = $mappingService->listGithubClassroomMappings();
+// Template repo attivi
+$templates = array_values(array_filter($db->findAll('GITHUB_REPO_TEMPLATES'), static fn($t) => ($t['attivo'] ?? '') === 'si'));
 
-// Step 1: Form preparazione dati
+// Profilo (template email studenti)
+$profile = $config['user_profile'] ?? [];
+$emailDomain = (string)($profile['school_email_domain'] ?? '');
+$emailTemplate = (string)($profile['school_student_email_template'] ?? '');
+
+$orgs = [];
+if ($ghAuthed) {
+    try { $orgs = $github->listOrganizations(); } catch (Throwable $e) {}
+}
+
+$error = null;
+$students = [];
+$step = 'form';
 $formData = $_SESSION['github_assignment_form'] ?? [];
 
-// Step 2: Salvataggio dati e preparazione istruzioni
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'prepare') {
+function h(string $v): string { return htmlspecialchars($v, ENT_QUOTES, 'UTF-8'); }
+
+function resolve_students(array $config, $db, string $userId, string $groupId, string $emailTemplate, string $emailDomain): array {
+    $svc = new TeachingGroupStudentService($db, $userId);
+    $integrations = new TeachingGroupIntegrationRepository($db, $userId);
+    $gcCourse = '';
+    $cvClass = '';
+    foreach ($integrations->listForGroup($groupId) as $it) {
+        if (($it['stato'] ?? 'attivo') === 'disattivo') continue;
+        $p = (string)($it['provider'] ?? '');
+        if ($p === 'google_classroom') $gcCourse = (string)($it['external_context_id'] ?? '');
+        elseif ($p === 'classeviva') $cvClass = (string)($it['external_context_id'] ?? '');
+    }
+    $rosters = [];
+    if ($gcCourse !== '') {
+        try { $rosters['google_classroom'] = (new GoogleClassroomAPI($config))->getCourseStudents($gcCourse); } catch (Throwable $e) { $rosters['google_classroom'] = []; }
+    }
+    if ($cvClass !== '') {
+        try { $rosters['classeviva'] = (new ClasseVivaAPI($config))->getStudentiClasse($cvClass); } catch (Throwable $e) { $rosters['classeviva'] = []; }
+    }
+    $matrix = $svc->matrix($groupId);
+    $as = new GitHubAssignmentService($emailTemplate, $emailDomain);
+    return $as->resolveStudents($matrix, $rosters);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
-        $assignmentName = trim($_POST['assignment_name'] ?? '');
-        $assignmentType = $_POST['assignment_type'] ?? 'individual';
-        $tipoTest = $_POST['tipo_test'] ?? 'altro';
-        $templateId = $_POST['template_id'] ?? '';
-        $visibilita = $_POST['visibilita'] ?? 'private';
-        $deadline = $_POST['deadline'] ?? '';
-        $descrizione = trim($_POST['descrizione'] ?? '');
-        $classroomMappingId = $_POST['classroom_mapping_id'] ?? '';
+        Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? null);
+        $action = $_POST['action'] ?? '';
 
-        if (!$assignmentName) {
-            throw new Exception("Il titolo dell'assignment è obbligatorio");
+        if ($action === 'prepare') {
+            $groupId = trim((string)($_POST['group_id'] ?? ''));
+            $templateId = trim((string)($_POST['template_id'] ?? ''));
+            $org = trim((string)($_POST['org'] ?? ''));
+            $name = trim((string)($_POST['name'] ?? ''));
+            if ($groupId === '' || $templateId === '' || $org === '') {
+                throw new Exception('Gruppo, template e org sono obbligatori.');
+            }
+            $tname = '';
+            foreach ($templates as $t) { if ((string)$t['id_template'] === $templateId) { $tname = (string)($t['nome'] ?? ''); break; } }
+            $gname = '';
+            foreach ($groups as $g) { if ((string)$g['id_gruppo'] === $groupId) { $gname = (string)($g['nome_gruppo'] ?? ''); break; } }
+            if ($name === '') $name = GitHubAssignmentService::repoPrefix($gname . '-' . $tname);
+
+            $_SESSION['github_assignment_form'] = [
+                'group_id' => $groupId,
+                'template_id' => $templateId,
+                'org' => $org,
+                'name' => $name,
+                'tipo_test' => trim((string)($_POST['tipo_test'] ?? 'altro')),
+                'deadline' => trim((string)($_POST['deadline'] ?? '')),
+                'note' => trim((string)($_POST['note'] ?? '')),
+            ];
+            $formData = $_SESSION['github_assignment_form'];
+            $students = resolve_students($config, $db, $userId, $groupId, $emailTemplate, $emailDomain);
+            $step = 'confirm';
         }
 
-        if (!$classroomMappingId) {
-            throw new Exception("Seleziona un GitHub Classroom");
-        }
-        if (!in_array($tipoTest, ['prerequisiti', 'intermedio', 'finale', 'altro'], true)) {
-            $tipoTest = 'altro';
-        }
+        if ($action === 'create') {
+            if (empty($formData)) throw new Exception('Dati mancanti. Ricomincia dalla selezione.');
+            if (!$ghAuthed) throw new Exception('Autorizza GitHub prima di creare gli assignment.');
 
-        // Trova template selezionato
-        $selectedTemplate = null;
-        if ($templateId) {
-            foreach ($activeTemplates as $tmpl) {
-                if ($tmpl['id_template'] === $templateId) {
-                    $selectedTemplate = $tmpl;
-                    break;
+            $org = (string)$formData['org'];
+            $name = (string)$formData['name'];
+            $groupId = (string)$formData['group_id'];
+            $templateId = (string)$formData['template_id'];
+            $modes = (array)($_POST['modes'] ?? []);
+            $modeEmail = in_array('email', $modes, true);
+            $modeClassroom = in_array('classroom', $modes, true);
+
+            $template = null;
+            foreach ($templates as $t) { if ((string)$t['id_template'] === $templateId) { $template = $t; break; } }
+            if (!$template) throw new Exception('Template non trovato.');
+            [$tOwner, $tRepo] = (static function(string $url): array {
+                if (preg_match('#^https?://github[.]com/([^/]+)/([^/]+?)(?:[.]git)?/?$#i', trim($url), $m)) {
+                    return [strtolower($m[1]), strtolower($m[2])];
+                }
+                return ['', ''];
+            })((string)($template['url_repository'] ?? ''));
+            if ($tOwner === '' || $tRepo === '') throw new Exception('URL template non valido.');
+
+            $students = resolve_students($config, $db, $userId, $groupId, $emailTemplate, $emailDomain);
+            if (empty($students)) throw new Exception('Nessuno studente risolto nel gruppo.');
+
+            $slug = GitHubAssignmentService::assignmentSlug($name);
+            $prefix = GitHubAssignmentService::repoPrefix($name);
+            $idTest = 'TEST_' . uniqid();
+            $genericLink = app_url('public/accept_assignment.php') . '?assignment=' . urlencode($slug);
+
+            $usedCodes = [];
+            $links = [];
+            foreach ($students as $s) {
+                $repoName = GitHubAssignmentService::repoName($name, $usedCodes);
+                $acceptanceCode = GitHubAssignmentService::generateAcceptanceCode();
+                $repoUrl = '';
+                try {
+                    $created = $github->createRepositoryFromTemplate($tOwner, $tRepo, $repoName, $org, $name, true);
+                    $repoUrl = (string)($created['html_url'] ?? '');
+                } catch (Throwable $e) {
+                }
+                $db->insertRow('GITHUB_ASSIGNMENT_STUDENT_LINKS', [
+                    'id_assignment' => $idTest,
+                    'id_studente' => (string)$s['id_studente'],
+                    'student_repository_url' => $repoUrl,
+                    'acceptance_code' => $acceptanceCode,
+                    'github_username' => '',
+                    'accepted_at' => null,
+                    'note' => '',
+                    'data_creazione' => date('Y-m-d H:i:s'),
+                    'id_utente' => $userId,
+                ]);
+                $links[] = ['student' => $s, 'repo_url' => $repoUrl, 'code' => $acceptanceCode];
+            }
+
+            $db->insertRow('TEST', [
+                'id_test' => $idTest,
+                'id_uda' => $idUda,
+                'id_gruppo' => $groupId,
+                'tipo_test' => (string)$formData['tipo_test'],
+                'nome' => $name,
+                'descrizione' => (string)$formData['note'],
+                'piattaforma' => 'github',
+                'url' => '',
+                'id_esterno' => '',
+                'pubblicato' => 'NO',
+                'data_creazione' => date('Y-m-d H:i:s'),
+                'note' => (string)$formData['note'],
+                'id_utente' => $userId,
+                'url_studenti' => $genericLink,
+                'url_docente' => $genericLink,
+                'url_assignment_student' => $genericLink,
+                'url_assignment_teacher' => app_url('public/github_assignment_review.php') . '?test_id=' . urlencode($idTest),
+                'github_config_json' => json_encode([
+                    'org' => $org,
+                    'slug' => $slug,
+                    'repo_prefix' => $prefix,
+                    'template_id' => $templateId,
+                    'modalita_invito' => $modes,
+                ], JSON_THROW_ON_ERROR),
+            ]);
+
+            $emailSent = 0; $emailFailed = 0;
+            if ($modeEmail) {
+                $nm = new NotificationManager($config);
+                foreach ($links as $l) {
+                    $email = (string)($l['student']['email'] ?? '');
+                    if ($email === '') { $emailFailed++; continue; }
+                    $link = app_url('public/accept_assignment.php') . '?code=' . urlencode((string)$l['code']);
+                    $body = '<p>Ciao ' . h((string)($l['student']['nome'] ?? 'studente')) . ',</p>'
+                        . '<p>Ti e stato assegnato un assignment GitHub.</p>'
+                        . '<p>Accedi con il tuo account GitHub per accettare e ricevere la tua repository:</p>'
+                        . '<p><a href="' . h($link) . '">' . h($link) . '</a></p>';
+                    if ($nm->sendHtmlEmail($email, 'Invito assignment: ' . $name, $body)) { $emailSent++; } else { $emailFailed++; }
                 }
             }
-        }
 
-        // Trova mapping classroom
-        $selectedClassroom = null;
-        foreach ($githubMappings as $mapping) {
-            if ($mapping['id_mapping'] === $classroomMappingId) {
-                $selectedClassroom = $mapping;
-                break;
+            $classroomPublished = false;
+            if ($modeClassroom) {
+                $integrations = new TeachingGroupIntegrationRepository($db, $userId);
+                $gcCourse = '';
+                foreach ($integrations->listForGroup($groupId) as $it) {
+                    if ((string)($it['provider'] ?? '') === 'google_classroom' && ($it['stato'] ?? 'attivo') !== 'disattivo') {
+                        $gcCourse = (string)($it['external_context_id'] ?? '');
+                    }
+                }
+                if ($gcCourse !== '') {
+                    $gc = new GoogleClassroomAPI($config);
+                    $created = $gc->createMaterial($gcCourse, [
+                        'title' => $name,
+                        'description' => 'Assignment GitHub — accedi con il tuo account GitHub per ricevere la repository.',
+                        'link' => $genericLink,
+                        'state' => 'PUBLISHED',
+                    ]);
+                    $db->updateRow('TEST', 'id_test', $idTest, [
+                        'classroom_course_id' => $gcCourse,
+                        'classroom_assignment_id' => (string)($created['id'] ?? ''),
+                        'pubblicato' => 'SI',
+                    ]);
+                    $classroomPublished = true;
+                }
             }
+
+            unset($_SESSION['github_assignment_form']);
+            $_SESSION['github_assignment_success'] = 'Assignment creato (' . $idTest . '). Email inviate: ' . $emailSent . '/' . ($emailSent + $emailFailed) . ($classroomPublished ? '. Pubblicato su Classroom.' : '.');
+            header('Location: github_assignments.php?id_uda=' . urlencode($idUda));
+            exit;
         }
-
-        // Salva dati in sessione per Step 2
-        $_SESSION['github_assignment_form'] = [
-            'assignment_name' => $assignmentName,
-            'assignment_type' => $assignmentType,
-            'tipo_test' => $tipoTest,
-            'template_id' => $templateId,
-            'template' => $selectedTemplate,
-            'visibilita' => $visibilita,
-            'deadline' => $deadline,
-            'descrizione' => $descrizione,
-            'classroom_mapping_id' => $classroomMappingId,
-            'classroom' => $selectedClassroom,
-            'id_uda' => $idUda,
-            'uda_titolo' => $uda->titolo
-        ];
-
-        $step = 'instructions';
-
-    } catch (Exception $e) {
-        $errorMessage = "Errore: " . $e->getMessage();
+    } catch (Throwable $e) {
+        $error = $e->getMessage();
     }
 }
-
-// Step 3: Salvataggio link assignment creato
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'save_assignment') {
-    try {
-        $managementUrl = trim($_POST['management_url'] ?? '');
-        $invitationUrl = trim($_POST['invitation_url'] ?? '');
-
-        if (!$managementUrl) {
-            throw new Exception("L'URL di gestione dell'assignment è obbligatorio");
-        }
-
-        // Valida URL
-        if (!preg_match('#^https://classroom\.github\.com/#', $managementUrl)) {
-            throw new Exception("URL non valido. Deve iniziare con https://classroom.github.com/");
-        }
-
-        $formData = $_SESSION['github_assignment_form'];
-
-        // Estrai classroom_id e assignment_id dall'URL di gestione
-        // URL tipo: https://classroom.github.com/classrooms/123456/assignments/789012
-        $githubAssignmentId = '';
-        $extractedClassroomId = '';
-
-        if (preg_match('#classroom\.github\.com/classrooms/(\d+)/assignments/(\d+)#', $managementUrl, $matches)) {
-            $extractedClassroomId = $matches[1];
-            $githubAssignmentId = $matches[2];
-        }
-
-        // Link studenti (invitation) e link docente (management)
-        $invitationLink = $invitationUrl;
-        if (!$invitationLink && $githubAssignmentId && $isAuthenticated) {
-            try {
-                $assignment = $github->getAssignment($githubAssignmentId);
-                $invitationLink = $assignment['invite_link'] ?? '';
-            } catch (Exception $e) {
-                // fallback: richiedi input manuale
-                $invitationLink = '';
-            }
-        }
-        if (!$invitationLink) {
-            throw new Exception("Inserisci anche il link studenti (invitation link) oppure abilita l'autenticazione per recuperarlo via API.");
-        }
-        if (!preg_match('#^https://classroom\.github\.com/a/#', $invitationLink)) {
-            throw new Exception("Link studenti non valido. Deve essere tipo https://classroom.github.com/a/XXXXXXX");
-        }
-
-        // Crea record assignment
-        $assignmentId = 'GHAS_' . uniqid();
-        $newAssignment = [
-            'id_assignment' => $assignmentId,
-            'id_uda' => $formData['id_uda'],
-            'id_classroom_map' => $formData['classroom_mapping_id'],
-            'github_assignment_id' => $githubAssignmentId,
-            'assignment_name' => $formData['assignment_name'],
-            'assignment_type' => $formData['assignment_type'],
-            'invitation_link' => $invitationLink,
-            'slug' => '',
-            'deadline' => $formData['deadline'] ?: null,
-            'starter_code_url' => $formData['template']['url_repository'] ?? '',
-            'max_teams' => $formData['assignment_type'] === 'group' ? 50 : 0,
-            'max_members' => $formData['assignment_type'] === 'group' ? 5 : 1,
-            'auto_grading_config' => '',
-            'pubblicato_gc' => 'no',
-            'data_creazione' => date('d/m/Y H:i:s'),
-            'data_pubblicazione' => null,
-            'stato' => 'attivo',
-            'note' => $formData['descrizione']
-        ];
-
-        $dbAdapter->insertRow('GITHUB_ASSIGNMENTS', $newAssignment);
-
-        // Crea TEST collegato (piattaforma GitHub Classroom)
-        $testId = 'TEST_' . uniqid();
-        $newTest = [
-            'id_test' => $testId,
-            'id_uda' => $formData['id_uda'],
-            'tipo_test' => $formData['tipo_test'] ?? 'altro',
-            'nome' => $formData['assignment_name'],
-            'descrizione' => 'Assignment GitHub Classroom: ' . $formData['descrizione'],
-            'piattaforma' => 'github',
-            'url' => $invitationLink,
-            'url_studenti' => $invitationLink,
-            'url_docente' => $managementUrl,
-            'url_assignment_student' => $invitationLink,
-            'url_assignment_teacher' => $managementUrl,
-            'github_classroom_id' => $extractedClassroomId ?: ($formData['classroom_id'] ?? ''),
-            'github_assignment_id' => $githubAssignmentId,
-            'punteggio_max' => 100,
-            'soglia_sufficienza' => 60,
-            'data_creazione' => date('d/m/Y'),
-            'data_somministrazione' => $formData['deadline'] ?: '',
-            'pubblicato' => 'NO',
-            'risultati_importati' => 'NO',
-            'note' => $formData['descrizione'],
-            'id_esterno' => $githubAssignmentId,
-            'repo_default_branch' => ''
-        ];
-        $dbAdapter->insertRow('TEST', $newTest);
-
-        // Pulisci sessione
-        unset($_SESSION['github_assignment_form']);
-
-        $successMessage = "Assignment GitHub creato e registrato nei Test della UDA.";
-
-        // PRG: evita doppio inserimento su refresh e porta direttamente alla pagina di review del test appena creato
-        $_SESSION['github_assignment_success_message'] = $successMessage;
-        $_SESSION['github_assignment_created_test_id'] = $testId;
-        header('Location: github_assignment_create.php?id_uda=' . urlencode((string)$idUda) . '&step=success&test_id=' . urlencode((string)$testId));
-        exit;
-
-    } catch (Exception $e) {
-        $errorMessage = "Errore nel salvataggio: " . $e->getMessage();
-        $step = 'instructions';
-    }
-}
-
-// Genera slug suggerito
-function generateSlug($title) {
-    $slug = strtolower($title);
-    $slug = preg_replace('/[^a-z0-9]+/', '-', $slug);
-    $slug = trim($slug, '-');
-    return $slug;
-}
-
 ?>
 <!DOCTYPE html>
 <html lang="it">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= $pageTitle ?> - Sistema UDA</title>
+    <title><?= h($pageTitle) ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <style>
-        .step-indicator {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 2rem;
-        }
-        .step-item {
-            flex: 1;
-            text-align: center;
-            padding: 1rem;
-            position: relative;
-        }
-        .step-item:not(:last-child)::after {
-            content: '';
-            position: absolute;
-            top: 2rem;
-            right: -50%;
-            width: 100%;
-            height: 2px;
-            background: #dee2e6;
-        }
-        .step-item.active {
-            color: #0d6efd;
-            font-weight: bold;
-        }
-        .step-item.active::after {
-            background: #0d6efd;
-        }
-        .step-item.completed {
-            color: #198754;
-        }
-        .step-item.completed::after {
-            background: #198754;
-        }
-        .instruction-box {
-            background: #f8f9fa;
-            border-left: 4px solid #0d6efd;
-            padding: 1.5rem;
-            margin-bottom: 1rem;
-        }
-        .code-block {
-            background: #2b2b2b;
-            color: #f8f8f2;
-            padding: 1rem;
-            border-radius: 0.375rem;
-            font-family: 'Courier New', monospace;
-            margin: 1rem 0;
-        }
-    </style>
 </head>
-<body>
-    <?php
-    $pageTitle = $pageTitle ?? 'Assignment GitHub';
-    ob_start();
-    ?>
-    <a href="uda_view.php?id=<?= urlencode($idUda) ?>" class="btn btn-outline-light btn-sm">
-        <i class="bi bi-arrow-left"></i> Torna alla UDA
-    </a>
-    <?php
-    $headerActions = ob_get_clean();
-    include __DIR__ . '/partials/app_header.php';
-    ?>
-<div class="container mt-4">
-<!-- Step Indicator -->
-    <div class="step-indicator">
-        <div class="step-item <?= $step === 'form' ? 'active' : ($step !== 'form' ? 'completed' : '') ?>">
-            <div class="step-number fs-3"><i class="bi bi-1-circle"></i></div>
-            <div>Prepara Dati</div>
-        </div>
-        <div class="step-item <?= $step === 'instructions' ? 'active' : ($step === 'success' ? 'completed' : '') ?>">
-            <div class="step-number fs-3"><i class="bi bi-2-circle"></i></div>
-            <div>Crea su GitHub</div>
-        </div>
-        <div class="step-item <?= $step === 'success' ? 'active' : '' ?>">
-            <div class="step-number fs-3"><i class="bi bi-3-circle"></i></div>
-            <div>Completa</div>
-        </div>
+<body class="bg-light">
+<div class="container py-4" style="max-width: 980px;">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1 class="h5 mb-0"><i class="bi bi-github"></i> Crea Assignment GitHub</h1>
+        <a href="uda_tests.php?id=<?= h($idUda) ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Torna ai test</a>
     </div>
 
-    <?php if ($successMessage): ?>
-        <div class="alert alert-success alert-dismissible fade show">
-            <i class="bi bi-check-circle"></i> <?= htmlspecialchars($successMessage) ?>
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>
-    <?php endif; ?>
+    <?php if ($error !== null): ?><div class="alert alert-danger"><?= h($error) ?></div><?php endif; ?>
+    <?php if (!empty($_SESSION['github_assignment_success'])): ?><div class="alert alert-success"><?= h((string)$_SESSION['github_assignment_success']) ?></div><?php unset($_SESSION['github_assignment_success']); endif; ?>
 
-    <?php if ($errorMessage): ?>
-        <div class="alert alert-danger alert-dismissible fade show">
-            <i class="bi bi-exclamation-triangle"></i> <?= htmlspecialchars($errorMessage) ?>
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>
-    <?php endif; ?>
-
-    <!-- Contesto UDA -->
-    <div class="alert alert-info mb-4">
-        <h5><i class="bi bi-info-circle"></i> UDA: <?= htmlspecialchars($uda->titolo) ?></h5>
-        <p class="mb-0">
-            Stai creando un assignment GitHub Classroom che sarà automaticamente collegato a questa UDA.
-        </p>
-    </div>
-
-    <?php if (!$isAuthenticated): ?>
-        <div class="alert alert-warning">
-            <h5><i class="bi bi-exclamation-triangle"></i> Autenticazione Richiesta</h5>
-            <p>Per creare assignment GitHub è necessario autenticarsi con il tuo account GitHub.</p>
-	            <a href="<?= $github->getAuthorizationUrl(null, $_SERVER['REQUEST_URI'] ?? null) ?>" class="btn btn-dark">
-	                <i class="bi bi-github"></i> Autentica con GitHub
-	            </a>
-        </div>
-    <?php endif; ?>
-
-    <?php if (empty($githubMappings)): ?>
-        <div class="alert alert-warning">
-            <h5><i class="bi bi-exclamation-triangle"></i> Nessun GitHub Classroom Configurato</h5>
-            <p>Prima di creare un assignment, devi configurare almeno un GitHub Classroom.</p>
-            <a href="github_classroom_mapping.php" class="btn btn-primary">
-                <i class="bi bi-gear"></i> Configura GitHub Classroom
-            </a>
-        </div>
-    <?php endif; ?>
-
-    <?php if ($step === 'form' && $isAuthenticated && !empty($githubMappings)): ?>
-        <!-- Step 1: Form Preparazione Dati -->
-        <div class="card">
-            <div class="card-header bg-primary text-white">
-                <h5 class="mb-0"><i class="bi bi-pencil-square"></i> Step 1: Prepara i Dati dell'Assignment</h5>
-            </div>
-            <div class="card-body">
-                <form method="POST" action="">
+    <div class="card shadow-sm">
+        <div class="card-header bg-white fw-semibold"><?= $step === 'confirm' ? 'Conferma e modalità invito' : 'Configurazione assignment' ?></div>
+        <div class="card-body">
+            <?php if ($step === 'confirm'): ?>
+                <form method="post" class="row g-3">
+                    <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                    <input type="hidden" name="action" value="create">
+                    <div class="col-12">
+                        <table class="table table-sm table-striped">
+                            <thead><tr><th>#</th><th>Studente</th><th>Email</th></tr></thead>
+                            <tbody>
+                                <?php if (empty($students)): ?><tr><td colspan="3" class="text-muted">Nessuno studente risolto (verifica le mappature del gruppo).</td></tr>
+                                <?php else: foreach ($students as $i => $s): ?>
+                                    <tr>
+                                        <td><?= (int)$i + 1 ?></td>
+                                        <td><?= h((string)($s['nome'] ?? $s['id_studente'])) ?></td>
+                                        <td><code><?= h((string)($s['email'] ?? '(non risolta)')) ?></code></td>
+                                    </tr>
+                                <?php endforeach; endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="modes[]" value="email" id="modeEmail" checked>
+                            <label class="form-check-label" for="modeEmail">Invito via email (link personale per studente)</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="modes[]" value="classroom" id="modeClassroom">
+                            <label class="form-check-label" for="modeClassroom">Pubblica su Google Classroom (link generico di classe)</label>
+                        </div>
+                    </div>
+                    <div class="col-12 d-flex gap-2">
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-git"></i> Crea assignment</button>
+                        <a href="github_assignment_create.php?id_uda=<?= h($idUda) ?>" class="btn btn-outline-secondary">Annulla</a>
+                    </div>
+                </form>
+            <?php else: ?>
+                <form method="post" class="row g-3">
+                    <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
                     <input type="hidden" name="action" value="prepare">
-
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Titolo Assignment *</label>
-                            <input type="text" name="assignment_name" class="form-control" required
-                                   placeholder="Es: Progetto Spring Boot - Gestione Utenti"
-                                   value="<?= htmlspecialchars($formData['assignment_name'] ?? '') ?>">
-                            <small class="form-text text-muted">
-                                Sarà visibile agli studenti su GitHub Classroom
-                            </small>
-                        </div>
-
-                        <div class="col-md-3 mb-3">
-                            <label class="form-label">Tipo Assignment *</label>
-                            <select name="assignment_type" class="form-select" required>
-                                <option value="individual" <?= ($formData['assignment_type'] ?? 'individual') === 'individual' ? 'selected' : '' ?>>
-                                    Individuale
-                                </option>
-                                <option value="group" <?= ($formData['assignment_type'] ?? '') === 'group' ? 'selected' : '' ?>>
-                                    Di Gruppo
-                                </option>
-                            </select>
-                        </div>
-
-                        <div class="col-md-3 mb-3">
-                            <label class="form-label">Tipo Test *</label>
-                            <select name="tipo_test" class="form-select" required>
-                                <option value="prerequisiti" <?= ($formData['tipo_test'] ?? '') === 'prerequisiti' ? 'selected' : '' ?>>Prerequisiti</option>
-                                <option value="intermedio" <?= ($formData['tipo_test'] ?? '') === 'intermedio' ? 'selected' : '' ?>>Intermedio</option>
-                                <option value="finale" <?= ($formData['tipo_test'] ?? '') === 'finale' ? 'selected' : '' ?>>Finale</option>
-                                <option value="altro" <?= ($formData['tipo_test'] ?? '') === 'altro' ? 'selected' : '' ?>>Altro</option>
-                            </select>
-                            <small class="form-text text-muted">Servirà per classificare il test nella UDA.</small>
-                        </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Gruppo didattico</label>
+                        <select name="group_id" class="form-select" required>
+                            <option value="">— seleziona —</option>
+                            <?php foreach ($groups as $g): ?>
+                                <option value="<?= h((string)$g['id_gruppo']) ?>"><?= h((string)($g['nome_gruppo'] ?? $g['id_gruppo'])) ?></option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
-
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">GitHub Classroom *</label>
-                            <select name="classroom_mapping_id" class="form-select" required>
-                                <option value="">-- Seleziona --</option>
-                                <?php foreach ($githubMappings as $mapping): ?>
-                                    <option value="<?= htmlspecialchars($mapping['id_mapping']) ?>"
-                                            <?= ($formData['classroom_mapping_id'] ?? '') === $mapping['id_mapping'] ? 'selected' : '' ?>>
-                                        <?= htmlspecialchars($mapping['classroom_name']) ?>
-                                        (<?= htmlspecialchars($mapping['github_classroom_id'] ?? '') ?>)
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Repository Template</label>
-                            <select name="template_id" class="form-select">
-                                <option value="">-- Nessuno (repository vuoto) --</option>
-                                <?php foreach ($activeTemplates as $tmpl): ?>
-                                    <option value="<?= htmlspecialchars($tmpl['id_template']) ?>"
-                                            <?= ($formData['template_id'] ?? '') === $tmpl['id_template'] ? 'selected' : '' ?>>
-                                        <?= htmlspecialchars($tmpl['nome']) ?>
-                                        <?php if ($tmpl['linguaggio']): ?>
-                                            (<?= htmlspecialchars($tmpl['linguaggio']) ?>)
-                                        <?php endif; ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                            <small class="form-text text-muted">
-                                Codice starter che gli studenti riceveranno
-                            </small>
-                        </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Template repo</label>
+                        <select name="template_id" class="form-select" required>
+                            <option value="">— seleziona —</option>
+                            <?php foreach ($templates as $t): ?>
+                                <option value="<?= h((string)$t['id_template']) ?>"><?= h((string)($t['nome'] ?? $t['id_template'])) ?><?= ($t['categoria'] ?? '') !== '' ? ' — ' . h((string)$t['categoria']) : '' ?></option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
-
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Visibilità Repository Studenti</label>
-                            <select name="visibilita" class="form-select">
-                                <option value="private" <?= ($formData['visibilita'] ?? 'private') === 'private' ? 'selected' : '' ?>>
-                                    Private (consigliato)
-                                </option>
-                                <option value="public" <?= ($formData['visibilita'] ?? '') === 'public' ? 'selected' : '' ?>>
-                                    Public
-                                </option>
-                            </select>
-                        </div>
-
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Deadline (opzionale)</label>
-                            <input type="datetime-local" name="deadline" class="form-control"
-                                   value="<?= htmlspecialchars($formData['deadline'] ?? '') ?>">
-                        </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Org GitHub</label>
+                        <select name="org" class="form-select" required>
+                            <option value="">— seleziona —</option>
+                            <?php foreach ($orgs as $o): ?>
+                                <option value="<?= h((string)($o['login'] ?? '')) ?>"><?= h((string)($o['login'] ?? '')) ?></option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
-
-                    <div class="mb-3">
-                        <label class="form-label">Descrizione/Istruzioni</label>
-                        <textarea name="descrizione" class="form-control" rows="4"
-                                  placeholder="Descrivi cosa devono fare gli studenti..."><?= htmlspecialchars($formData['descrizione'] ?? '') ?></textarea>
+                    <div class="col-md-6">
+                        <label class="form-label">Nome assignment (auto {gruppo}-{template})</label>
+                        <input type="text" name="name" class="form-control" placeholder="{gruppo}-{template}">
                     </div>
-
-                    <?php if (empty($activeTemplates)): ?>
-                        <div class="alert alert-info">
-                            <i class="bi bi-info-circle"></i>
-                            Nessun template disponibile.
-                            <a href="github_repo_templates.php" target="_blank">Aggiungi repository template</a>
-                            per avere codice starter negli assignment.
-                        </div>
-                    <?php endif; ?>
-
-                    <div class="d-flex gap-2">
-                        <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-arrow-right"></i> Procedi allo Step 2
-                        </button>
-                        <a href="uda_view.php?id=<?= urlencode($idUda) ?>" class="btn btn-outline-secondary">
-                            <i class="bi bi-x-circle"></i> Annulla
-                        </a>
+                    <div class="col-md-4">
+                        <label class="form-label">Tipo</label>
+                        <select name="tipo_test" class="form-select">
+                            <option value="prerequisiti">Prerequisiti</option>
+                            <option value="intermedio">Intermedio</option>
+                            <option value="finale">Finale</option>
+                            <option value="altro" selected>Altro</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Deadline</label>
+                        <input type="datetime-local" name="deadline" class="form-control">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Note</label>
+                        <input type="text" name="note" class="form-control">
+                    </div>
+                    <div class="col-12">
+                        <button type="submit" class="btn btn-outline-primary"><i class="bi bi-people"></i> Carica studenti e continua</button>
                     </div>
                 </form>
-            </div>
+            <?php endif; ?>
         </div>
-    <?php endif; ?>
-
-    <?php if ($step === 'instructions'): ?>
-        <?php
-        $formData = $_SESSION['github_assignment_form'];
-        $suggestedSlug = generateSlug($formData['assignment_name']);
-        ?>
-        <!-- Step 2: Istruzioni Creazione su GitHub -->
-        <div class="card mb-4">
-            <div class="card-header bg-success text-white">
-                <h5 class="mb-0"><i class="bi bi-list-check"></i> Step 2: Crea l'Assignment su GitHub Classroom</h5>
-            </div>
-            <div class="card-body">
-                <div class="alert alert-warning">
-                    <i class="bi bi-exclamation-triangle"></i>
-                    <strong>Importante:</strong> Segui attentamente le istruzioni qui sotto per creare l'assignment su GitHub Classroom.
-                    Al termine, incolla l'URL dell'assignment nel form sotto.
-                </div>
-
-                <div class="instruction-box">
-                    <h6><i class="bi bi-1-circle-fill"></i> Accedi a GitHub Classroom</h6>
-                    <p>Vai su: <a href="https://classroom.github.com/classrooms" target="_blank" class="fw-bold">
-                        https://classroom.github.com/classrooms
-                    </a></p>
-                    <p class="mb-0">Seleziona il classroom: <strong><?= htmlspecialchars($formData['classroom']['classroom_name']) ?></strong></p>
-                </div>
-
-                <div class="instruction-box">
-                    <h6><i class="bi bi-2-circle-fill"></i> Crea Nuovo Assignment</h6>
-                    <ol class="mb-0">
-                        <li>Clicca su "New assignment"</li>
-                        <li>Scegli tipo: <strong><?= $formData['assignment_type'] === 'individual' ? 'Individual' : 'Group' ?> assignment</strong></li>
-                        <li>Clicca "Continue"</li>
-                    </ol>
-                </div>
-
-                <div class="instruction-box">
-                    <h6><i class="bi bi-3-circle-fill"></i> Configura Assignment</h6>
-                    <p><strong>Copia e incolla questi valori:</strong></p>
-                    <table class="table table-sm table-bordered bg-white">
-                        <tr>
-                            <th width="200">Assignment title:</th>
-                            <td>
-                                <code><?= htmlspecialchars($formData['assignment_name']) ?></code>
-                                <button class="btn btn-sm btn-outline-secondary float-end" onclick="copyToClipboard('<?= htmlspecialchars($formData['assignment_name']) ?>')">
-                                    <i class="bi bi-clipboard"></i> Copia
-                                </button>
-                            </td>
-                        </tr>
-                        <?php if ($formData['deadline']): ?>
-                        <tr>
-                            <th>Deadline:</th>
-                            <td><?= date('Y-m-d H:i', strtotime($formData['deadline'])) ?></td>
-                        </tr>
-                        <?php endif; ?>
-                        <?php if ($formData['template']): ?>
-                        <tr>
-                            <th>Template repository:</th>
-                            <td>
-                                <code><?= htmlspecialchars($formData['template']['url_repository']) ?></code>
-                                <button class="btn btn-sm btn-outline-secondary float-end" onclick="copyToClipboard('<?= htmlspecialchars($formData['template']['url_repository']) ?>')">
-                                    <i class="bi bi-clipboard"></i> Copia
-                                </button>
-                            </td>
-                        </tr>
-                        <?php endif; ?>
-                        <tr>
-                            <th>Repository visibility:</th>
-                            <td><strong><?= ucfirst($formData['visibilita']) ?></strong></td>
-                        </tr>
-                    </table>
-                </div>
-
-                <div class="instruction-box">
-                    <h6><i class="bi bi-4-circle-fill"></i> Completa la Creazione</h6>
-                    <ol class="mb-0">
-                        <li>Aggiungi la descrizione nel campo "Instructions for students" (opzionale)</li>
-                        <li>Configura altre opzioni secondo necessità</li>
-                        <li>Clicca su "Create assignment"</li>
-                        <li><strong>Copia l'URL dell'assignment</strong> (sarà tipo: https://classroom.github.com/a/XXXXXXX)</li>
-                    </ol>
-                </div>
-
-                <div class="alert alert-info mt-4">
-                    <h6><i class="bi bi-lightbulb"></i> Suggerimento</h6>
-                    <p class="mb-0">
-                        L'URL dell'assignment si trova nella pagina dell'assignment su GitHub Classroom.
-                        È il link che gli studenti useranno per accettare l'assignment.
-                    </p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Form Incolla URL -->
-        <div class="card">
-            <div class="card-header bg-primary text-white">
-                <h5 class="mb-0"><i class="bi bi-link-45deg"></i> Incolla i link dell'Assignment Creato</h5>
-            </div>
-            <div class="card-body">
-                <form method="POST" action="">
-                    <input type="hidden" name="action" value="save_assignment">
-
-                    <div class="alert alert-info">
-                        <h6><i class="bi bi-info-circle"></i> Informazioni</h6>
-                        <p class="mb-2">Dopo aver creato l'assignment su GitHub Classroom:</p>
-                        <ol class="mb-0">
-                            <li>Clicca sull'assignment appena creato per aprirlo</li>
-                            <li>Copia il link studenti (invite link) e il link docente (management)</li>
-                            <li>Incollali nei campi qui sotto</li>
-                        </ol>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label">Link Studenti (Invite Link) *</label>
-                        <input type="url" name="invitation_url" class="form-control" required
-                               placeholder="https://classroom.github.com/a/XXXXXXX"
-                               pattern="https://classroom\.github\.com/a/.+">
-                        <small class="form-text text-muted">
-                            Link che gli studenti useranno per accettare l'assignment.
-                        </small>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label">URL Gestione Assignment (Docente) *</label>
-                        <input type="url" name="management_url" class="form-control" required
-                               placeholder="https://classroom.github.com/classrooms/123456/assignments/789012"
-                               pattern="https://classroom\.github\.com/.+">
-                        <small class="form-text text-muted">
-                            <i class="bi bi-link-45deg"></i>
-                            URL della pagina di gestione dell'assignment su GitHub Classroom.
-                        </small>
-                    </div>
-
-                    <div class="d-flex gap-2">
-                        <button type="submit" class="btn btn-success">
-                            <i class="bi bi-check-circle"></i> Completa e Collega alla UDA
-                        </button>
-                        <a href="?id_uda=<?= urlencode($idUda) ?>&step=form" class="btn btn-outline-secondary">
-                            <i class="bi bi-arrow-left"></i> Torna Indietro
-                        </a>
-                    </div>
-                </form>
-            </div>
-        </div>
-    <?php endif; ?>
-
-    <?php if ($step === 'success'): ?>
-        <!-- Step 3: Successo -->
-        <div class="card border-success">
-            <div class="card-header bg-success text-white">
-                <h5 class="mb-0"><i class="bi bi-check-circle"></i> Assignment Creato con Successo!</h5>
-            </div>
-            <div class="card-body text-center py-5">
-                <div class="mb-4">
-                    <i class="bi bi-check-circle text-success" style="font-size: 5rem;"></i>
-                </div>
-                <h4 class="mb-3">L'assignment è stato creato e collegato alla UDA</h4>
-                <p class="text-muted mb-4">
-                    Il compito GitHub è stato aggiunto ai <strong>Test</strong> della UDA.
-                </p>
-                <div class="d-flex gap-2 justify-content-center">
-                    <a href="uda_view.php?id=<?= urlencode($idUda) ?>" class="btn btn-primary">
-                        <i class="bi bi-eye"></i> Visualizza UDA
-                    </a>
-                    <a href="uda_tests.php?id=<?= urlencode($idUda) ?>" class="btn btn-success">
-                        <i class="bi bi-clipboard-check"></i> Vai ai Test
-                    </a>
-                    <?php if ($createdTestId !== ''): ?>
-                        <a href="github_assignment_review.php?test_id=<?= urlencode($createdTestId) ?>" class="btn btn-outline-primary">
-                            <i class="bi bi-list"></i> Gestione Assignment
-                        </a>
-                    <?php else: ?>
-                        <a href="github_assignments.php" class="btn btn-outline-primary">
-                            <i class="bi bi-list"></i> Gestione Assignment
-                        </a>
-                    <?php endif; ?>
-                    <a href="?id_uda=<?= urlencode($idUda) ?>&step=form" class="btn btn-outline-secondary">
-                        <i class="bi bi-plus-circle"></i> Crea Altro Assignment
-                    </a>
-                </div>
-            </div>
-        </div>
-    <?php endif; ?>
+    </div>
 </div>
-
-<script>
-function copyToClipboard(text) {
-    navigator.clipboard.writeText(text).then(function() {
-        // Mostra feedback
-        const btn = event.target.closest('button');
-        const originalHTML = btn.innerHTML;
-        btn.innerHTML = '<i class="bi bi-check"></i> Copiato!';
-        btn.classList.remove('btn-outline-secondary');
-        btn.classList.add('btn-success');
-        setTimeout(function() {
-            btn.innerHTML = originalHTML;
-            btn.classList.remove('btn-success');
-            btn.classList.add('btn-outline-secondary');
-        }, 2000);
-    });
-}
-</script>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

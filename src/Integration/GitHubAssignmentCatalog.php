@@ -19,8 +19,6 @@ final class GitHubAssignmentCatalog
             ?? ''));
         $teacherUrl = trim((string)($assignment['html_url'] ?? $assignment['url'] ?? $assignment['teacher_url'] ?? ''));
         if ($teacherUrl === '' && $slug !== '') {
-            // L'API Classroom non espone sempre html_url: ricostruisci l'URL docente
-            // (lista repo studenti accettati) da classroom.url / id+nome / id.
             $classroom = is_array($assignment['classroom'] ?? null) ? $assignment['classroom'] : [];
             $classroomUrl = trim((string)($classroom['url'] ?? ''));
             $nestedClassroomId = trim((string)($classroom['id'] ?? ''));
@@ -31,8 +29,6 @@ final class GitHubAssignmentCatalog
             if ($classroomUrl !== '') {
                 $teacherUrl = rtrim($classroomUrl, '/') . '/assignments/' . $slug;
             } elseif ($classroomId !== '') {
-                // Il classroom_id richiesto (parametro) è sempre disponibile: usalo
-                // come fallback affidabile quando l'oggetto classroom non è incluso.
                 $teacherUrl = 'https://classroom.github.com/classrooms/' . $classroomId . '/assignments/' . $slug;
             } elseif ($nestedClassroomId !== '') {
                 $teacherUrl = 'https://classroom.github.com/classrooms/' . $nestedClassroomId . '/assignments/' . $slug;

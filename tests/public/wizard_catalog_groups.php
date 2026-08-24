@@ -6,7 +6,7 @@ declare(strict_types=1);
 $root = dirname(__DIR__, 2);
 $files = [
     $root . '/public/ajax_get_wizard_classroom_catalog.php' => 'listGoogleClassroomMappings',
-    $root . '/public/ajax_get_wizard_github_catalog.php' => 'listGithubClassroomMappings',
+    $root . '/public/ajax_get_wizard_github_catalog.php' => 'github_config_json',
 ];
 $failures = [];
 foreach ($files as $file => $service) {
@@ -16,7 +16,7 @@ foreach ($files as $file => $service) {
         $failures[] = 'impossibile leggere ' . $base;
         continue;
     }
-    foreach (['id_gruppo', 'group_id', $service] as $required) {
+    foreach (['id_gruppo', $service] as $required) {
         if (strpos($source, $required) === false) {
             $failures[] = $base . ': riferimento assente: ' . $required;
         }
@@ -24,8 +24,10 @@ foreach ($files as $file => $service) {
 }
 if ($failures !== []) {
     foreach ($failures as $failure) {
-        fwrite(STDERR, "FAIL: {$failure}\n");
+        fwrite(STDERR, "FAIL: {$failure}
+");
     }
     exit(1);
 }
-fwrite(STDOUT, "PASS: endpoint catalog wizard provider-neutral (id_gruppo).\n");
+fwrite(STDOUT, "PASS: endpoint catalog wizard provider-neutral (id_gruppo).
+");

@@ -10,9 +10,7 @@ $config = require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
-use App\Core\ProviderNeutralMappingService;
 use App\Integration\GoogleClassroomAPI;
-use App\Utils\UdaIntegrationResolver;
 
 $udaManager = new UDAManager($config);
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
@@ -34,11 +32,9 @@ if (!$udaComplete) {
 $uda = $udaComplete['uda'];
 $tests = $udaComplete['test'];
 
-// Risoluzione delle GitHub Classroom mappate ai gruppi dell'UDA (per il catalogo
-// "Collega un test esistente" quando la piattaforma selezionata è GitHub Classroom).
+// Catalogo GitHub dal DB interno: gli assignment sono righe TEST (piattaforma='github')
+// collegate ai gruppi dell'UDA. Nessuna risoluzione delle GitHub Classroom via API.
 $userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
-$mappingService = new ProviderNeutralMappingService($dbAdapter, $userId);
-$githubMappings = $mappingService->listGithubClassroomMappings();
 
 $udaGroupIds = [];
 foreach ($udaComplete['classi_assegnate'] as $assignment) {
@@ -49,26 +45,8 @@ foreach ($udaComplete['classi_assegnate'] as $assignment) {
 }
 $udaGroupIds = array_values(array_unique($udaGroupIds));
 
-$udaGithubClassrooms = [];
-foreach ($udaGroupIds as $groupId) {
-    $entry = UdaIntegrationResolver::githubForGroup($groupId, $githubMappings);
-    if ($entry === null) {
-        continue;
-    }
-    $classroomId = trim((string)($entry['classroom_id'] ?? ''));
-    if ($classroomId === '') {
-        continue;
-    }
-    $udaGithubClassrooms[$classroomId] = trim((string)($entry['classroom_name'] ?? 'GitHub Classroom'));
-}
-
 $udaGithubContext = [
     'group_ids' => $udaGroupIds,
-    'classrooms' => array_map(
-        static fn(string $id, string $name): array => ['id' => $id, 'name' => $name],
-        array_keys($udaGithubClassrooms),
-        array_values($udaGithubClassrooms)
-    ),
 ];
 $udaTestsReturnTo = urlencode('uda_tests.php?id=' . $udaId);
 
@@ -805,25 +783,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 </small>
                             </div>
 
-                            <!-- GitHub Classroom - Catalogo Assignment mappati -->
+                            <!-- GitHub - Catalogo assignment dal DB -->
                             <div class="col-12" id="githubCatalogContainer" style="display:none;">
                                 <div class="border rounded p-3 bg-light">
                                     <div class="small text-muted mb-2">
-                                        <i class="bi bi-github"></i> Assignment della GitHub Classroom mappata.
+                                        <i class="bi bi-github"></i> Assignment GitHub creati per i gruppi di questa UDA.
                                     </div>
                                     <div class="alert d-none mb-2" id="githubCatalogStatus"></div>
                                     <div id="githubCatalogMapped">
-                                        <label class="form-label">GitHub Classroom associata</label>
-                                        <select class="form-select mb-2" id="githubClassroomId">
-                                            <option value="">Caricamento classroom...</option>
-                                        </select>
                                         <label class="form-label">Cerca assignment</label>
                                         <input type="search" class="form-control mb-2" id="githubAssignmentSearch" placeholder="Cerca per titolo o slug..." autocomplete="off">
                                         <div class="list-group" id="githubAssignmentList" role="listbox"></div>
                                     </div>
                                     <div id="githubCatalogNomap" class="d-none">
-                                        <div class="alert alert-warning py-2 mb-2">Nessuna GitHub Classroom mappata ai gruppi di questa UDA.</div>
-                                        <a class="btn btn-sm btn-outline-primary" href="teaching_groups.php?return_to=<?= htmlspecialchars($udaTestsReturnTo, ENT_QUOTES, 'UTF-8') ?>">Crea la mappatura</a>
+                                        <div class="alert alert-warning py-2 mb-2">Nessun assignment GitHub per i gruppi di questa UDA.</div>
+                                        <a class="btn btn-sm btn-outline-primary" href="github_assignment_create.php?id_uda=<?= htmlspecialchars(urlencode((string)$udaId), ENT_QUOTES, 'UTF-8') ?>">Crea un assignment</a>
                                     </div>
                                 </div>
                             </div>
@@ -1153,7 +1127,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         const githubCatalogMapped = document.getElementById('githubCatalogMapped');
         const githubCatalogNomap = document.getElementById('githubCatalogNomap');
         const githubCatalogStatus = document.getElementById('githubCatalogStatus');
-        const githubClassroomSelect = document.getElementById('githubClassroomId');
         const githubAssignmentSearch = document.getElementById('githubAssignmentSearch');
         const githubAssignmentList = document.getElementById('githubAssignmentList');
 
@@ -1276,7 +1249,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             document.getElementById('urlStudenti').value = String(item.student_url || item.url_assignment_student || item.link || '');
             document.getElementById('urlDocente').value = String(item.teacher_url || item.url_assignment_teacher || item.link || '');
             clearGithubHiddenFields();
-            document.getElementById('hidden_github_classroom_id').value = String(item.github_classroom_id || githubClassroomSelect.value || '');
+            document.getElementById('hidden_github_classroom_id').value = String(item.github_classroom_id || '');
             document.getElementById('hidden_github_assignment_id').value = String(item.github_assignment_id || item.id || '');
             document.getElementById('nomeTestManuale').disabled = false;
             document.getElementById('nomeTestManuale').required = true;
@@ -1313,11 +1286,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         let githubPicker = null;
 
-        async function fetchGithubAssignments(classroomId) {
+        async function fetchGithubAssignments() {
             const groupIds = Array.isArray(udaGithubContext.group_ids) ? udaGithubContext.group_ids : [];
             const params = new URLSearchParams();
             groupIds.forEach(id => params.append('id_gruppo[]', id));
-            params.set('classroom_id', classroomId);
 
             setGithubCatalogStatus('Caricamento assignment...', 'info');
             try {
@@ -1333,6 +1305,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 const assignments = Array.isArray(data.assignments) ? data.assignments : [];
                 if (githubPicker) githubPicker.setItems(assignments);
                 else renderGithubAssignments(assignments);
+                if (!assignments.length) {
+                    githubCatalogMapped.classList.add('d-none');
+                    githubCatalogNomap.classList.remove('d-none');
+                } else {
+                    githubCatalogNomap.classList.add('d-none');
+                    githubCatalogMapped.classList.remove('d-none');
+                }
                 setGithubCatalogStatus(assignments.length + ' assignment disponibili.', assignments.length ? 'success' : 'info');
             } catch (error) {
                 setGithubCatalogStatus(error?.message || 'Impossibile caricare gli assignment.', 'warning');
@@ -1341,29 +1320,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         async function loadGithubAssignments() {
-            const classrooms = Array.isArray(udaGithubContext.classrooms) ? udaGithubContext.classrooms : [];
+            const groupIds = Array.isArray(udaGithubContext.group_ids) ? udaGithubContext.group_ids : [];
             githubPicker = null;
             githubAssignmentList.replaceChildren();
             setGithubCatalogStatus('', 'info');
             clearGithubHiddenFields();
 
-            if (classrooms.length === 0) {
+            if (groupIds.length === 0) {
                 githubCatalogMapped.classList.add('d-none');
                 githubCatalogNomap.classList.remove('d-none');
                 return;
             }
-
-            githubCatalogNomap.classList.add('d-none');
-            githubCatalogMapped.classList.remove('d-none');
-
-            githubClassroomSelect.replaceChildren();
-            classrooms.forEach(classroom => {
-                const option = document.createElement('option');
-                option.value = String(classroom.id || '');
-                option.textContent = String(classroom.name || classroom.id || '');
-                githubClassroomSelect.appendChild(option);
-            });
-            githubClassroomSelect.disabled = classrooms.length <= 1;
 
             if (window.CatalogPicker) {
                 githubPicker = new window.CatalogPicker({
@@ -1377,19 +1344,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 });
             }
 
-            const classroomId = githubClassroomSelect.value;
-            if (!classroomId) {
-                setGithubCatalogStatus('Nessuna GitHub Classroom selezionabile.', 'warning');
-                return;
-            }
-            await fetchGithubAssignments(classroomId);
+            await fetchGithubAssignments();
         }
-
-        githubClassroomSelect.addEventListener('change', function() {
-            const classroomId = this.value;
-            clearGithubHiddenFields();
-            if (classroomId) fetchGithubAssignments(classroomId);
-        });
 
         // Funzione per caricare corsi Classroom
         async function caricaCorsiClassroom() {

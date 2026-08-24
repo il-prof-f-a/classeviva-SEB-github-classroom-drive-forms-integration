@@ -6,7 +6,6 @@ namespace App\Core;
 
 use App\Core\Database\DatabaseAdapterInterface;
 use App\Integration\ClasseVivaAPI;
-use App\Integration\GitHubIntegration;
 use App\Integration\GoogleClassroomAPI;
 
 /**
@@ -209,7 +208,6 @@ final class RuntimeStudentNameService
         return match ($provider) {
             'classeviva' => self::loadClasseVivaRoster($config, $contextId),
             'google_classroom' => self::loadGoogleRoster($config, $contextId),
-            'github_classroom' => self::loadGitHubRoster($config, $contextId),
             default => [],
         };
     }
@@ -260,84 +258,4 @@ final class RuntimeStudentNameService
         return $result;
     }
 
-    /** @return list<array<string,mixed>> */
-    private static function loadGitHubRoster(array $config, string $contextId): array
-    {
-        $github = new GitHubIntegration($config);
-        if (!$github->loadTokenFromSession() || !$github->isAuthenticated()) {
-            return [];
-        }
-        $result = [];
-        $seen = [];
-        $assignments = [];
-        for ($page = 1; $page <= 10; $page++) {
-            $pageRows = $github->listAssignments($contextId, $page, 100);
-            $pageRows = is_array($pageRows) ? ($pageRows['assignments'] ?? ($pageRows['data'] ?? $pageRows)) : [];
-            if (!is_array($pageRows) || $pageRows === []) {
-                break;
-            }
-            $assignments = array_merge($assignments, $pageRows);
-            if (count($pageRows) < 100) {
-                break;
-            }
-        }
-        foreach ($assignments as $assignment) {
-            if (!is_array($assignment)) {
-                continue;
-            }
-            $assignmentId = trim((string)($assignment['id'] ?? $assignment['assignment_id'] ?? ''));
-            if ($assignmentId === '') {
-                continue;
-            }
-            $grades = $github->getAssignmentGrades($assignmentId);
-            $grades = is_array($grades) ? ($grades['grades'] ?? ($grades['data'] ?? $grades)) : [];
-            foreach (is_array($grades) ? $grades : [] as $grade) {
-                if (!is_array($grade)) {
-                    continue;
-                }
-                $login = trim((string)($grade['github_username'] ?? $grade['username'] ?? ''));
-                if ($login === '' || isset($seen[strtolower($login)])) {
-                    continue;
-                }
-                $seen[strtolower($login)] = true;
-                $name = trim((string)($grade['roster_identifier'] ?? ''));
-                if ($name === '') {
-                    try {
-                        $profile = $github->getUserByLogin($login);
-                        $name = is_array($profile) ? trim((string)($profile['name'] ?? '')) : '';
-                    } catch (\Throwable) {
-                        $name = '';
-                    }
-                }
-                if ($name !== '') {
-                    $result[] = ['external_user_id' => $login, 'display_name' => $name];
-                }
-            }
-            $accepted = $github->listAcceptedAssignments($assignmentId);
-            $accepted = is_array($accepted) ? ($accepted['accepted_assignments'] ?? ($accepted['data'] ?? $accepted)) : [];
-            foreach (is_array($accepted) ? $accepted : [] as $entry) {
-                if (!is_array($entry)) {
-                    continue;
-                }
-                $students = is_array($entry['students'] ?? null) ? $entry['students'] : [];
-                $first = is_array($students[0] ?? null) ? $students[0] : [];
-                $single = is_array($entry['student'] ?? null) ? $entry['student'] : [];
-                $login = trim((string)($first['login'] ?? $single['login'] ?? $entry['github_username'] ?? $entry['username'] ?? ''));
-                if ($login === '' || isset($seen[strtolower($login)])) {
-                    continue;
-                }
-                $seen[strtolower($login)] = true;
-                $name = '';
-                try {
-                    $profile = $github->getUserByLogin($login);
-                    $name = is_array($profile) ? trim((string)($profile['name'] ?? '')) : '';
-                } catch (\Throwable) {
-                }
-                if ($name !== '') {
-                    $result[] = ['external_user_id' => $login, 'display_name' => $name];
-                }
-            }
-        }
-        return $result;
-    }
 }

@@ -290,15 +290,11 @@ $showWorkflow = in_array($section, ['workflow', 'full']);
                                 </li>
                                 <li><strong>Test e compiti</strong> con deadline configurabile (link Google Moduli o file .seb)</li>
                                 <li>
-                                    <strong>Repository <a href="https://classroom.github.com" target="_blank">GitHub Classroom</a></strong>:
-                                    Creazione guidata con template, invitation link e tracking automatico.
+                                    <strong>Assignment GitHub</strong>:
+                                    Creazione guidata da un gruppo didattico con repository per studente (da template), link di accettazione personale e tracking automatico.
                                     <br>
-                                    <a href="https://docs.github.com/en/education/manage-coursework-with-github-classroom" target="_blank" class="small">
-                                        <i class="bi bi-box-arrow-up-right"></i> Documentazione GitHub Classroom
-                                    </a>
-                                    |
-                                    <a href="https://docs.google.com/presentation/d/e/2PACX-1vRcM5zErT6R7xHib-49h1P81K14NGVQwSbVIjUtNEjSz4trJMmd3Yqbg8Y9GMicR1trECwrLQiuEyoN/pub?start=false&loop=false&delayms=3000&slide=id.p1" target="_blank" class="small">
-                                        <i class="bi bi-box-arrow-up-right"></i> GitHub Classroom come strumento didattico (guida pratica per docenti)
+                                    <a href="https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-repository-from-a-template" target="_blank" class="small">
+                                        <i class="bi bi-box-arrow-up-right"></i> Documentazione GitHub (repository da template)
                                     </a>
                                 </li>
                             </ul>
@@ -330,7 +326,7 @@ $showWorkflow = in_array($section, ['workflow', 'full']);
                                     Export risultati con conversione voto automatica
                                 </li>
                                 <li>
-                                    <strong><a href="https://classroom.github.com" target="_blank">GitHub Classroom</a></strong>:
+                                    <strong><a href="https://github.com" target="_blank">GitHub</a></strong>:
                                     Analisi commit, LOC (Lines of Code), griglia valutazione Git workflow
                                 </li>
                             </ul>

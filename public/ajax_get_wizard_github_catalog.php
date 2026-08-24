@@ -6,9 +6,7 @@ session_start();
 require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
-use App\Core\ProviderNeutralMappingService;
-use App\Integration\GitHubAssignmentCatalog;
-use App\Integration\GitHubIntegration;
+use App\Core\GitHubAssignmentService;
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -20,113 +18,53 @@ $json = static function (array $payload, int $status = 200): never {
 
 try {
     $groupIds = array_values(array_filter(array_map('strval', (array)($_GET['id_gruppo'] ?? []))));
-    $classIds = array_values(array_filter(array_map('strval', (array)($_GET['class_ids'] ?? []))));
-    $subjectIds = array_values(array_map('strval', (array)($_GET['subject_ids'] ?? [])));
-    $requestedClassroomId = trim((string)($_GET['classroom_id'] ?? ''));
 
-    if ($groupIds === [] && $classIds === []) {
+    if ($groupIds === []) {
         $json([
             'success' => false,
             'error_code' => 'mapping_required',
-            'error' => 'Seleziona prima almeno un gruppo o una classe.'
+            'error' => 'Seleziona prima almeno un gruppo.'
         ], 422);
     }
 
+    // Catalogo dal DB interno: gli assignment sono righe TEST (piattaforma='github')
+    // collegate ai gruppi didattici selezionati. Nessuna chiamata alle API Classroom.
     $db = DatabaseFactory::createWithInitialization($config, true);
-    $mappings = (new ProviderNeutralMappingService(
-        $db,
-        (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'))
-    ))->listGithubClassroomMappings();
-    $allowed = [];
-    foreach ($mappings as $mapping) {
-        $groupId = (string)($mapping['id_gruppo'] ?? '');
-        $classId = (string)($mapping['id_classe_cv'] ?? '');
-        $subjectId = (string)($mapping['id_materia_cv'] ?? '');
-        $classroomId = trim((string)($mapping['github_classroom_id'] ?? ''));
-        if ($classroomId === '') {
-            continue;
-        }
-        if ($groupIds !== []) {
-            if (!in_array($groupId, $groupIds, true)) {
-                continue;
-            }
-        } else {
-            if (!in_array($classId, $classIds, true)) {
-                continue;
-            }
-            if ($subjectIds !== [] && !in_array($subjectId, $subjectIds, true)) {
-                continue;
-            }
-        }
-        $allowed[$classroomId] = [
-            'id' => $classroomId,
-            'name' => trim((string)($mapping['classroom_name'] ?? 'GitHub Classroom')),
-            'group_id' => $groupId,
-            'class_id' => $classId,
-            'subject_id' => $subjectId,
-            'org_name' => trim((string)($mapping['github_org_name'] ?? '')),
-        ];
-    }
-
-    if ($allowed === []) {
-        $json([
-            'success' => false,
-            'error_code' => 'mapping_missing',
-            'error' => 'Nessuna GitHub Classroom associata alle classi e materie selezionate.'
-        ], 404);
-    }
-
-    $classrooms = array_values($allowed);
-    if ($requestedClassroomId === '') {
-        $json(['success' => true, 'classrooms' => $classrooms, 'assignments' => []]);
-    }
-    if (!isset($allowed[$requestedClassroomId])) {
-        $json([
-            'success' => false,
-            'error_code' => 'mapping_forbidden',
-            'error' => 'La GitHub Classroom richiesta non è associata alle classi selezionate.'
-        ], 403);
-    }
-
-    $github = new GitHubIntegration($config);
-    if (!$github->loadTokenFromSession() || !$github->isAuthenticated()) {
-        $json([
-            'success' => false,
-            'error_code' => 'github_auth_required',
-            'error' => 'Autorizza GitHub Classroom nelle integrazioni prima di caricare gli assignment.'
-        ], 401);
-    }
+    $userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
 
     $assignments = [];
-    for ($page = 1; $page <= 10; $page++) {
-        $response = $github->listAssignments($requestedClassroomId, $page, 100);
-        $items = $response['assignments'] ?? ($response['data'] ?? $response ?? []);
-        if (!is_array($items) || $items === []) {
-            break;
+    foreach ($db->findWhere('TEST', ['piattaforma' => 'github']) as $test) {
+        $groupId = trim((string)($test['id_gruppo'] ?? ''));
+        if (!in_array($groupId, $groupIds, true)) {
+            continue;
         }
-        foreach ($items as $item) {
-            if (is_array($item)) {
-                $assignments[] = GitHubAssignmentCatalog::normalize($item, $requestedClassroomId);
-            }
+        $cfg = json_decode((string)($test['github_config_json'] ?? '{}'), true);
+        $cfg = is_array($cfg) ? $cfg : [];
+        $org = trim((string)($cfg['org'] ?? ''));
+        $slug = trim((string)($cfg['slug'] ?? ''));
+        if ($slug === '') {
+            $slug = trim((string)($test['id_test'] ?? ''));
         }
-        if (count($items) < 100) {
-            break;
-        }
-    }
-
-    $unique = [];
-    foreach ($assignments as $assignment) {
-        $key = (string)($assignment['id'] ?? $assignment['slug'] ?? '');
-        if ($key !== '') {
-            $unique[$key] = $assignment;
-        }
+        $assignments[] = [
+            'id' => (string)($test['id_test'] ?? ''),
+            'title' => (string)($test['nome'] ?? 'Assignment GitHub'),
+            'slug' => $slug,
+            'description' => (string)($test['descrizione'] ?? ''),
+            'state' => '',
+            'student_url' => (string)($test['url_assignment_student'] ?? ''),
+            'teacher_url' => (string)($test['url_assignment_teacher'] ?? ''),
+            'url_assignment_student' => (string)($test['url_assignment_student'] ?? ''),
+            'url_assignment_teacher' => (string)($test['url_assignment_teacher'] ?? ''),
+            'github_classroom_id' => $org,
+            'github_assignment_id' => $slug,
+            'source' => 'github',
+        ];
     }
 
     $json([
         'success' => true,
-        'classrooms' => $classrooms,
-        'classroom_id' => $requestedClassroomId,
-        'assignments' => array_values($unique)
+        'classrooms' => [],
+        'assignments' => $assignments
     ]);
 } catch (Throwable $e) {
     $json([

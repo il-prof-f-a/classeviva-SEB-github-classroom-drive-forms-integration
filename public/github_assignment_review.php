@@ -6,17 +6,18 @@
 require_once '../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
-use App\Core\GitHubAssignmentRosterService;
-use App\Core\ProviderNeutralMappingService;
+use App\Core\GitHubAssignmentService;
+use App\Core\NotificationManager;
 use App\Core\RuntimeStudentNameService;
 use App\Core\TeachingGroupIntegrationRepository;
-use App\Core\UdaGroupRepository;
+use App\Core\TeachingGroupStudentService;
+use App\Integration\ClasseVivaAPI;
 use App\Integration\GitHubIntegration;
+use App\Integration\GoogleClassroomAPI;
 
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
 $github = new GitHubIntegration($config);
 $userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
-$mappingService = new ProviderNeutralMappingService($dbAdapter, $userId);
 $github->loadTokenFromSession();
 $isAuthenticated = $github->isAuthenticated();
 
@@ -106,6 +107,37 @@ function getClasseVivaGrades()
     $grades[] = 'a';
     $grades[] = 'skip';
     return $grades;
+}
+
+// Risolve le email degli studenti di un gruppo (Google Classroom primario, ClasseViva fallback).
+// Le email non vengono mai persistite: sono ricavate just-in-time dai roster.
+function gh_review_resolve_students(string $groupId): array
+{
+    global $config, $dbAdapter, $userId;
+    $svc = new TeachingGroupStudentService($dbAdapter, $userId);
+    $integrations = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
+    $gcCourse = '';
+    $cvClass = '';
+    foreach ($integrations->listForGroup($groupId) as $it) {
+        if (($it['stato'] ?? 'attivo') === 'disattivo') continue;
+        $p = (string)($it['provider'] ?? '');
+        if ($p === 'google_classroom') $gcCourse = (string)($it['external_context_id'] ?? '');
+        elseif ($p === 'classeviva') $cvClass = (string)($it['external_context_id'] ?? '');
+    }
+    $rosters = [];
+    if ($gcCourse !== '') {
+        try { $rosters['google_classroom'] = (new GoogleClassroomAPI($config))->getCourseStudents($gcCourse); }
+        catch (Throwable $e) { $rosters['google_classroom'] = []; }
+    }
+    if ($cvClass !== '') {
+        try { $rosters['classeviva'] = (new ClasseVivaAPI($config))->getStudentiClasse($cvClass); }
+        catch (Throwable $e) { $rosters['classeviva'] = []; }
+    }
+    $profile = $config['user_profile'] ?? [];
+    $emailTemplate = (string)($profile['school_student_email_template'] ?? '');
+    $emailDomain = (string)($profile['school_email_domain'] ?? '');
+    $matrix = $svc->matrix($groupId);
+    return (new GitHubAssignmentService($emailTemplate, $emailDomain))->resolveStudents($matrix, $rosters);
 }
 
 // Carica test
@@ -822,344 +854,44 @@ if (!function_exists('ghSlugify')) {
     }
 }
 
-// Normalizza/deriva gli ID GitHub dal link docente se mancanti (utile per test creati via "collega link")
-$githubClassroomId = trim((string)($test['github_classroom_id'] ?? ''));
-$githubAssignmentId = trim((string)($test['github_assignment_id'] ?? ''));
-$teacherUrl = trim((string)($test['url_assignment_teacher'] ?? ($test['url_docente'] ?? ($test['url_gestione'] ?? ''))));
+// ---- Studenti (provider-neutral): fonte primaria GITHUB_ASSIGNMENT_STUDENT_LINKS ----
+// Ogni riga rappresenta uno studente del gruppo con codice di accettazione personale,
+// username GitHub (valorizzato all'accettazione) e repository (creata alla configurazione).
+$groupId = trim((string)($test['id_gruppo'] ?? ''));
+$idGruppo = $groupId;
 
-$classroomIdCandidateFromUrl = '';
-$assignmentIdCandidateFromUrl = '';
-$derivedAssignmentSlug = '';
-if ($teacherUrl) {
-    $parsed = parse_url($teacherUrl);
-    $path = $parsed['path'] ?? '';
-    $parts = array_values(array_filter(explode('/', (string)$path)));
-    $classroomsIdx = array_search('classrooms', $parts, true);
-    $assignmentsIdx = array_search('assignments', $parts, true);
-
-    if ($classroomsIdx !== false && isset($parts[$classroomsIdx + 1])) {
-        $classroomSegment = (string)$parts[$classroomsIdx + 1];
-        if (preg_match('/^(\\d+)(?:-|$)/', $classroomSegment, $m)) {
-            $classroomIdCandidateFromUrl = $m[1];
-        }
+$studentMap = [];
+foreach ($dbAdapter->findWhere('GITHUB_ASSIGNMENT_STUDENT_LINKS', ['id_assignment' => $testId]) as $link) {
+    $sid = trim((string)($link['id_studente'] ?? ''));
+    if ($sid === '') {
+        continue;
     }
-
-    if ($assignmentsIdx !== false && isset($parts[$assignmentsIdx + 1])) {
-        $assignmentSegment = (string)$parts[$assignmentsIdx + 1];
-        if (preg_match('/^(\\d+)(?:-|$)/', $assignmentSegment, $m)) {
-            $assignmentIdCandidateFromUrl = $m[1];
-        } else {
-            $derivedAssignmentSlug = $assignmentSegment;
-        }
-    }
+    $studentMap[] = [
+        'id_studente' => $sid,
+        'github_username' => trim((string)($link['github_username'] ?? '')),
+        'roster_identifier' => '',
+        'student_repository_url' => trim((string)($link['student_repository_url'] ?? '')),
+        'acceptance_code' => trim((string)($link['acceptance_code'] ?? '')),
+        'accepted_at' => trim((string)($link['accepted_at'] ?? '')),
+    ];
 }
 
-// Determina la GitHub Classroom "API id" da usare:
-// - prioritÃ : valore giÃ  salvato nel TEST
-// - fallback: integrazione github_classroom del gruppo didattico derivata dalla UDA
-// - solo come ultima risorsa: candidato dal link docente (che in alcune UI Ã¨ un ID diverso dall'API)
-$mappingRow = null;
-$allMaps = [];
-try {
-    $allMaps = $mappingService->listGithubClassroomMappings();
-} catch (Exception $e) {
-    $allMaps = [];
-}
-
-$findMapByClassroomId = function (string $cid) use ($allMaps) {
-    foreach ($allMaps as $m) {
-        if ((string)($m['github_classroom_id'] ?? '') === (string)$cid) {
-            return $m;
-        }
-    }
-    return null;
-};
-
-if ($githubClassroomId !== '') {
-    $mappingRow = $findMapByClassroomId($githubClassroomId);
-}
-
-if (!$mappingRow && $classroomIdCandidateFromUrl !== '') {
-    $candidateMap = $findMapByClassroomId($classroomIdCandidateFromUrl);
-    if ($candidateMap) {
-        $mappingRow = $candidateMap;
-        $githubClassroomId = (string)($candidateMap['github_classroom_id'] ?? '');
-    }
-}
-
-if (!$mappingRow && !empty($test['id_uda'])) {
-    try {
-        // Gruppi didattici dell'UDA con integrazione github_classroom.
-        $groupRepo = new UdaGroupRepository($dbAdapter, $userId);
-        $integrationRepo = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
-        $candidates = [];
-        foreach ($groupRepo->listForUda((string)$test['id_uda']) as $assignment) {
-            $gid = (string)($assignment['id_gruppo'] ?? '');
-            if ($gid === '') {
-                continue;
-            }
-            $integration = $integrationRepo->findForGroupProvider($gid, 'github_classroom');
-            if ($integration === null) {
-                continue;
-            }
-            $cid = (string)($integration['external_context_id'] ?? '');
-            if ($githubClassroomId === '' || $cid === $githubClassroomId) {
-                $candidates[$gid] = $integration;
-            }
-        }
-
-        if (count($candidates) === 1) {
-            $only = array_values($candidates)[0];
-            $githubClassroomId = (string)($only['external_context_id'] ?? '');
-            foreach ($allMaps as $m) {
-                if ((string)($m['github_classroom_id'] ?? '') === $githubClassroomId) {
-                    $mappingRow = $m;
-                    break;
-                }
-            }
-        }
-    } catch (Exception $e) {
-        // non bloccare
-    }
-}
-
-// Se non ho ancora l'ID assignment, prova a validare/riusare l'eventuale candidato numerico dal link
-if ($githubAssignmentId === '' && $assignmentIdCandidateFromUrl !== '') {
-    try {
-        $existing = $dbAdapter->findWhere('GITHUB_ASSIGNMENT_STUDENT_LINKS', [
-            'id_assignment' => $assignmentIdCandidateFromUrl
-        ]);
-        if (!empty($existing)) {
-            $githubAssignmentId = $assignmentIdCandidateFromUrl;
-        } elseif ($isAuthenticated) {
-            // Prova a verificare via API (se fallisce, ignora)
-            $github->getAssignment($assignmentIdCandidateFromUrl);
-            $githubAssignmentId = $assignmentIdCandidateFromUrl;
-        }
-    } catch (Exception $e) {
-        // ignora
-    }
-}
-
-// Risoluzione assignment_id via API listAssignments (match per invite link o per slug calcolato dal titolo)
-if ($githubAssignmentId === '' && $githubClassroomId !== '' && $isAuthenticated) {
-    try {
-        $studentInviteUrl = trim((string)($test['url_assignment_student'] ?? ($test['url_studenti'] ?? ($test['url'] ?? ''))));
-        $studentInviteUrlNorm = $studentInviteUrl !== '' ? rtrim($studentInviteUrl, '/') : '';
-        $slugFromTestName = ghSlugify(trim((string)($test['nome'] ?? '')));
-        $targetSlug = $derivedAssignmentSlug !== '' ? $derivedAssignmentSlug : $slugFromTestName;
-
-        $page = 1;
-        $perPage = 100;
-        $candidateAssignmentIds = [];
-        while ($page <= 10) {
-            $resp = $github->listAssignments($githubClassroomId, $page, $perPage);
-            $items = $resp['assignments'] ?? ($resp['data'] ?? $resp ?? []);
-            if (empty($items) || !is_array($items)) {
-                break;
-            }
-
-            foreach ($items as $a) {
-                $candidateId = trim((string)($a['id'] ?? ''));
-                if ($candidateId === '') {
-                    continue;
-                }
-                $candidateAssignmentIds[] = $candidateId;
-
-                // 1) Match per invite link (più affidabile)
-                $inviteLink = (string)($a['invite_link'] ?? ($a['invitation_link'] ?? ($a['invite_url'] ?? ($a['invitation_url'] ?? ''))));
-                $inviteLinkNorm = $inviteLink !== '' ? rtrim($inviteLink, '/') : '';
-                if ($studentInviteUrlNorm !== '' && $inviteLinkNorm !== '' && strcasecmp($studentInviteUrlNorm, $inviteLinkNorm) === 0) {
-                    $githubAssignmentId = $candidateId;
-                    break 2;
-                }
-
-                // 2) Match slug esplicito (se l'API lo restituisce)
-                $slug = (string)($a['slug'] ?? '');
-                if ($targetSlug !== '' && $slug !== '' && strcasecmp($slug, $targetSlug) === 0) {
-                    $githubAssignmentId = $candidateId;
-                    break 2;
-                }
-
-                // 3) Match slug calcolato dal titolo (fallback)
-                $title = (string)($a['title'] ?? ($a['name'] ?? ($a['assignment_title'] ?? '')));
-                $titleSlug = ghSlugify($title);
-                if ($targetSlug !== '' && $titleSlug !== '' && strcasecmp($titleSlug, $targetSlug) === 0) {
-                    $githubAssignmentId = $candidateId;
-                    break 2;
-                }
-
-                // 4) Match sul nome test (fallback ulteriore)
-                if ($slugFromTestName !== '' && $titleSlug !== '' && strcasecmp($titleSlug, $slugFromTestName) === 0) {
-                    $githubAssignmentId = $candidateId;
-                    break 2;
-                }
-
-                // 5) Match su eventuali url restituiti dall'API
-                $html = (string)($a['html_url'] ?? ($a['url'] ?? ($a['teacher_url'] ?? '')));
-                if ($html) {
-                    $p = parse_url($html);
-                    $pp = array_values(array_filter(explode('/', (string)($p['path'] ?? ''))));
-                    $aIdx = array_search('assignments', $pp, true);
-                    if ($targetSlug !== '' && $aIdx !== false && isset($pp[$aIdx + 1]) && strcasecmp((string)$pp[$aIdx + 1], $targetSlug) === 0) {
-                        $githubAssignmentId = $candidateId;
-                        break 2;
-                    }
-                }
-            }
-
-            if (count($items) < $perPage) {
-                break;
-            }
-            $page++;
-        }
-
-        // Fallback finale: se listAssignments non espone invite_link, prova a risolvere via getAssignment(ID) su un numero limitato di assignment.
-        if ($githubAssignmentId === '' && $studentInviteUrlNorm !== '' && !empty($candidateAssignmentIds)) {
-            $candidateAssignmentIds = array_values(array_unique($candidateAssignmentIds));
-            $maxChecks = 50;
-            $checked = 0;
-            foreach ($candidateAssignmentIds as $candidateId) {
-                if ($checked >= $maxChecks) {
-                    break;
-                }
-                $checked++;
-                try {
-                    $assignment = $github->getAssignment($candidateId);
-                    $inviteLink = (string)($assignment['invite_link'] ?? ($assignment['invitation_link'] ?? ($assignment['invite_url'] ?? ($assignment['invitation_url'] ?? ''))));
-                    $inviteLinkNorm = $inviteLink !== '' ? rtrim($inviteLink, '/') : '';
-                    if ($inviteLinkNorm !== '' && strcasecmp($studentInviteUrlNorm, $inviteLinkNorm) === 0) {
-                        $githubAssignmentId = $candidateId;
-                        break;
-                    }
-                } catch (Exception $e) {
-                    // continua
-                }
-            }
-        }
-    } catch (Exception $e) {
-        // non bloccare
-    }
-}
-
-if (($githubClassroomId && $githubClassroomId !== ($test['github_classroom_id'] ?? ''))
-    || ($githubAssignmentId && $githubAssignmentId !== ($test['github_assignment_id'] ?? ''))
-) {
-    try {
-        $update = [];
-        if ($githubClassroomId) $update['github_classroom_id'] = $githubClassroomId;
-        if ($githubAssignmentId) $update['github_assignment_id'] = $githubAssignmentId;
-        if (!empty($update)) {
-            $dbAdapter->updateRow('TEST', 'id_test', $testId, $update);
-            $test = array_merge($test, $update);
-        }
-    } catch (Exception $e) {
-        // non bloccare
-    }
-}
-
-// Carica roster/accepted assignments dalle API GitHub Classroom: è la fonte
-// primaria per l'elenco studenti (provider-neutral, indipendente da ClasseViva).
-$acceptedAssignments = [];
-$assignmentGrades = [];
-if ($isAuthenticated && !empty($githubAssignmentId)) {
-    try {
-        $accepted = $github->listAcceptedAssignments($githubAssignmentId);
-        $acceptedAssignments = $accepted['accepted_assignments'] ?? ($accepted['data'] ?? $accepted ?? []);
-    } catch (Exception $e) {
-        $errorMessage = $errorMessage ?: "Errore nel caricamento accepted assignments: " . $e->getMessage();
-    }
-    // getAssignmentGrades restituisce le repository anche quando accepted_assignments
-    // è vuoto (endpoint Classroom in chiusura): è la fonte affidabile per repo/roster.
-    try {
-        $grades = $github->getAssignmentGrades($githubAssignmentId);
-        $assignmentGrades = is_array($grades) ? $grades : [];
-    } catch (Exception $e) {
-        // non bloccare: accepted_assignments resta il fallback
-    }
-}
-if (!is_array($acceptedAssignments)) {
-    $acceptedAssignments = [];
-}
-if (!is_array($assignmentGrades)) {
-    $assignmentGrades = [];
-}
-
-// Costruisce l'elenco studenti: roster API risolto verso id_studente interno
-// tramite le identità; GITHUB_ASSIGNMENT_STUDENT_LINKS resta come overlay per
-// associazioni manuali e repository sovrascritte.
-$rosterService = new GitHubAssignmentRosterService($dbAdapter, $userId);
-$studentMap = $rosterService->buildStudentMap(
-    $acceptedAssignments,
-    (string)$githubAssignmentId,
-    (string)($mappingRow['id_gruppo'] ?? '')
-);
-// Arricchisce repo/roster dai grades (che includono student_repository_url).
-$studentMap = $rosterService->enrichRepositories($studentMap, $assignmentGrades);
+// Nomi studenti risolti dal resolver centrale del gruppo (mai persistiti).
 $runtimeNamesByStudent = [];
-$mappingGroupId = trim((string)($mappingRow['id_gruppo'] ?? ''));
-if ($mappingGroupId !== '') {
-    foreach ((new RuntimeStudentNameService($dbAdapter, $userId, $config))->resolveGroupStudents($mappingGroupId) as $runtimeStudent) {
+if ($groupId !== '') {
+    foreach ((new RuntimeStudentNameService($dbAdapter, $userId, $config))->resolveGroupStudents($groupId) as $runtimeStudent) {
         $studentKey = (string)$runtimeStudent['id_studente'];
         $runtimeName = trim((string)$runtimeStudent['nome_completo']);
         $runtimeNamesByStudent[$studentKey] = $runtimeName;
-        // Chiave secondaria per il matching col roster GitHub (username): quando il
-        // gruppo non ha membership interne, id_studente coincide col login GitHub.
+        // Chiave secondaria per il matching col login GitHub (gruppi senza membership interne).
         if (($runtimeStudent['provider'] ?? '') === 'github_classroom' && $studentKey !== '') {
             $runtimeNamesByStudent[strtolower($studentKey)] = $runtimeName;
         }
     }
 }
-$acceptedByUser = [];
-$acceptedByRoster = [];
-$acceptedReposFound = 0;
-foreach ($acceptedAssignments as $item) {
-    $user = '';
-    if (!empty($item['students'][0]['login'])) {
-        $user = (string)$item['students'][0]['login'];
-    } elseif (!empty($item['student']['login'])) {
-        $user = (string)$item['student']['login'];
-    } elseif (!empty($item['github_username'])) {
-        $user = (string)$item['github_username'];
-    }
-    $user = strtolower(trim($user));
 
-    $rid = strtolower(trim((string)($item['roster_identifier'] ?? '')));
-    if ($rid !== '') {
-        $acceptedByRoster[$rid] = $item;
-    }
-
-    $repoUrl = (string)($item['repository']['html_url'] ?? ($item['repository_url'] ?? ''));
-    if ($repoUrl !== '') {
-        $acceptedReposFound++;
-    }
-
-    if ($user !== '') {
-        $acceptedByUser[$user] = $item;
-    }
-}
-
-if (!empty($githubAssignmentId) && !empty($studentMap)) {
-    $hasAnyRepoStored = false;
-    foreach ($studentMap as $row) {
-        if (!empty($row['student_repository_url'])) {
-            $hasAnyRepoStored = true;
-            break;
-        }
-    }
-
-    if (!$hasAnyRepoStored) {
-        if (empty($acceptedAssignments) && empty($assignmentGrades)) {
-            $warningMessage = "Repo studenti non disponibili (N/D). Possibili cause: nessuno studente ha ancora accettato l'assignment (repo non create) oppure il token GitHub non ha accesso alle API GitHub Classroom. Verifica in Integrazioni → GitHub (Token GitHub Classroom) e riprova.";
-        } else {
-            $warningMessage = "Repo studenti non disponibili (N/D) anche se esistono accepted assignments/grades: controlla i permessi del token GitHub Classroom oppure ripeti l'autenticazione.";
-        }
-    }
-}
-
-// Commit info (ultimo commit e conteggio base): iteriamo lo studentMap
-// (che ora contiene student_repository_url dai grades) invece di acceptedByUser,
-// perché accepted_assignments è vuoto (endpoint Classroom in chiusura).
+// Commit info (ultimo commit e conteggio base): iteriamo lo studentMap,
+// che ora deriva da GITHUB_ASSIGNMENT_STUDENT_LINKS (repo create alla configurazione).
 $commitInfo = [];
 if ($isAuthenticated && !empty($studentMap)) {
     foreach ($studentMap as $row) {
@@ -1199,6 +931,47 @@ if ($isAuthenticated && !empty($studentMap)) {
     }
 }
 
+// Invio link di accettazione per email (riusa NotificationManager).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'send_student_email') {
+    try {
+        $studentId = trim((string)($_POST['student_id'] ?? ''));
+        if ($studentId === '' || $groupId === '') {
+            throw new Exception('Studente o gruppo mancante.');
+        }
+        $acceptanceCode = '';
+        foreach ($dbAdapter->findWhere('GITHUB_ASSIGNMENT_STUDENT_LINKS', ['id_assignment' => $testId, 'id_studente' => $studentId]) as $link) {
+            $acceptanceCode = trim((string)($link['acceptance_code'] ?? ''));
+            break;
+        }
+        if ($acceptanceCode === '') {
+            throw new Exception('Codice di accettazione non trovato per lo studente.');
+        }
+        $email = '';
+        $nome = '';
+        foreach (gh_review_resolve_students($groupId) as $s) {
+            if ((string)($s['id_studente'] ?? '') === $studentId) {
+                $email = (string)($s['email'] ?? '');
+                $nome = (string)($s['nome'] ?? '');
+                break;
+            }
+        }
+        if ($email === '') {
+            throw new Exception('Email studente non risolta (verifica i roster Google Classroom/ClasseViva del gruppo).');
+        }
+        $link = app_url('public/accept_assignment.php') . '?code=' . urlencode($acceptanceCode);
+        $body = '<p>Ciao ' . htmlspecialchars($nome !== '' ? $nome : 'studente', ENT_QUOTES, 'UTF-8') . ',</p>'
+            . '<p>Ti è stato assegnato un assignment GitHub.</p>'
+            . '<p>Accedi con il tuo account GitHub per accettare e ricevere la tua repository:</p>'
+            . '<p><a href="' . htmlspecialchars($link, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($link, ENT_QUOTES, 'UTF-8') . '</a></p>';
+        if (!(new NotificationManager($config))->sendHtmlEmail($email, 'Invito assignment: ' . (string)($test['nome'] ?? ''), $body)) {
+            throw new Exception('Invio email non riuscito.');
+        }
+        $successMessage = 'Email di invito inviata a ' . $email . '.';
+    } catch (Exception $e) {
+        $errorMessage = 'Errore invio email: ' . $e->getMessage();
+    }
+}
+
 // Salvataggio voti
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_grades') {
     try {
@@ -1209,11 +982,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         $usernames = $_POST['github_username'] ?? [];
         $repos = $_POST['repo_url'] ?? [];
 
-        if (!$mappingRow) {
-            throw new Exception("Mappatura classe/materia GitHub non trovata");
+        $idGruppo = trim((string)($test['id_gruppo'] ?? ''));
+        if ($idGruppo === '') {
+            throw new Exception("Assignment non collegato a un gruppo didattico");
         }
-
-        $idGruppo = (string)($mappingRow['id_gruppo'] ?? '');
 
         $testDateRaw = $test['data_somministrazione'] ?? ($test['data_creazione'] ?? null);
         $testDate = null;
@@ -1417,41 +1189,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
         <?php if (empty($studentMap)): ?>
             <div class="alert alert-warning">
-                <?php
-                $mapLink = 'github_classroom_mapping.php';
-                $params = [];
-                if (!empty($githubClassroomId)) {
-                    $params['github_classroom_id'] = $githubClassroomId;
-                }
-                if (!empty($mappingRow['id_mapping'])) {
-                    $params['mapping_id'] = $mappingRow['id_mapping'];
-                }
-                if (!empty($githubAssignmentId)) {
-                    $params['assignment_id'] = $githubAssignmentId;
-                }
-                if (empty($githubAssignmentId) && !empty($derivedAssignmentSlug)) {
-                    $params['assignment_slug'] = $derivedAssignmentSlug;
-                }
-                if (!empty($test['id_uda'])) {
-                    $params['id_uda'] = $test['id_uda'];
-                }
-                if (!empty($testId)) {
-                    $params['test_id'] = $testId;
-                }
-                $params['action'] = 'map_students';
-                if (!empty($params)) {
-                    $mapLink .= '?' . http_build_query($params);
-                }
-                ?>
-                Nessuna associazione studenti trovata per questo assignment. Completa la mappatura in <a href="<?= htmlspecialchars($mapLink) ?>#student-map">github_classroom_mapping.php</a>.
-                <?php if (empty($githubAssignmentId)): ?>
-                    <div class="small text-muted mt-1">
-                        Nota: non riesco a ricavare l'ID numerico dell'assignment da questo test.
-                        <?php if (!$isAuthenticated): ?>
-                            Autenticati su GitHub e riprova (serve una chiamata API per risolvere lo slug).
-                        <?php endif; ?>
-                    </div>
-                <?php endif; ?>
+                <i class="bi bi-info-circle"></i>
+                Nessuno studente collegato a questo assignment. Gli studenti vengono aggiunti alla creazione dell'assignment (riga TEST "github") a partire dal gruppo didattico; se mancano, verifica il gruppo in <a href="teaching_groups.php">teaching_groups.php</a>.
             </div>
         <?php else: ?>
             <form method="POST">
@@ -1492,7 +1231,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                            <tr>
 	                                <th>GitHub</th>
 	                                <th>Repo</th>
-                                <th>Studente ClasseViva</th>
+                                <th>Studente</th>
                                 <th class="vote-col">Voto</th>
                                 <th class="comment-col">Commento</th>
                             </tr>
@@ -1505,18 +1244,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                 $rid = (string)($row['roster_identifier'] ?? '');
                                 $ridKey = strtolower(trim($rid));
 
-                                $acceptedItem = $acceptedByUser[$lowerUser] ?? null;
-                                if (!$acceptedItem && $ridKey !== '') {
-                                    $acceptedItem = $acceptedByRoster[$ridKey] ?? null;
-                                }
-
                                 $repoUrl = (string)($row['student_repository_url'] ?? '');
-                                if ($repoUrl === '' && $acceptedItem) {
-                                    $repoUrl = (string)($acceptedItem['repository']['html_url'] ?? ($acceptedItem['repository_url'] ?? ''));
-                                }
-
-                                $commitCountTotal = $acceptedItem ? ($acceptedItem['commit_count'] ?? null) : null;
-                                $defaultBranch = $acceptedItem ? (string)($acceptedItem['repository']['default_branch'] ?? ($acceptedItem['default_branch'] ?? '')) : null;
+                                $commitCountTotal = null;
+                                $defaultBranch = 'main';
                                 $studentId = $row['id_studente'] ?? '';
                                 // Nome visualizzato dal resolver centrale del gruppo.
                                 $studentName = $runtimeNamesByStudent[(string)$studentId] ?? ($runtimeNamesByStudent[$lowerUser] ?? '');
@@ -1665,11 +1395,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                     <td>
                                         <input type="hidden" name="id_studente[<?= $idx ?>]" value="<?= htmlspecialchars($studentId) ?>">
                                         <?php if ($studentId): ?>
-                                            <span class="badge bg-success">Associato</span>
+                                            <?php
+                                            $accepted = trim((string)($row['github_username'] ?? '')) !== '' || trim((string)($row['accepted_at'] ?? '')) !== '';
+                                            $acceptanceCode = trim((string)($row['acceptance_code'] ?? ''));
+                                            ?>
+                                            <?php if ($accepted): ?>
+                                                <span class="badge bg-success">Accettato</span>
+                                            <?php else: ?>
+                                                <span class="badge bg-warning text-dark">Assignment non ancora accettato</span>
+                                            <?php endif; ?>
                                             <?php if ($studentName !== ''): ?><strong class="d-block show-name"><?= htmlspecialchars($studentName) ?></strong><?php endif; ?>
                                             <small class="text-muted d-block">ID: <?= htmlspecialchars($studentId) ?></small>
+                                            <?php if (!$accepted && $acceptanceCode !== ''): ?>
+                                                <code class="small d-block text-break"><?= htmlspecialchars(app_url('public/accept_assignment.php') . '?code=' . urlencode($acceptanceCode)) ?></code>
+                                                <form method="POST" class="d-inline" onsubmit="return confirm('Inviare il link di accettazione per email?');">
+                                                    <input type="hidden" name="action" value="send_student_email">
+                                                    <input type="hidden" name="student_id" value="<?= htmlspecialchars($studentId) ?>">
+                                                    <button type="submit" class="btn btn-sm btn-outline-primary mt-1"><i class="bi bi-envelope"></i> invia per email</button>
+                                                </form>
+                                            <?php endif; ?>
                                         <?php else: ?>
-                                            <span class="badge bg-warning text-dark">Non associato</span>
+                                            <span class="badge bg-secondary">Non associato</span>
                                         <?php endif; ?>
                                     </td>
 	                                    <td class="vote-col">
