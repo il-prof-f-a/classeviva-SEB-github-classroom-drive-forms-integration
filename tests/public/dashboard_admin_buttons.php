@@ -6,7 +6,7 @@ declare(strict_types=1);
 // solo agli utenti autorizzati (is_admin_user), e che la colonna "Test & Debug"
 // non venga renderizzata per gli utenti non amministratori.
 $file = dirname(__DIR__, 2) . '/public/index.php';
-$source = file_get_contents($file);
+$source = str_replace("\r\n", "\n", file_get_contents($file) ?: '');
 $failures = [];
 if ($source === false) {
     fwrite(STDERR, "FAIL: impossibile leggere public/index.php\n");

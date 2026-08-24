@@ -620,7 +620,8 @@ if (php_sapi_name() !== 'cli') {
         $isLoginScript = (
             $endsWith($scriptLower, '/public/login.php') ||
             $endsWith($scriptLower, '/public/login_google.php') ||
-            $endsWith($scriptLower, '/public/oauth_callback.php')
+            $endsWith($scriptLower, '/public/oauth_callback.php') ||
+            $endsWith($scriptLower, '/public/accept_assignment.php')
         );
 
         if ($isPublicScript && !$isLoginScript) {

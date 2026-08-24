@@ -501,6 +501,7 @@ $architectureTests = [
     'student provider mappings' => __DIR__ . '/domain/student_provider_mappings.php',
     'student reference gateway' => __DIR__ . '/domain/student_reference_gateway.php',
     'student reference gateway id gruppo' => __DIR__ . '/domain/student_reference_gateway_id_gruppo.php',
+    'student email resolver' => __DIR__ . '/domain/student_email_resolver.php',
     'group integration resolver' => __DIR__ . '/domain/group_integration_resolver.php',
     'provider-neutral group mappings' => __DIR__ . '/domain/provider_neutral_group_mappings.php',
     'provider capability resolver' => __DIR__ . '/domain/provider_capability_resolver.php',

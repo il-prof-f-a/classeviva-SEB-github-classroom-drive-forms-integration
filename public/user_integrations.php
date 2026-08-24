@@ -409,7 +409,7 @@ if (!$googleRedirectUri) {
 }
 
 $googleScopes = [
-    Drive::DRIVE_FILE,
+    Drive::DRIVE,
     Drive::DRIVE_METADATA_READONLY,
     Classroom::CLASSROOM_COURSES_READONLY,
     Classroom::CLASSROOM_COURSEWORK_ME,
@@ -417,6 +417,7 @@ $googleScopes = [
     Classroom::CLASSROOM_COURSEWORKMATERIALS,
     Classroom::CLASSROOM_ROSTERS_READONLY,
     Classroom::CLASSROOM_TOPICS,
+    Classroom::CLASSROOM_PROFILE_EMAILS,
     Forms::FORMS_BODY,
     Forms::FORMS_RESPONSES_READONLY,
     Forms::DRIVE_FILE,

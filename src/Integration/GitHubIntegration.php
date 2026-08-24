@@ -26,7 +26,7 @@ class GitHubIntegration
     /**
      * Genera URL per autorizzazione OAuth GitHub
      */
-    public function getAuthorizationUrl($state = null, $returnTo = null)
+    public function getAuthorizationUrl($state = null, $returnTo = null, $scopes = 'read:user read:org repo user:email admin:org')
     {
         if (!$state) {
             $state = bin2hex(random_bytes(16));
@@ -42,7 +42,7 @@ class GitHubIntegration
         $params = http_build_query([
             'client_id' => $this->clientId,
             'redirect_uri' => $this->redirectUri,
-            'scope' => 'read:user read:org repo',
+            'scope' => $scopes,
             'state' => $state
         ]);
 
@@ -226,14 +226,104 @@ class GitHubIntegration
     /**
      * Crea un repository da template (per assignment manuali)
      */
-    public function createRepositoryFromTemplate($templateOwner, $templateRepo, $name, $owner, $description = '')
+    public function createRepositoryFromTemplate($templateOwner, $templateRepo, $name, $owner, $description = '', $private = true)
     {
         return $this->apiRequest('POST', "/repos/{$templateOwner}/{$templateRepo}/generate", [
             'owner' => $owner,
             'name' => $name,
             'description' => $description,
-            'private' => false
+            'private' => (bool) $private
         ]);
+    }
+
+    /**
+     * Invita un utente all'organizzazione tramite email (richiede scope admin:org).
+     */
+    public function inviteUserByEmail($org, $email, $role = 'direct_member')
+    {
+        return $this->apiRequest('POST', "/orgs/{$org}/invitations", [
+            'email' => $email,
+            'role' => $role,
+        ]);
+    }
+
+    /**
+     * Elimina un repository dell'organizzazione (per la pulizia del test).
+     */
+    public function deleteRepository($owner, $repo)
+    {
+        return $this->apiRequest('DELETE', "/repos/{$owner}/{$repo}");
+    }
+
+    /**
+     * Aggiunge un collaboratore a un repository (assegnazione diretta).
+     * Richiede un token con accesso admin al repo (es. org owner).
+     */
+    public function addCollaborator($owner, $repo, $username)
+    {
+        return $this->apiRequest('PUT', "/repos/{$owner}/{$repo}/collaborators/{$username}");
+    }
+
+    /**
+     * Email verificate dell'utente autenticato (richiede scope user:email).
+     */
+    public function getUserEmails(): array
+    {
+        return $this->apiRequest('GET', '/user/emails');
+    }
+
+    /**
+     * Verifica se un utente è membro attivo dell'organizzazione (ha accettato l'invito).
+     */
+    public function isOrgMember($org, $username): bool
+    {
+        try {
+            $this->apiRequest('GET', "/orgs/{$org}/members/{$username}");
+            return true;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Aggiunge direttamente un utente all'organizzazione (bypassa l'invito pendente).
+     * Richiede scope admin:org.
+     */
+    public function addOrgMember($org, $username, $role = 'member')
+    {
+        return $this->apiRequest('PUT', "/orgs/{$org}/memberships/{$username}", [
+            'role' => $role,
+        ]);
+    }
+
+    /**
+     * Scope OAuth realmente concessi dal token corrente (header X-OAuth-Scopes).
+     */
+    public function getTokenScopes(): array
+    {
+        if (!$this->accessToken) {
+            return [];
+        }
+        $ch = curl_init('https://api.github.com/user');
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_HEADER, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Authorization: Bearer ' . $this->accessToken,
+            'Accept: application/vnd.github+json',
+            'X-GitHub-Api-Version: 2022-11-28',
+            'User-Agent: Sistema-UDA-PHP',
+        ]);
+        $response = curl_exec($ch);
+        $headerSize = (int) curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+        curl_close($ch);
+        if ($response === false) {
+            return [];
+        }
+        $headers = substr((string) $response, 0, $headerSize);
+        if (preg_match('/^x-oauth-scopes:\s*(.+)$/mi', $headers, $matches)) {
+            return array_values(array_filter(array_map('trim', explode(',', $matches[1]))));
+        }
+        return [];
     }
 
     /**

@@ -49,17 +49,12 @@ $obiettivi = [
     ['descrizione' => '', 'tipo_obiettivo' => 'conoscenze'],
 ];
 $desc = UdaClassroomPublishService::materialDescription('Test UDA', 'Nota opzionale', $obiettivi);
-checkEq(true, str_contains($desc, "Descrizione:
-Test UDA"), 'materialDescription include descrizione', $failures);
-checkEq(true, str_contains($desc, "Note:
-Nota opzionale"), 'materialDescription include note', $failures);
+checkEq(true, str_contains($desc, "Descrizione:\nTest UDA"), 'materialDescription include descrizione', $failures);
+checkEq(true, str_contains($desc, "Note:\nNota opzionale"), 'materialDescription include note', $failures);
 checkEq(true, str_contains($desc, 'Obiettivi didattici e disciplinari:'), 'materialDescription include sezione obiettivi', $failures);
-checkEq(true, str_contains($desc, "Conoscenze:
-- Conoscere il ciclo di sviluppo (ricordare)"), 'materialDescription raggruppa conoscenze', $failures);
-checkEq(true, str_contains($desc, "Abilità:
-- Applicare il TDD (applicare)"), 'materialDescription raggruppa abilità', $failures);
-checkEq(true, str_contains($desc, "Competenze:
-- Lavorare in team"), 'materialDescription raggruppa competenze', $failures);
+checkEq(true, str_contains($desc, "Conoscenze:\n- Conoscere il ciclo di sviluppo (ricordare)"), 'materialDescription raggruppa conoscenze', $failures);
+checkEq(true, str_contains($desc, "Abilità:\n- Applicare il TDD (applicare)"), 'materialDescription raggruppa abilità', $failures);
+checkEq(true, str_contains($desc, "Competenze:\n- Lavorare in team"), 'materialDescription raggruppa competenze', $failures);
 
 $descNoNote = UdaClassroomPublishService::materialDescription('UDA', '', []);
 checkEq(false, str_contains($descNoNote, 'Note:'), 'materialDescription omette note vuote', $failures);

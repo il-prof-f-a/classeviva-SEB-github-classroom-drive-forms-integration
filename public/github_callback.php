@@ -30,6 +30,13 @@ if (!$code) {
 }
 
 try {
+    // Flusso studente: se le credenziali OAuth del docente non sono nel config
+    // (utente non loggato), le recupera dalla sessione impostata da accept_assignment.php.
+    if (empty($config['github']['client_id'] ?? null) && !empty($_SESSION['github_student_client_id'] ?? null)) {
+        $config['github']['client_id'] = (string)($_SESSION['github_student_client_id'] ?? '');
+        $config['github']['client_secret'] = (string)($_SESSION['github_student_client_secret'] ?? '');
+    }
+
     // Inizializza GitHub Integration
     $github = new GitHubIntegration($config);
 
