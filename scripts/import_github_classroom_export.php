@@ -49,9 +49,10 @@ if ($mode === 'apply' && (($options['confirm'] ?? '') !== 'IMPORT-GITHUB-ASSIGNM
     exit(2);
 }
 
-$environment = strtolower((string)env('APP_ENV', 'local'));
-if ($environment === 'production') {
-    fwrite(STDERR, "Import bloccato: non consentito in production.\n");
+// Sicurezza: blocca solo la production reale (udasmart.it); consente locale e stage.
+$appUrl = strtolower((string)env('APP_URL', ''));
+if (str_contains($appUrl, 'udasmart.it')) {
+    fwrite(STDERR, "Import bloccato: non consentito in production (udasmart.it).\n");
     exit(3);
 }
 
