@@ -79,7 +79,8 @@ class SchemaDefinitions
                 'columns' => [
                     'id_pubblicazione', 'id_uda', 'id_gruppo', 'provider',
                     'external_resource_id', 'external_url', 'stato',
-                    'data_pubblicazione', 'metadata_json', 'id_utente'
+                    'data_pubblicazione', 'metadata_json', 'id_utente',
+                    'material_id', 'material_url'
                 ],
                 'description' => 'Pubblicazioni UDA verso provider esterni'
             ],

@@ -144,6 +144,46 @@ if ($googleClassroomEnabled && $googleDriveEnabled) {
     }
 }
 
+// Stato pubblicazione materiale per ogni classroom (per il badge Bozza/Pubblicato).
+$materialStatus = []; // target id => ['url' => ..., 'stato' => 'DRAFT'|'PUBLISHED']
+if ($googleEnabled) {
+    foreach ($publishTargets as $target) {
+        if ($target['course_id'] === '') {
+            continue;
+        }
+        $pubRows = $dbAdapter->findWhere('UDA_PUBBLICAZIONI', [
+            'id_utente' => $userId,
+            'id_uda' => $udaId,
+            'id_gruppo' => $target['id'],
+            'provider' => 'google_classroom',
+        ]);
+        $pubRow = $pubRows[0] ?? null;
+        $materialId = is_array($pubRow) ? trim((string)($pubRow['material_id'] ?? '')) : '';
+        $materialUrl = is_array($pubRow) ? trim((string)($pubRow['material_url'] ?? '')) : '';
+        if ($materialId === '') {
+            continue;
+        }
+        try {
+            $m = $googleClassroomAPI->getMaterial($target['course_id'], $materialId);
+            $materialStatus[$target['id']] = [
+                'url' => $materialUrl !== '' ? $materialUrl : (string)($m['link'] ?? ''),
+                'stato' => (string)($m['state'] ?? 'DRAFT'),
+            ];
+        } catch (Throwable $e) {
+            $isNotFound = (method_exists($e, 'getCode') && (int)$e->getCode() === 404)
+                || stripos($e->getMessage(), 'not found') !== false
+                || stripos($e->getMessage(), 'Requested entity was not found') !== false;
+            if ($isNotFound) {
+                // Materiale eliminato su Classroom: rimuovi il link.
+                $dbAdapter->updateRow('UDA_PUBBLICAZIONI', 'id_pubblicazione', $pubRow['id_pubblicazione'], [
+                    'material_id' => '',
+                    'material_url' => '',
+                ]);
+            }
+        }
+    }
+}
+
 // Gestione POST per pubblicazione
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'publish_classroom') {
     try {
@@ -194,6 +234,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 // Variabili per tracking
                 $topicId = null;
                 $classroomUrl = null;
+                $materialId = '';
+                $materialUrl = '';
 
                 // Se c'è mapping, pubblica realmente
                 if ($mapping) {
@@ -241,6 +283,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
                             $result = $googleClassroomAPI->createMaterial($courseId, $udaMaterialData);
                             $materialLink = trim((string)($result['link'] ?? ''));
+                            $materialId = (string)($result['id'] ?? '');
+                            $materialUrl = $materialLink;
                             $materialLog = "    ✅ Materiale UDA pubblicato come BOZZA con " . count($materialsToAttach) . " allegati";
                             if ($materialLink !== '') {
                                 $publishLog[] = ['html' => $materialLog . ': <a href="' . htmlspecialchars($materialLink, ENT_QUOTES) . '" target="_blank" rel="noopener">' . htmlspecialchars((string)$uda->titolo, ENT_QUOTES) . ' <i class="bi bi-box-arrow-up-right"></i></a>'];
@@ -369,6 +413,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     'stato' => $mapping ? 'pubblicata' : 'preparata',
                     'data_pubblicazione' => $mapping ? date('Y-m-d H:i:s') : null,
                     'id_utente' => $userId,
+                    'material_id' => $materialId,
+                    'material_url' => $materialUrl,
                 ];
                 if ($existing !== []) {
                     $dbAdapter->updateRow('UDA_PUBBLICAZIONI', 'id_pubblicazione', $existing[0]['id_pubblicazione'], $pubRow);
@@ -564,7 +610,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                                 <label class="form-check-label w-100" for="group_<?= htmlspecialchars($target['id']) ?>">
                                                     <div class="d-flex justify-content-between align-items-start">
                                                         <div class="flex-grow-1">
-                                                            <h6 class="mb-1"><?= htmlspecialchars($target['nome']) ?></h6>
+                                                            <h6 class="mb-1"><?= htmlspecialchars($target['nome']) ?>
+                                                                <?php $matStatus = $materialStatus[$target['id']] ?? null; ?>
+                                                                <?php if ($matStatus !== null && !empty($matStatus['url'])): ?>
+                                                                    <?php $isPublishedMat = (($matStatus['stato'] ?? '') === 'PUBLISHED'); ?>
+                                                                    <a class="badge <?= $isPublishedMat ? 'bg-success' : 'bg-secondary' ?> text-decoration-none" href="<?= htmlspecialchars($matStatus['url'], ENT_QUOTES) ?>" target="_blank" rel="noopener"><i class="bi bi-google"></i> <?= $isPublishedMat ? 'Pubblicato' : 'Bozza' ?></a>
+                                                                <?php endif; ?>
+                                                            </h6>
                                                             <small class="text-muted">
                                                                 <?php if ($target['course_id'] !== ''): ?>
                                                                     <i class="bi bi-google"></i> <?= htmlspecialchars($target['course_name'] ?: $target['course_id']) ?>

@@ -996,6 +996,31 @@ class GoogleClassroomAPI
     }
 
     /**
+     * Recupera un materiale (CourseWorkMaterial) per stato corrente.
+     */
+    public function getMaterial(string $courseId, string $materialId): array
+    {
+        $material = $this->service->courses_courseWorkMaterials->get($courseId, $materialId);
+
+        $link = (string)($material->alternateLink ?? '');
+        if ($link === '') {
+            $b64 = static fn(string $id): string => rtrim(base64_encode($id), '=');
+            $link = "https://classroom.google.com/c/" . $b64($courseId) . "/m/" . $b64((string)$material->id) . "/details";
+        }
+
+        return [
+            'id' => $material->id,
+            'title' => $material->title,
+            'description' => $material->description,
+            'state' => $material->state,
+            'topic_id' => $material->topicId,
+            'link' => $link,
+            'creation_time' => $material->creationTime,
+            'update_time' => $material->updateTime,
+        ];
+    }
+
+    /**
      * Carica un file su Google Drive e lo allega a un assignment
      *
      * @param string $courseId ID del corso
