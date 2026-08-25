@@ -52,7 +52,6 @@ return [
         'refresh_classeviva_token.php',
         'rubrica_orale_v2.php',
         'teaching_groups.php',
-        'test_github_assignment.php',
         'test_wizard.php',
         'uda_assign.php',
         'uda_create.php',
@@ -74,7 +73,6 @@ return [
         'db_cleanup.php',
         'system_status.php',
         'test_api_integrations.php',
-        'test_github_assignment.php',
     ],
     'local_only' => [
         'apply-privacy-migration.php',
