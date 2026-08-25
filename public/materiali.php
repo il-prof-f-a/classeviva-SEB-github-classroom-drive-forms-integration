@@ -11,8 +11,14 @@
 
 require_once __DIR__ . '/../bootstrap.php';
 
+use App\Core\ClassroomPublishState;
 use App\Core\Database\DatabaseFactory;
+use App\Core\GoogleTokenProvider;
+use App\Core\TeachingGroupIntegrationRepository;
+use App\Core\TeachingGroupRepository;
 use App\Core\UDAManager;
+use App\Core\UdaGroupRepository;
+use App\Integration\GoogleClassroomAPI;
 use App\Integration\GoogleDriveAPI;
 
 // Inizializza adapter e manager
@@ -350,18 +356,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Recupera tutte le UDA
 $udas = $udaManager->getAllUDAs();
 
-// Recupera tutti i materiali
-$allMaterials = $dbAdapter->findAll('MATERIALI');
-
-// Filtra per UDA se specificato
+// Recupera materiali (filtrati per UDA se specificato).
 $selectedUdaId = $_GET['uda_id'] ?? $_GET['id'] ?? '';
 $selectedUdaId = is_string($selectedUdaId) ? trim($selectedUdaId) : '';
 if (!empty($selectedUdaId)) {
-    $materials = array_filter($allMaterials, function($m) use ($selectedUdaId) {
-        return ($m['id_uda'] ?? '') === $selectedUdaId;
-    });
+    $materials = $dbAdapter->findWhere('MATERIALI', ['id_uda' => $selectedUdaId]);
 } else {
-    $materials = $allMaterials;
+    $materials = $dbAdapter->findAll('MATERIALI');
+}
+
+// Badge pubblicazione materiale per gruppo (solo con UDA selezionata).
+$materialBadges = [];
+$udaGroups = [];
+if (!empty($selectedUdaId)) {
+    $userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
+    $groupRepo = new UdaGroupRepository($dbAdapter, $userId);
+    $integrationRepo = new TeachingGroupIntegrationRepository($dbAdapter, $userId);
+    $teachingGroupRepo = new TeachingGroupRepository($dbAdapter, $userId);
+    foreach ($groupRepo->listForUda($selectedUdaId) as $assignment) {
+        $gid = (string)($assignment['id_gruppo'] ?? '');
+        if ($gid === '') continue;
+        $grp = $teachingGroupRepo->findById($gid);
+        if ($grp === null) continue;
+        $google = $integrationRepo->findForGroupProvider($gid, 'google_classroom');
+        $udaGroups[] = [
+            'id_gruppo' => $gid,
+            'nome_gruppo' => (string)($grp['nome_gruppo'] ?? ('Gruppo ' . $gid)),
+            'google_course_id' => $google !== null ? (string)($google['external_context_id'] ?? '') : '',
+        ];
+    }
+    try {
+        $tokenData = GoogleTokenProvider::getToken($config);
+        if (!empty($tokenData['access_token'])) {
+            $googleClassroomAPI = new GoogleClassroomAPI($config);
+            foreach ($udaGroups as $grp) {
+                $materialBadges[$grp['id_gruppo']] = ClassroomPublishState::materialBadgeForGroup(
+                    $googleClassroomAPI, $dbAdapter, $userId, $selectedUdaId, $grp['id_gruppo'], $grp['google_course_id']
+                );
+            }
+        }
+    } catch (Throwable $ignored) {}
 }
 
 ?>
@@ -490,9 +524,18 @@ if (!empty($selectedUdaId)) {
                                     <i class="bi bi-<?= getMaterialIcon($material['tipo_materiale'] ?? 'documento') ?>"></i>
                                     <?= htmlspecialchars($material['nome'] ?? 'Senza titolo') ?>
                                 </h5>
-                                <span class="badge bg-secondary material-type-badge">
-                                    <?= htmlspecialchars($material['tipo_materiale'] ?? 'N/A') ?>
-                                </span>
+                                <div class="d-flex flex-column align-items-end gap-1">
+                                    <span class="badge bg-secondary material-type-badge">
+                                        <?= htmlspecialchars($material['tipo_materiale'] ?? 'N/A') ?>
+                                    </span>
+                                    <?php if (!empty($selectedUdaId) && !empty($materialBadges)): ?>
+                                        <div class="d-flex flex-wrap gap-1 justify-content-end">
+                                            <?php foreach ($udaGroups as $grp): $b = $materialBadges[$grp['id_gruppo']] ?? ['label' => 'NON CREATO', 'color' => ClassroomPublishState::COLOR_NON_CREATO, 'url' => '']; ?>
+                                                <?= ClassroomPublishState::badgeHtml($b, ($grp['nome_gruppo']) . ' ' . $b['label']) ?>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
                             </div>
 
                             <?php if (!empty($material['descrizione'])): ?>
