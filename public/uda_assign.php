@@ -133,6 +133,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $headerActions .= '<a href="uda_view.php?id=' . urlencode($udaId) . '" class="btn btn-outline-light btn-sm">'
             . '<i class="bi bi-arrow-left"></i> Torna all\'UDA</a>';
     }
+    $pageActions = '<a href="teaching_groups.php" class="btn btn-outline-primary btn-sm"><i class="bi bi-diagram-3"></i> Gruppi didattici</a>';
     include __DIR__ . '/partials/app_header.php';
     ?>
 
