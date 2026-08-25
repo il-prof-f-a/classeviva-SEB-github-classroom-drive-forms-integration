@@ -265,20 +265,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'title' => $name,
                         'description' => 'Assignment GitHub — accedi con il tuo account GitHub per ricevere la repository.',
                         'link' => $genericLink,
-                        'state' => 'PUBLISHED',
+                        'state' => 'DRAFT',
                     ]);
                     $db->updateRow('TEST', 'id_test', $idTest, [
                         'classroom_course_id' => $gcCourse,
                         'classroom_assignment_id' => (string)($created['id'] ?? ''),
-                        'pubblicato' => 'SI',
+                        'pubblicato' => 'NO',
                     ]);
                     $classroomPublished = true;
                 }
             }
 
             unset($_SESSION['github_assignment_form']);
-            $_SESSION['github_assignment_success'] = 'Assignment creato (' . $idTest . '). Email inviate: ' . $emailSent . '/' . ($emailSent + $emailFailed) . ($classroomPublished ? '. Pubblicato su Classroom.' : '.');
-            header('Location: github_assignments.php?id_uda=' . urlencode($idUda));
+            $_SESSION['github_assignment_success'] = 'Assignment creato (' . $idTest . '). Email inviate: ' . $emailSent . '/' . ($emailSent + $emailFailed) . ($classroomPublished ? '. Bozza Classroom creata.' : '.');
+            header('Location: uda_tests.php?id=' . urlencode($idUda));
             exit;
         }
     } catch (Throwable $e) {
@@ -343,12 +343,12 @@ include __DIR__ . '/partials/app_header.php';
                     </div>
                     <div class="col-12">
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" name="modes[]" value="email" id="modeEmail" checked>
+                            <input class="form-check-input" type="checkbox" name="modes[]" value="email" id="modeEmail">
                             <label class="form-check-label" for="modeEmail">Invito via email (link personale per studente)</label>
                         </div>
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" name="modes[]" value="classroom" id="modeClassroom">
-                            <label class="form-check-label" for="modeClassroom">Pubblica su Google Classroom (link generico di classe)</label>
+                            <input class="form-check-input" type="checkbox" name="modes[]" value="classroom" id="modeClassroom" checked>
+                            <label class="form-check-label" for="modeClassroom">Pubblica come bozza su Google Classroom (link generico di classe)</label>
                         </div>
                     </div>
                     <div class="col-12 d-flex gap-2">
