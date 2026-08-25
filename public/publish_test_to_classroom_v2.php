@@ -170,6 +170,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $test['classroom_course_id'] = $courseId;
         $test['classroom_assignment_id'] = $createdAssignment['id'];
         $test['classroom_topic_id'] = $topicId;
+        $test['classroom_url'] = $createdAssignment['link'] ?? ($createdAssignment['alternateLink'] ?? '');
         $test['pubblicato'] = $draftOrPublish === 'publish' ? 'SI' : 'NO';
         $test['url_docente'] = $createdAssignment['alternateLink'] ?? '';
 

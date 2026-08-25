@@ -258,6 +258,7 @@ class SchemaDefinitions
                     'classroom_course_id',
                     'classroom_assignment_id',
                     'classroom_topic_id',
+                    'classroom_url',
                     'allegati_json',
                     'ora_consegna',
                     'cbm_enabled',

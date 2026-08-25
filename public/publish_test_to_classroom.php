@@ -223,6 +223,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $test['classroom_course_id'] = $courseId;
         $test['classroom_assignment_id'] = $createdAssignment['id'];
         $test['classroom_topic_id'] = $topicId;
+        $test['classroom_url'] = $createdAssignment['link'] ?? '';
         // Sul portale il test non deve più risultare "Bozza" dopo la pubblicazione (anche se in Classroom è bozza)
         $test['pubblicato'] = 'SI';
         $test['url_docente'] = $createdAssignment['link'] ?? '';

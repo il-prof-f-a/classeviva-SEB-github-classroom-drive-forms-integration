@@ -812,6 +812,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action) {
                     'classroom_course_id' => $courseId,
                     'classroom_assignment_id' => $createdAssignment['id'] ?? ($test['classroom_assignment_id'] ?? ''),
                     'classroom_topic_id' => $topicId ?? ($test['classroom_topic_id'] ?? ''),
+                    'classroom_url' => $assignmentLink ?: ($test['classroom_url'] ?? ''),
                     'url_docente' => $assignmentLink ?: ($test['url_docente'] ?? ''),
                     'pubblicato' => 'NO'
                 ]);

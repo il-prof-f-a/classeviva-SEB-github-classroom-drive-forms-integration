@@ -281,6 +281,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $db->updateRow('TEST', 'id_test', $idTest, [
                         'classroom_course_id' => $gcCourse,
                         'classroom_assignment_id' => (string)($created['id'] ?? ''),
+                        'classroom_url' => trim((string)($created['link'] ?? '')),
                         'pubblicato' => 'NO',
                     ]);
                     $classroomPublished = true;

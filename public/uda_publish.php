@@ -299,6 +299,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                     'classroom_course_id' => $courseId,
                                     'classroom_assignment_id' => $result['id'] ?? '',
                                     'classroom_topic_id' => $topicId,
+                                    'classroom_url' => trim((string)($result['link'] ?? '')),
                                     'pubblicato' => 'NO',  // Bozza
                                 ];
 
