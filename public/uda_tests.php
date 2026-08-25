@@ -46,6 +46,7 @@ foreach ($udaComplete['classi_assegnate'] as $assignment) {
 $udaGroupIds = array_values(array_unique($udaGroupIds));
 
 $udaGithubContext = [
+    'id_uda' => $udaId,
     'group_ids' => $udaGroupIds,
 ];
 $udaTestsReturnTo = urlencode('uda_tests.php?id=' . $udaId);
@@ -730,7 +731,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     <div class="modal-header">
                         <h5 class="modal-title">
-                            <i class="bi bi-link-45deg"></i> Collega Test dal Link
+                            <i class="bi bi-link-45deg"></i> Collega un test esistente
                         </h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
@@ -1275,12 +1276,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 return;
             }
             assignments.forEach(assignment => {
+                const alreadyLinked = (assignment.id_uda || '') === (udaGithubContext.id_uda || '');
                 const button = document.createElement('button');
                 button.type = 'button';
                 button.className = 'list-group-item list-group-item-action';
+                if (alreadyLinked) {
+                    button.disabled = true;
+                    button.classList.add('disabled', 'text-muted');
+                }
                 const title = document.createElement('div');
                 title.className = 'fw-semibold';
                 title.textContent = assignment.title || assignment.slug || 'Assignment senza titolo';
+                if (alreadyLinked) title.textContent += ' (già collegato)';
                 button.appendChild(title);
                 if (assignment.slug || assignment.github_assignment_id) {
                     const meta = document.createElement('small');
@@ -1288,7 +1295,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     meta.textContent = assignment.slug || assignment.github_assignment_id || '';
                     button.appendChild(meta);
                 }
-                button.addEventListener('click', () => fillTestFromGithubAssignment(assignment));
+                if (!alreadyLinked) {
+                    button.addEventListener('click', () => fillTestFromGithubAssignment(assignment));
+                }
                 githubAssignmentList.appendChild(button);
             });
         }

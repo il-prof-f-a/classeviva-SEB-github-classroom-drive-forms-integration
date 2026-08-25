@@ -47,6 +47,7 @@ try {
         }
         $assignments[] = [
             'id' => (string)($test['id_test'] ?? ''),
+            'id_uda' => trim((string)($test['id_uda'] ?? '')),
             'title' => (string)($test['nome'] ?? 'Assignment GitHub'),
             'slug' => $slug,
             'description' => (string)($test['descrizione'] ?? ''),
