@@ -47,13 +47,14 @@ final class ClassroomPublishState
      * @param string|null $state 'PUBLISHED' | 'DRAFT' | null
      * @return array{label:string,color:string,url:string}
      */
-    public static function classify(?string $link, ?string $state): array
+    public static function classify(?string $link, ?string $state, string $publishedLabel = 'PUBBLICATO'): array
     {
-        if ($link === null || $link === '') {
+        // Senza link, oppure risorsa non più presente su Classroom (eliminata): NON CREATO.
+        if ($link === null || $link === '' || $state === null) {
             return ['label' => 'NON CREATO', 'color' => self::COLOR_NON_CREATO, 'url' => ''];
         }
         if ($state === 'PUBLISHED') {
-            return ['label' => 'PUBBLICATO', 'color' => self::COLOR_PUBBLICATO, 'url' => $link];
+            return ['label' => $publishedLabel, 'color' => self::COLOR_PUBBLICATO, 'url' => $link];
         }
         return ['label' => 'BOZZA', 'color' => self::COLOR_BOZZA, 'url' => $link];
     }
@@ -122,7 +123,7 @@ final class ClassroomPublishState
             }
         }
         $state = self::resourceState($api, $courseId, $resourceId, 'assignment');
-        return self::classify($link, $state);
+        return self::classify($link, $state, 'ASSEGNATO');
     }
 
     /**
