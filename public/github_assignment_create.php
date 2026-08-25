@@ -261,12 +261,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 if ($gcCourse !== '') {
                     $gc = new GoogleClassroomAPI($config);
-                    $created = $gc->createMaterial($gcCourse, [
+                    // Argomento Classroom = argomento dell'UDA (fallback sul titolo).
+                    $topicName = !empty((string)($uda['argomento'] ?? '')) ? (string)$uda['argomento'] : (string)($uda['titolo'] ?? '');
+                    $materialData = [
                         'title' => $name,
                         'description' => 'Assignment GitHub — accedi con il tuo account GitHub per ricevere la repository.',
                         'link' => $genericLink,
                         'state' => 'DRAFT',
-                    ]);
+                    ];
+                    if ($topicName !== '') {
+                        try {
+                            $topic = $gc->findOrCreateTopic($gcCourse, $topicName);
+                            $materialData['topicId'] = (string)($topic['id'] ?? '');
+                        } catch (Throwable $ignored) {
+                            // argomento non impostabile: prosegue senza topic
+                        }
+                    }
+                    $created = $gc->createMaterial($gcCourse, $materialData);
                     $db->updateRow('TEST', 'id_test', $idTest, [
                         'classroom_course_id' => $gcCourse,
                         'classroom_assignment_id' => (string)($created['id'] ?? ''),
