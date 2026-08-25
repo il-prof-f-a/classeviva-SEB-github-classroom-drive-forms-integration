@@ -506,12 +506,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         <?= htmlspecialchars($test['nome']) ?>
                                         <?php if ($pubblicato): ?>
                                             <?php if ($classroomUrl !== ''): ?>
-                                                <a class="badge bg-success ms-2 text-decoration-none" href="<?= htmlspecialchars($classroomUrl, ENT_QUOTES) ?>" target="_blank" rel="noopener">Pubblicato <i class="bi bi-box-arrow-up-right"></i></a>
+                                                <a class="badge bg-success ms-2 text-decoration-none" href="<?= htmlspecialchars($classroomUrl, ENT_QUOTES) ?>" target="_blank" rel="noopener"><i class="bi bi-google"></i> Pubblicato</a>
                                             <?php else: ?>
                                                 <span class="badge bg-success ms-2">Pubblicato</span>
                                             <?php endif; ?>
                                         <?php else: ?>
-                                            <span class="badge bg-secondary ms-2">Bozza</span>
+                                            <?php if ($classroomUrl !== ''): ?>
+                                                <a class="badge bg-secondary ms-2 text-decoration-none" href="<?= htmlspecialchars($classroomUrl, ENT_QUOTES) ?>" target="_blank" rel="noopener"><i class="bi bi-google"></i> Bozza</a>
+                                            <?php else: ?>
+                                                <span class="badge bg-secondary ms-2">Bozza</span>
+                                            <?php endif; ?>
                                         <?php endif; ?>
                                         <?php if ($piattaforma === 'google-forms' && ($test['risultati_importati'] ?? 'NO') === 'SI'): ?>
                                             <span class="badge bg-info ms-2">
