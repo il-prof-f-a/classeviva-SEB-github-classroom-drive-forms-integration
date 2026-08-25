@@ -265,6 +265,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         'tipo_risorsa' => $provider === 'classeviva' ? 'classe_materia' : ($provider === 'google_classroom' ? 'course' : 'roster'),
                     ]);
                 }
+
+                // Auto-sincronizzazione: dopo il salvataggio dei collegamenti popola
+                // il roster studenti (GRUPPI_STUDENTI + identità) per ogni provider
+                // attivo, così il conteggio "X di Y da mappare" riflette subito gli
+                // studenti senza bisogno di un pulsante "Sincronizza" separato.
+                $autoSyncCount = 0;
+                $autoSyncWarnings = [];
+                foreach (array_keys($providerLabels) as $provider) {
+                    if (!($providerReady[$provider] ?? false)) {
+                        continue;
+                    }
+                    $savedLink = $integrationRepository->findForGroupProvider($groupId, $provider);
+                    if (!is_array($savedLink)) {
+                        continue;
+                    }
+                    $providerContext = trim((string)($savedLink['external_context_id'] ?? ''));
+                    if ($providerContext === '') {
+                        continue;
+                    }
+                    try {
+                        $roster = $runtimeNameService->providerRoster($provider, $providerContext);
+                        if ($roster === []) {
+                            $autoSyncWarnings[] = 'Roster ' . ($providerLabels[$provider] ?? $provider) . ' vuoto.';
+                            continue;
+                        }
+                        $autoSyncCount += count($studentService->syncRoster($groupId, $provider, $providerContext, $roster));
+                    } catch (Throwable $syncException) {
+                        $autoSyncWarnings[] = 'Sincronizzazione ' . ($providerLabels[$provider] ?? $provider) . ' non riuscita.';
+                    }
+                }
+                $autoSyncSummary = $autoSyncCount > 0
+                    ? ' Roster sincronizzato: ' . $autoSyncCount . ' studenti.'
+                    : ($autoSyncWarnings !== [] ? ' Roster non sincronizzato.' : '');
                 $activeProviderCount = 0;
                 $seenSavedProviders = [];
                 foreach ($integrationRepository->listForGroup($groupId) as $integrationRow) {
@@ -278,11 +311,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     }
                 }
                 if ($activeProviderCount >= 2) {
-                    $_SESSION['teaching_groups_flash'] = ['success' => 'Gruppo didattico aggiornato. Ora mappa gli studenti.'];
+                    $_SESSION['teaching_groups_flash'] = ['success' => 'Gruppo didattico aggiornato.' . $autoSyncSummary . ' Ora mappa gli studenti.'];
                     header('Location: teaching_groups.php?tab=students&id=' . urlencode($groupId) . '&return_to=' . urlencode($returnTo));
                     exit;
                 }
-                $redirectAfterAction('Gruppo didattico aggiornato.');
+                $redirectAfterAction('Gruppo didattico aggiornato.' . $autoSyncSummary);
                 break;
             case 'save_all_mappings':
                 $mappingsRaw = $_POST['mappings'] ?? [];
