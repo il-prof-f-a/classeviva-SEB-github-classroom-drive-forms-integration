@@ -3,11 +3,14 @@ require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\UDAManager;
 use App\Core\Database\DatabaseFactory;
+use App\Core\ClassroomPublishState;
+use App\Core\GoogleTokenProvider;
 use App\Core\ProviderNeutralMappingService;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupRepository;
 use App\Core\ProviderCapabilityResolver;
 use App\Core\UdaGroupRepository;
+use App\Integration\GoogleClassroomAPI;
 use App\Integration\GoogleDriveAPI;
 use App\Utils\UdaMetadataHelper;
 
@@ -288,6 +291,37 @@ try {
 
 } catch (Exception $e) {
     $error = $e->getMessage();
+}
+
+// Google Classroom API per i badge di pubblicazione.
+$googleClassroomAPI = null;
+try {
+    $tokenData = GoogleTokenProvider::getToken($config);
+    if (!empty($tokenData['access_token'])) {
+        $googleClassroomAPI = new GoogleClassroomAPI($config);
+    }
+} catch (Throwable $ignored) {}
+
+// Badge materiale per gruppo e badge test per gruppo.
+$materialBadges = []; // groupId => badge
+$testBadges = [];     // testId => [groupId => badge]
+if ($googleClassroomAPI !== null) {
+    foreach ($gruppi as $grp) {
+        $gid = (string)($grp['id_gruppo'] ?? '');
+        $courseId = (string)($grp['google_course_id'] ?? '');
+        if ($gid === '') continue;
+        $materialBadges[$gid] = ClassroomPublishState::materialBadgeForGroup($googleClassroomAPI, $dbAdapter, $userId, $udaId, $gid, $courseId);
+    }
+    foreach ($test as $t) {
+        $tid = (string)($t['id_test'] ?? '');
+        if ($tid === '') continue;
+        foreach ($gruppi as $grp) {
+            $gid = (string)($grp['id_gruppo'] ?? '');
+            $courseId = (string)($grp['google_course_id'] ?? '');
+            if ($gid === '') continue;
+            $testBadges[$tid][$gid] = ClassroomPublishState::testBadgeForGroup($googleClassroomAPI, $dbAdapter, $userId, $t, $gid, $courseId);
+        }
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -664,6 +698,19 @@ try {
                         I compiti GitHub Classroom ora si gestiscono nella sezione <a href="uda_tests.php?id=<?= urlencode($uda->id_uda) ?>">Test</a>.
                         I materiali GitHub già presenti sono mostrati come legacy.
                     </div>
+                    <?php if (!empty($gruppi)): ?>
+                        <div class="mb-3">
+                            <div class="small text-muted mb-2">Pubblicazione materiale Classroom per gruppo didattico:</div>
+                            <div class="d-flex flex-wrap gap-2">
+                                <?php foreach ($gruppi as $grp): $gid = (string)($grp['id_gruppo'] ?? ''); ?>
+                                    <div class="border rounded px-2 py-1 d-flex align-items-center gap-2">
+                                        <span class="small"><?= htmlspecialchars($grp['nome_gruppo'] ?? $gid) ?></span>
+                                        <?= ClassroomPublishState::badgeHtml($materialBadges[$gid] ?? ['label' => 'NON CREATO', 'color' => ClassroomPublishState::COLOR_NON_CREATO, 'url' => '']) ?>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                    <?php endif; ?>
                     <?php if (empty($udaMaterials)): ?>
                         <div class="text-center py-4">
                             <i class="bi bi-folder-x fs-1 text-muted"></i>
@@ -1045,8 +1092,13 @@ try {
                                                 </span>
                                             </td>
                                             <td>
-                                                <?php if ($pubblicato): ?>
-                                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> Pubblicato</span>
+                                                <?php $tbadges = $testBadges[$t['id_test']] ?? []; ?>
+                                                <?php if (!empty($gruppi)): ?>
+                                                    <div class="d-flex flex-wrap gap-1">
+                                                        <?php foreach ($gruppi as $grp): $gid = (string)($grp['id_gruppo'] ?? ''); $b = $tbadges[$gid] ?? ['label' => 'NON CREATO', 'color' => ClassroomPublishState::COLOR_NON_CREATO, 'url' => '']; ?>
+                                                            <?= ClassroomPublishState::badgeHtml($b, ($grp['nome_gruppo'] ?? $gid) . ' ' . $b['label']) ?>
+                                                        <?php endforeach; ?>
+                                                    </div>
                                                 <?php else: ?>
                                                     <span class="badge bg-secondary"><i class="bi bi-file-earmark"></i> Bozza</span>
                                                 <?php endif; ?>

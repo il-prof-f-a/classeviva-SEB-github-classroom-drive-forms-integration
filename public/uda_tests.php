@@ -8,8 +8,12 @@ error_reporting(E_ALL);
 
 $config = require_once __DIR__ . '/../bootstrap.php';
 
-use App\Core\UDAManager;
+use App\Core\ClassroomPublishState;
 use App\Core\Database\DatabaseFactory;
+use App\Core\GoogleTokenProvider;
+use App\Core\TeachingGroupIntegrationRepository;
+use App\Core\TeachingGroupRepository;
+use App\Core\UDAManager;
 use App\Integration\GoogleClassroomAPI;
 
 $udaManager = new UDAManager($config);
@@ -44,6 +48,42 @@ foreach ($udaComplete['classi_assegnate'] as $assignment) {
     }
 }
 $udaGroupIds = array_values(array_unique($udaGroupIds));
+
+// Gruppi didattici (nome + corso Classroom) per i badge per-gruppo.
+$udaGroups = [];
+foreach ($udaGroupIds as $gid) {
+    $grp = (new TeachingGroupRepository($dbAdapter, $userId))->findById($gid);
+    if ($grp === null) continue;
+    $google = (new TeachingGroupIntegrationRepository($dbAdapter, $userId))->findForGroupProvider($gid, 'google_classroom');
+    $udaGroups[] = [
+        'id_gruppo' => $gid,
+        'nome_gruppo' => (string)($grp['nome_gruppo'] ?? ('Gruppo ' . $gid)),
+        'google_course_id' => $google !== null ? (string)($google['external_context_id'] ?? '') : '',
+    ];
+}
+
+// Google Classroom API per i badge.
+$googleClassroomAPI = null;
+try {
+    $tokenData = GoogleTokenProvider::getToken($config);
+    if (!empty($tokenData['access_token'])) {
+        $googleClassroomAPI = new GoogleClassroomAPI($config);
+    }
+} catch (Throwable $ignored) {}
+
+// Badge test per gruppo.
+$testBadges = []; // testId => [groupId => badge]
+if ($googleClassroomAPI !== null) {
+    foreach ($tests as $t) {
+        $tid = (string)($t['id_test'] ?? '');
+        if ($tid === '') continue;
+        foreach ($udaGroups as $grp) {
+            $testBadges[$tid][$grp['id_gruppo']] = ClassroomPublishState::testBadgeForGroup(
+                $googleClassroomAPI, $dbAdapter, $userId, $t, $grp['id_gruppo'], $grp['google_course_id']
+            );
+        }
+    }
+}
 
 $udaGithubContext = [
     'id_uda' => $udaId,
@@ -504,18 +544,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <div class="flex-grow-1">
                                     <h5 class="card-title">
                                         <?= htmlspecialchars($test['nome']) ?>
-                                        <?php if ($pubblicato): ?>
-                                            <?php if ($classroomUrl !== ''): ?>
-                                                <a class="badge bg-success ms-2 text-decoration-none" href="<?= htmlspecialchars($classroomUrl, ENT_QUOTES) ?>" target="_blank" rel="noopener"><i class="bi bi-google"></i> Pubblicato</a>
-                                            <?php else: ?>
-                                                <span class="badge bg-success ms-2">Pubblicato</span>
-                                            <?php endif; ?>
+                                        <?php $tbadges = $testBadges[$test['id_test']] ?? []; ?>
+                                        <?php if (!empty($udaGroups)): ?>
+                                            <span class="d-inline-flex flex-wrap gap-1 ms-2">
+                                                <?php foreach ($udaGroups as $grp): $b = $tbadges[$grp['id_gruppo']] ?? ['label' => 'NON CREATO', 'color' => ClassroomPublishState::COLOR_NON_CREATO, 'url' => '']; ?>
+                                                    <?= ClassroomPublishState::badgeHtml($b, ($grp['nome_gruppo']) . ' ' . $b['label']) ?>
+                                                <?php endforeach; ?>
+                                            </span>
                                         <?php else: ?>
-                                            <?php if ($classroomUrl !== ''): ?>
-                                                <a class="badge bg-secondary ms-2 text-decoration-none" href="<?= htmlspecialchars($classroomUrl, ENT_QUOTES) ?>" target="_blank" rel="noopener"><i class="bi bi-google"></i> Bozza</a>
-                                            <?php else: ?>
-                                                <span class="badge bg-secondary ms-2">Bozza</span>
-                                            <?php endif; ?>
+                                            <span class="badge bg-secondary ms-2">Bozza</span>
                                         <?php endif; ?>
                                         <?php if ($piattaforma === 'google-forms' && ($test['risultati_importati'] ?? 'NO') === 'SI'): ?>
                                             <span class="badge bg-info ms-2">

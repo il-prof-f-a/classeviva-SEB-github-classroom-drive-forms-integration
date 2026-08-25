@@ -158,15 +158,15 @@ if ($googleEnabled) {
             'provider' => 'google_classroom',
         ]);
         $pubRow = $pubRows[0] ?? null;
-        $materialId = is_array($pubRow) ? trim((string)($pubRow['material_id'] ?? '')) : '';
-        $materialUrl = is_array($pubRow) ? trim((string)($pubRow['material_url'] ?? '')) : '';
-        if ($materialId === '') {
+        $materialClassroomId = is_array($pubRow) ? trim((string)($pubRow['material_classroom_id'] ?? '')) : '';
+        $materialClassroomUrl = is_array($pubRow) ? trim((string)($pubRow['material_classroom_url'] ?? '')) : '';
+        if ($materialClassroomId === '') {
             continue;
         }
         try {
-            $m = $googleClassroomAPI->getMaterial($target['course_id'], $materialId);
+            $m = $googleClassroomAPI->getMaterial($target['course_id'], $materialClassroomId);
             $materialStatus[$target['id']] = [
-                'url' => $materialUrl !== '' ? $materialUrl : (string)($m['link'] ?? ''),
+                'url' => $materialClassroomUrl !== '' ? $materialClassroomUrl : (string)($m['link'] ?? ''),
                 'stato' => (string)($m['state'] ?? 'DRAFT'),
             ];
         } catch (Throwable $e) {
@@ -176,8 +176,8 @@ if ($googleEnabled) {
             if ($isNotFound) {
                 // Materiale eliminato su Classroom: rimuovi il link.
                 $dbAdapter->updateRow('UDA_PUBBLICAZIONI', 'id_pubblicazione', $pubRow['id_pubblicazione'], [
-                    'material_id' => '',
-                    'material_url' => '',
+                    'material_classroom_id' => '',
+                    'material_classroom_url' => '',
                 ]);
             }
         }
@@ -234,8 +234,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 // Variabili per tracking
                 $topicId = null;
                 $classroomUrl = null;
-                $materialId = '';
-                $materialUrl = '';
+                $materialClassroomId = '';
+                $materialClassroomUrl = '';
 
                 // Se c'è mapping, pubblica realmente
                 if ($mapping) {
@@ -283,8 +283,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
                             $result = $googleClassroomAPI->createMaterial($courseId, $udaMaterialData);
                             $materialLink = trim((string)($result['link'] ?? ''));
-                            $materialId = (string)($result['id'] ?? '');
-                            $materialUrl = $materialLink;
+                            $materialClassroomId = (string)($result['id'] ?? '');
+                            $materialClassroomUrl = $materialLink;
                             $materialLog = "    ✅ Materiale UDA pubblicato come BOZZA con " . count($materialsToAttach) . " allegati";
                             if ($materialLink !== '') {
                                 $publishLog[] = ['html' => $materialLog . ': <a href="' . htmlspecialchars($materialLink, ENT_QUOTES) . '" target="_blank" rel="noopener">' . htmlspecialchars((string)$uda->titolo, ENT_QUOTES) . ' <i class="bi bi-box-arrow-up-right"></i></a>'];
@@ -357,6 +357,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
                                 $dbAdapter->updateRow('TEST', 'id_test', $test['id_test'], $updateFields);
 
+                                // Registra la pubblicazione del test per questo gruppo (badge per-gruppo).
+                                $existingTestPub = $dbAdapter->findWhere('TEST_CLASSROOM_PUBBLICAZIONI', [
+                                    'id_utente' => $userId,
+                                    'id_test' => $test['id_test'],
+                                    'id_gruppo' => $target['id'],
+                                ]);
+                                $testPubRow = [
+                                    'id_test' => $test['id_test'],
+                                    'id_gruppo' => $target['id'],
+                                    'course_id' => $courseId,
+                                    'classroom_assignment_id' => (string)($result['id'] ?? ''),
+                                    'classroom_url' => trim((string)($result['link'] ?? '')),
+                                    'data_pubblicazione' => date('Y-m-d H:i:s'),
+                                    'id_utente' => $userId,
+                                ];
+                                if ($existingTestPub !== []) {
+                                    $dbAdapter->updateRow('TEST_CLASSROOM_PUBBLICAZIONI', 'id_pubblicazione', $existingTestPub[0]['id_pubblicazione'], $testPubRow);
+                                } else {
+                                    $testPubRow['id_pubblicazione'] = 'TPUB_' . uniqid();
+                                    $dbAdapter->insertRow('TEST_CLASSROOM_PUBBLICAZIONI', $testPubRow);
+                                }
+
                                 $testLink = trim((string)($result['link'] ?? ''));
                                 $testLog = "    ✅ Test pubblicato come BOZZA";
                                 if ($testLink !== '') {
@@ -413,8 +435,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     'stato' => $mapping ? 'pubblicata' : 'preparata',
                     'data_pubblicazione' => $mapping ? date('Y-m-d H:i:s') : null,
                     'id_utente' => $userId,
-                    'material_id' => $materialId,
-                    'material_url' => $materialUrl,
+                    'material_classroom_id' => $materialClassroomId,
+                    'material_classroom_url' => $materialClassroomUrl,
                 ];
                 if ($existing !== []) {
                     $dbAdapter->updateRow('UDA_PUBBLICAZIONI', 'id_pubblicazione', $existing[0]['id_pubblicazione'], $pubRow);

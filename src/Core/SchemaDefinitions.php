@@ -80,7 +80,7 @@ class SchemaDefinitions
                     'id_pubblicazione', 'id_uda', 'id_gruppo', 'provider',
                     'external_resource_id', 'external_url', 'stato',
                     'data_pubblicazione', 'metadata_json', 'id_utente',
-                    'material_id', 'material_url'
+                    'material_classroom_id', 'material_classroom_url'
                 ],
                 'description' => 'Pubblicazioni UDA verso provider esterni'
             ],
@@ -443,6 +443,13 @@ class SchemaDefinitions
                     'id_utente'
                 ],
                 'description' => 'Inviti a collaborare su una UDA tramite link'
+            ],
+            'TEST_CLASSROOM_PUBBLICAZIONI' => [
+                'columns' => [
+                    'id_pubblicazione', 'id_test', 'id_gruppo', 'course_id',
+                    'classroom_assignment_id', 'classroom_url', 'data_pubblicazione', 'id_utente'
+                ],
+                'description' => 'Pubblicazioni dei test su Google Classroom per gruppo didattico'
             ]
         ];
         $columnsMap = self::loadSchemaColumnsMap();
@@ -451,6 +458,7 @@ class SchemaDefinitions
             'UDA_GRUPPI', 'UDA_PUBBLICAZIONI', 'STUDENTI',
             'STUDENTI_IDENTITA_ESTERNE', 'GRUPPI_STUDENTI',
             'STUDENTI_RISORSE_ESTERNE', 'GITHUB_ASSIGNMENT_STUDENT_LINKS',
+            'TEST_CLASSROOM_PUBBLICAZIONI',
         ];
         if (!empty($columnsMap)) {
             foreach ($sheets as $sheetName => &$definition) {
