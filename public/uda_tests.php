@@ -519,6 +519,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             function renderTestCards($tests, $withAnchors = false) {
+                global $testBadges, $udaGroups, $uda;
+
                 if (empty($tests)) {
                     echo '<div class="alert alert-info">';
                     echo '<i class="bi bi-info-circle"></i> Nessun test trovato. Usa "Crea test con le domande" o "Collega un test esistente" per aggiungerne uno.';
