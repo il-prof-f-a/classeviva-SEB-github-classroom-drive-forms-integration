@@ -127,6 +127,51 @@ final class ClassroomPublishState
     }
 
     /**
+     * Verifica se un singolo materiale è presente tra gli allegati di un post
+     * Classroom (CourseWorkMaterial). Confronta file_id_drive, url_drive e url
+     * con gli allegati estratti dal post, non l'URL del post stesso.
+     *
+     * @param array<string,mixed> $material Riga MATERIALI (file_id_drive, url_drive, url)
+     * @param list<array<string,mixed>> $attachments Allegati estratti da getMaterial()
+     */
+    public static function materialInAttachments(array $material, array $attachments): bool
+    {
+        $fileId = trim((string)($material['file_id_drive'] ?? ''));
+        $urlDrive = trim((string)($material['url_drive'] ?? ''));
+        $url = trim((string)($material['url'] ?? ''));
+
+        foreach ($attachments as $att) {
+            if (!is_array($att)) {
+                continue;
+            }
+            $type = (string)($att['type'] ?? '');
+            $attUrl = trim((string)($att['url'] ?? ''));
+            $attDriveId = trim((string)($att['drive_file_id'] ?? ''));
+
+            if ($type === 'drive_file') {
+                if ($fileId !== '' && $attDriveId === $fileId) {
+                    return true;
+                }
+                if ($attUrl !== '' && (($urlDrive !== '' && $attUrl === $urlDrive) || ($url !== '' && $attUrl === $url))) {
+                    return true;
+                }
+            } else {
+                // link / form / youtube
+                if ($attUrl === '') {
+                    continue;
+                }
+                if ($urlDrive !== '' && $attUrl === $urlDrive) {
+                    return true;
+                }
+                if ($url !== '' && $attUrl === $url) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * HTML del badge (con link se presente).
      *
      * @param array{label:string,color:string,url:string} $badge

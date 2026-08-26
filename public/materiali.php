@@ -365,8 +365,10 @@ if (!empty($selectedUdaId)) {
     $materials = $dbAdapter->findAll('MATERIALI');
 }
 
-// Badge pubblicazione materiale per gruppo (solo con UDA selezionata).
-$materialBadges = [];
+// Pubblicazione materiale per gruppo: recupera il post Classroom (CourseWorkMaterial)
+// di ogni gruppo UNA sola volta, poi verifica per ogni singolo materiale se è presente
+// tra gli allegati del post (non un confronto link-a-link).
+$groupPosts = [];
 $udaGroups = [];
 if (!empty($selectedUdaId)) {
     $userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
@@ -390,9 +392,30 @@ if (!empty($selectedUdaId)) {
         if (!empty($tokenData['access_token'])) {
             $googleClassroomAPI = new GoogleClassroomAPI($config);
             foreach ($udaGroups as $grp) {
-                $materialBadges[$grp['id_gruppo']] = ClassroomPublishState::materialBadgeForGroup(
-                    $googleClassroomAPI, $dbAdapter, $userId, $selectedUdaId, $grp['id_gruppo'], $grp['google_course_id']
-                );
+                if (($grp['google_course_id'] ?? '') === '') {
+                    continue;
+                }
+                $pubRows = $dbAdapter->findWhere('UDA_PUBBLICAZIONI', [
+                    'id_utente' => $userId,
+                    'id_uda' => $selectedUdaId,
+                    'id_gruppo' => $grp['id_gruppo'],
+                    'provider' => 'google_classroom',
+                ]);
+                $pubRow = $pubRows[0] ?? null;
+                $postId = is_array($pubRow) ? trim((string)($pubRow['material_classroom_id'] ?? '')) : '';
+                if ($postId === '') {
+                    continue;
+                }
+                try {
+                    $post = $googleClassroomAPI->getMaterial($grp['google_course_id'], $postId);
+                    $groupPosts[$grp['id_gruppo']] = [
+                        'state' => (string)($post['state'] ?? 'DRAFT'),
+                        'url' => trim((string)($pubRow['material_classroom_url'] ?? '')),
+                        'attachments' => $post['materials'] ?? [],
+                    ];
+                } catch (Throwable $e) {
+                    // Post non trovato (cancellato da Classroom) => badge NON CREATO.
+                }
             }
         }
     } catch (Throwable $ignored) {}
@@ -528,9 +551,19 @@ if (!empty($selectedUdaId)) {
                                     <span class="badge bg-secondary material-type-badge">
                                         <?= htmlspecialchars($material['tipo_materiale'] ?? 'N/A') ?>
                                     </span>
-                                    <?php if (!empty($selectedUdaId) && !empty($materialBadges)): ?>
+                                    <?php if (!empty($selectedUdaId) && !empty($udaGroups)): ?>
                                         <div class="d-flex flex-wrap gap-1 justify-content-end">
-                                            <?php foreach ($udaGroups as $grp): $b = $materialBadges[$grp['id_gruppo']] ?? ['label' => 'NON CREATO', 'color' => ClassroomPublishState::COLOR_NON_CREATO, 'url' => '']; ?>
+                                            <?php foreach ($udaGroups as $grp):
+                                                $gpost = $groupPosts[$grp['id_gruppo']] ?? null;
+                                                if ($gpost === null) {
+                                                    $b = ['label' => 'NON CREATO', 'color' => ClassroomPublishState::COLOR_NON_CREATO, 'url' => ''];
+                                                } else {
+                                                    $inPost = ClassroomPublishState::materialInAttachments($material, $gpost['attachments']);
+                                                    $b = $inPost
+                                                        ? ClassroomPublishState::classify($gpost['url'], $gpost['state'])
+                                                        : ['label' => 'NON CREATO', 'color' => ClassroomPublishState::COLOR_NON_CREATO, 'url' => ''];
+                                                }
+                                            ?>
                                                 <?= ClassroomPublishState::badgeHtml($b, ($grp['nome_gruppo']) . ' ' . $b['label']) ?>
                                             <?php endforeach; ?>
                                         </div>

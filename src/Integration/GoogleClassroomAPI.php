@@ -1015,9 +1015,79 @@ class GoogleClassroomAPI
             'state' => $material->state,
             'topic_id' => $material->topicId,
             'link' => $link,
+            'materials' => $this->extractMaterialAttachments($material->getMaterials() ?? []),
             'creation_time' => $material->creationTime,
             'update_time' => $material->updateTime,
         ];
+    }
+
+    /**
+     * Estrae gli allegati (link/form/drive/youtube) di un CourseWorkMaterial
+     * già pubblicato su Classroom, con lo stesso approccio usato in
+     * ajax_get_classroom_topic_resources.php.
+     *
+     * @param array<int,mixed>|null $materials
+     * @return list<array{type:string,url?:string,drive_file_id?:string}>
+     */
+    private function extractMaterialAttachments($materials): array
+    {
+        $result = [];
+        if (!is_iterable($materials)) {
+            return $result;
+        }
+
+        foreach ($materials as $material) {
+            if (!$material) {
+                continue;
+            }
+
+            $link = method_exists($material, 'getLink') ? $material->getLink() : null;
+            if ($link) {
+                $url = trim((string)($link->getUrl() ?? ''));
+                if ($url !== '') {
+                    $result[] = ['type' => 'link', 'url' => $url];
+                }
+            }
+
+            $form = method_exists($material, 'getForm') ? $material->getForm() : null;
+            if ($form) {
+                $url = trim((string)($form->getFormUrl() ?? ''));
+                if ($url === '') {
+                    $url = trim((string)($form->getResponseUrl() ?? ''));
+                }
+                if ($url !== '') {
+                    $result[] = ['type' => 'form', 'url' => $url];
+                }
+            }
+
+            $sharedDriveFile = method_exists($material, 'getDriveFile') ? $material->getDriveFile() : null;
+            if ($sharedDriveFile) {
+                $driveFile = method_exists($sharedDriveFile, 'getDriveFile') ? $sharedDriveFile->getDriveFile() : null;
+                if ($driveFile) {
+                    $fileId = trim((string)($driveFile->getId() ?? ''));
+                    $url = trim((string)($driveFile->getAlternateLink() ?? ''));
+                    if ($url === '' && $fileId !== '') {
+                        $url = 'https://drive.google.com/file/d/' . rawurlencode($fileId) . '/view';
+                    }
+                    if ($fileId !== '' || $url !== '') {
+                        $result[] = ['type' => 'drive_file', 'drive_file_id' => $fileId, 'url' => $url];
+                    }
+                }
+            }
+
+            $youtubeVideo = method_exists($material, 'getYoutubeVideo') ? $material->getYoutubeVideo() : null;
+            if ($youtubeVideo) {
+                $url = trim((string)($youtubeVideo->getAlternateLink() ?? ''));
+                $videoId = trim((string)($youtubeVideo->getId() ?? ''));
+                if ($url === '' && $videoId !== '') {
+                    $url = 'https://www.youtube.com/watch?v=' . rawurlencode($videoId);
+                }
+                if ($url !== '') {
+                    $result[] = ['type' => 'youtube', 'url' => $url];
+                }
+            }
+        }
+        return $result;
     }
 
     /**
