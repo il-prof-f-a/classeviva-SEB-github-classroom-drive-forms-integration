@@ -92,6 +92,10 @@ final class ClassroomPublishState
     /**
      * Badge di un TEST per un gruppo didattico.
      *
+     * Quando l'assignment risulta eliminato su Classroom (404) ripulisce anche i
+     * link salvati (TEST_CLASSROOM_PUBBLICAZIONI e TEST.classroom_*) così il badge
+     * torna stabilmente a NON CREATO senza rifare la chiamata API a ogni reload.
+     *
      * @param array<string,mixed> $test
      * @return array{label:string,color:string,url:string}
      */
@@ -105,13 +109,16 @@ final class ClassroomPublishState
     ): array {
         $link = '';
         $resourceId = '';
+        $idTest = trim((string)($test['id_test'] ?? ''));
         $rows = $db->findWhere('TEST_CLASSROOM_PUBBLICAZIONI', [
             'id_utente' => $userId,
-            'id_test' => trim((string)($test['id_test'] ?? '')),
+            'id_test' => $idTest,
             'id_gruppo' => $groupId,
         ]);
         $row = $rows[0] ?? null;
+        $isPerGroup = false;
         if (is_array($row)) {
+            $isPerGroup = true;
             $link = trim((string)($row['classroom_url'] ?? ''));
             $resourceId = trim((string)($row['classroom_assignment_id'] ?? ''));
             $courseId = trim((string)($row['course_id'] ?? '')) !== '' ? trim((string)($row['course_id'] ?? '')) : $courseId;
@@ -122,8 +129,63 @@ final class ClassroomPublishState
                 $resourceId = trim((string)($test['classroom_assignment_id'] ?? ''));
             }
         }
-        $state = self::resourceState($api, $courseId, $resourceId, 'assignment');
+
+        $state = null;
+        if ($courseId !== '' && $resourceId !== '') {
+            try {
+                $res = $api->getAssignment($courseId, $resourceId);
+                $state = (string)($res['state'] ?? '');
+            } catch (Throwable $e) {
+                if (self::isNotFound($e)) {
+                    self::clearDeletedTestPublish($db, $idTest, $isPerGroup, $row, $test, $resourceId);
+                    $link = '';
+                    $resourceId = '';
+                    $state = null;
+                }
+                // Errore transitorio (rete/permessi): lascia il badge invariato.
+            }
+        }
+
         return self::classify($link, $state, 'ASSEGNATO');
+    }
+
+    /**
+     * Riconosce l'errore "risorsa non trovata" (404) dell'API Classroom.
+     */
+    private static function isNotFound(Throwable $e): bool
+    {
+        return (method_exists($e, 'getCode') && (int)$e->getCode() === 404)
+            || stripos($e->getMessage(), 'not found') !== false
+            || stripos($e->getMessage(), 'Requested entity was not found') !== false;
+    }
+
+    /**
+     * Ripulisce i link Classroom salvati quando l'assignment è stato eliminato.
+     *
+     * @param array<string,mixed>|null $row riga TEST_CLASSROOM_PUBBLICAZIONI (se usata)
+     * @param array<string,mixed> $test riga TEST
+     */
+    private static function clearDeletedTestPublish(
+        DatabaseAdapterInterface $db,
+        string $idTest,
+        bool $isPerGroup,
+        ?array $row,
+        array $test,
+        string $resourceId
+    ): void {
+        if ($isPerGroup && is_array($row) && !empty($row['id_pubblicazione'])) {
+            $db->updateRow('TEST_CLASSROOM_PUBBLICAZIONI', 'id_pubblicazione', $row['id_pubblicazione'], [
+                'classroom_assignment_id' => '',
+                'classroom_url' => '',
+            ]);
+        }
+        // Pulisci anche i campi single-course su TEST se puntano alla stessa risorsa eliminata.
+        if ($idTest !== '' && trim((string)($test['classroom_assignment_id'] ?? '')) === $resourceId) {
+            $db->updateRow('TEST', 'id_test', $idTest, [
+                'classroom_assignment_id' => '',
+                'classroom_url' => '',
+            ]);
+        }
     }
 
     /**
