@@ -83,8 +83,10 @@ final class ClassroomPublishState
         ]);
         $row = $rows[0] ?? null;
         if (is_array($row)) {
-            $link = trim((string)($row['material_classroom_url'] ?? ''));
-            $resourceId = trim((string)($row['material_classroom_id'] ?? ''));
+            // Fallback sulle vecchie colonne (material_url/material_id) per i record
+            // pubblicati prima del rename a material_classroom_*.
+            $link = trim((string)($row['material_classroom_url'] ?? $row['material_url'] ?? ''));
+            $resourceId = trim((string)($row['material_classroom_id'] ?? $row['material_id'] ?? ''));
         }
         $state = self::resourceState($api, $courseId, $resourceId, 'material');
         return self::classify($link, $state);

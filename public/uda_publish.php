@@ -158,8 +158,8 @@ if ($googleEnabled) {
             'provider' => 'google_classroom',
         ]);
         $pubRow = $pubRows[0] ?? null;
-        $materialClassroomId = is_array($pubRow) ? trim((string)($pubRow['material_classroom_id'] ?? '')) : '';
-        $materialClassroomUrl = is_array($pubRow) ? trim((string)($pubRow['material_classroom_url'] ?? '')) : '';
+        $materialClassroomId = is_array($pubRow) ? trim((string)($pubRow['material_classroom_id'] ?? $pubRow['material_id'] ?? '')) : '';
+        $materialClassroomUrl = is_array($pubRow) ? trim((string)($pubRow['material_classroom_url'] ?? $pubRow['material_url'] ?? '')) : '';
         if ($materialClassroomId === '') {
             continue;
         }

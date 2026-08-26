@@ -402,7 +402,7 @@ if (!empty($selectedUdaId)) {
                     'provider' => 'google_classroom',
                 ]);
                 $pubRow = $pubRows[0] ?? null;
-                $postId = is_array($pubRow) ? trim((string)($pubRow['material_classroom_id'] ?? '')) : '';
+                $postId = is_array($pubRow) ? trim((string)($pubRow['material_classroom_id'] ?? $pubRow['material_id'] ?? '')) : '';
                 if ($postId === '') {
                     continue;
                 }
@@ -410,7 +410,7 @@ if (!empty($selectedUdaId)) {
                     $post = $googleClassroomAPI->getMaterial($grp['google_course_id'], $postId);
                     $groupPosts[$grp['id_gruppo']] = [
                         'state' => (string)($post['state'] ?? 'DRAFT'),
-                        'url' => trim((string)($pubRow['material_classroom_url'] ?? '')),
+                        'url' => trim((string)($pubRow['material_classroom_url'] ?? $pubRow['material_url'] ?? '')),
                         'attachments' => $post['materials'] ?? [],
                     ];
                 } catch (Throwable $e) {
