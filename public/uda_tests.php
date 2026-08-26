@@ -13,6 +13,7 @@ use App\Core\Database\DatabaseFactory;
 use App\Core\GoogleTokenProvider;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupRepository;
+use App\Core\UdaGroupRepository;
 use App\Core\UDAManager;
 use App\Integration\GoogleClassroomAPI;
 
@@ -40,18 +41,17 @@ $tests = $udaComplete['test'];
 // collegate ai gruppi dell'UDA. Nessuna risoluzione delle GitHub Classroom via API.
 $userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
 
+// Gruppi didattici (nome + corso Classroom) per i badge per-gruppo: usa lo
+// stesso repository di uda_view.php/materiali.php, NON classi_assegnate (che
+// può non avere id_gruppo valorizzato).
 $udaGroupIds = [];
-foreach ($udaComplete['classi_assegnate'] as $assignment) {
-    $groupId = trim((string)($assignment['id_gruppo'] ?? ''));
-    if ($groupId !== '') {
-        $udaGroupIds[] = $groupId;
-    }
-}
-$udaGroupIds = array_values(array_unique($udaGroupIds));
-
-// Gruppi didattici (nome + corso Classroom) per i badge per-gruppo.
 $udaGroups = [];
-foreach ($udaGroupIds as $gid) {
+foreach ((new UdaGroupRepository($dbAdapter, $userId))->listForUda($udaId) as $assignment) {
+    $gid = trim((string)($assignment['id_gruppo'] ?? ''));
+    if ($gid === '') {
+        continue;
+    }
+    $udaGroupIds[] = $gid;
     $grp = (new TeachingGroupRepository($dbAdapter, $userId))->findById($gid);
     if ($grp === null) continue;
     $google = (new TeachingGroupIntegrationRepository($dbAdapter, $userId))->findForGroupProvider($gid, 'google_classroom');
@@ -61,6 +61,7 @@ foreach ($udaGroupIds as $gid) {
         'google_course_id' => $google !== null ? (string)($google['external_context_id'] ?? '') : '',
     ];
 }
+$udaGroupIds = array_values(array_unique($udaGroupIds));
 
 // Google Classroom API per i badge.
 $googleClassroomAPI = null;

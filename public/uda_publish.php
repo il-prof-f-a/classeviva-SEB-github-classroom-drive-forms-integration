@@ -165,9 +165,18 @@ if ($googleEnabled) {
         }
         try {
             $m = $googleClassroomAPI->getMaterial($target['course_id'], $materialClassroomId);
+            $stato = (string)($m['state'] ?? '');
+            if ($stato === 'DELETED') {
+                // Materiale eliminato su Classroom (stato DELETED, non 404): rimuovi il link.
+                $dbAdapter->updateRow('UDA_PUBBLICAZIONI', 'id_pubblicazione', $pubRow['id_pubblicazione'], [
+                    'material_classroom_id' => '',
+                    'material_classroom_url' => '',
+                ]);
+                continue;
+            }
             $materialStatus[$target['id']] = [
                 'url' => $materialClassroomUrl !== '' ? $materialClassroomUrl : (string)($m['link'] ?? ''),
-                'stato' => (string)($m['state'] ?? 'DRAFT'),
+                'stato' => $stato,
             ];
         } catch (Throwable $e) {
             $isNotFound = (method_exists($e, 'getCode') && (int)$e->getCode() === 404)

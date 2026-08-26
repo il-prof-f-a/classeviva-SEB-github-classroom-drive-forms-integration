@@ -49,8 +49,9 @@ final class ClassroomPublishState
      */
     public static function classify(?string $link, ?string $state, string $publishedLabel = 'PUBBLICATO'): array
     {
-        // Senza link, oppure risorsa non più presente su Classroom (eliminata): NON CREATO.
-        if ($link === null || $link === '' || $state === null) {
+        // Senza link, stato mancante/vuoto, oppure risorsa eliminata su Classroom
+        // (stato DELETED restituito dall'API, oppure null dopo un 404): NON CREATO.
+        if ($link === null || $link === '' || $state === null || $state === '' || $state === 'DELETED') {
             return ['label' => 'NON CREATO', 'color' => self::COLOR_NON_CREATO, 'url' => ''];
         }
         if ($state === 'PUBLISHED') {
@@ -134,7 +135,17 @@ final class ClassroomPublishState
         if ($courseId !== '' && $resourceId !== '') {
             try {
                 $res = $api->getAssignment($courseId, $resourceId);
-                $state = (string)($res['state'] ?? '');
+                $rawState = (string)($res['state'] ?? '');
+                if ($rawState === 'DELETED') {
+                    // L'API restituisce stato DELETED per i compiti eliminati (non un 404):
+                    // ripulisce i link salvati e torna a NON CREATO senza rifare la chiamata.
+                    self::clearDeletedTestPublish($db, $idTest, $isPerGroup, $row, $test, $resourceId);
+                    $link = '';
+                    $resourceId = '';
+                    $state = null;
+                } else {
+                    $state = $rawState;
+                }
             } catch (Throwable $e) {
                 if (self::isNotFound($e)) {
                     self::clearDeletedTestPublish($db, $idTest, $isPerGroup, $row, $test, $resourceId);
