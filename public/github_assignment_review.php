@@ -1271,11 +1271,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                 $prefillText = implode("\n", $prefill);
                                 $prefillFull = $prefillText;
                                 $prefillBlind = ($repoUrl !== '') ? str_replace($repoUrl, 'nascosta', $prefillText) : $prefillText;
-                                $githubIdDisplay = 'nascosto';
-                                $githubRid = trim((string)($row['roster_identifier'] ?? ''));
-                                if ($githubRid !== '' && ctype_digit($githubRid)) {
-                                    $githubIdDisplay = $githubRid;
-                                }
+                                // Identificativo anonimo stabile nella pagina: non espone username o repository.
+                                $githubIdDisplay = (string)($idx + 1);
                                 ?>
                                 <tr>
                                     <td>
@@ -1286,7 +1283,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                     </td>
                                     <td class="repo-col">
                                         <input type="hidden" name="repo_url[<?= $idx ?>]" value="<?= htmlspecialchars($repoUrl) ?>">
-                                        <span class="show-blind text-muted">nascosta</span>
+                                        <span class="show-blind text-muted">NASCOSTA</span>
                                         <span class="show-name">
                                         <?php if ($repoUrl): ?>
                                             <a href="<?= htmlspecialchars($repoUrl) ?>" target="_blank"><?= htmlspecialchars($repoUrl) ?></a>
@@ -1438,6 +1435,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                                                        data-student-id="<?= htmlspecialchars($studentId) ?>"
 	                                                        data-student-name="<?= htmlspecialchars($studentName) ?>"
 	                                                        data-github-username="<?= htmlspecialchars($uname) ?>"
+	                                                        data-blind-github="<?= htmlspecialchars($githubIdDisplay) ?>"
 	                                                        data-repo-url="<?= htmlspecialchars($repoUrl) ?>"
 	                                                        data-repo-full="<?= htmlspecialchars($repoFullRow) ?>"
 	                                                        data-ref="<?= htmlspecialchars($locRef) ?>"
@@ -2077,13 +2075,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            return false;
 	        }
 
-		        async function openRubricModal(btn) {
-		            if (!rubricPanelEl) return;
+	        async function openRubricModal(btn) {
+	            if (!rubricPanelEl) return;
 	            const studentId = btn.dataset.studentId || '';
 	            const githubUsername = btn.dataset.githubUsername || '';
 	            const studentName = btn.dataset.studentName || '';
 	            const repoUrl = btn.dataset.repoUrl || '';
 	            const repoFull = btn.dataset.repoFull || '';
+	            const blindGithub = btn.dataset.blindGithub || 'NASCOSTO';
+	            const isBlind = document.body.classList.contains('review-blind');
+	            const displayStudentName = isBlind ? 'NASCOSTO' : (studentName || studentId);
+	            const displayGithub = isBlind ? blindGithub : (githubUsername || studentId);
+	            const displayRepoUrl = isBlind ? '' : repoUrl;
 	            const ref = btn.dataset.ref || '';
 	            const commitTotal = btn.dataset.commitTotal || '';
 	            const commitLoaded = btn.dataset.commitLoaded || '';
@@ -2112,11 +2115,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            };
 
 	            if (rubricEditLink) rubricEditLink.href = RUBRIC_CTX.rubric_editor_url;
-	            if (rubricSubtitleEl) rubricSubtitleEl.textContent = `Studente: ${studentName || studentId} · GitHub: ${githubUsername}`;
+	            if (rubricSubtitleEl) rubricSubtitleEl.textContent = `Studente: ${displayStudentName} - GitHub: ${displayGithub}`;
 
 	            if (rubricMetrics) {
 	                rubricMetrics.innerHTML =
-	                    `<div><strong>Repo</strong>: ${repoUrl ? `<a target="_blank" href="${escapeHtml(repoUrl)}">${escapeHtml(repoUrl)}</a>` : '<span class="text-muted">N/D</span>'}</div>` +
+	                    `<div><strong>Repo</strong>: ${displayRepoUrl ? `<a target="_blank" href="${escapeHtml(displayRepoUrl)}">${escapeHtml(displayRepoUrl)}</a>` : '<span class="text-muted">NASCOSTA</span>'}</div>` +
 	                    `<div><strong>Commit totali (Classroom)</strong>: ${escapeHtml(String(commitTotal || '-'))}</div>` +
 	                    `<div><strong>Ultimi commit caricati</strong>: ${escapeHtml(String(commitLoaded || '-'))}</div>` +
 	                    `<div><strong>Ultimo commit</strong>: ${escapeHtml(fmtMaybeDate(lastCommit) || '-')}</div>` +
@@ -2179,7 +2182,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 		            openRubricPanel();
 
 	            // Carica LOC (usa endpoint esistente, con cache)
-	            if (repoFull) {
+	            if (repoFull && !isBlind) {
 	                try {
 	                    const locBody = new URLSearchParams({action: 'repo_loc', repo: repoFull, ref: ref || 'main', force: '0'});
                     const locRes = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body: locBody});
