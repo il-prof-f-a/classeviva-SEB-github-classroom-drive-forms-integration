@@ -355,6 +355,7 @@ if (!$isAuthenticated) {
     <body>
             <?php
     $pageTitle = '<i class="bi bi-github"></i> Autenticazione GitHub richiesta';
+    $headerContainerClass = 'container-fluid px-3 github-review-header';
     $headerActions = '<a class="nav-link" href="uda_tests.php?id=' . urlencode($test['id_uda'] ?? '') . '"><i class="bi bi-arrow-left"></i> Torna ai Test</a>';
     include __DIR__ . '/partials/app_header.php';
     ?>
@@ -1083,21 +1084,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
 	    <style>
 	        table.github-grades-table { width: 100%; table-layout: fixed; }
-	        table.github-grades-table col.col-gh { width: 180px; }
-	        table.github-grades-table col.col-repo { width: 440px; }
-	        table.github-grades-table col.col-student { width: 100px; }
-	        table.github-grades-table col.col-vote { width: 90px; }
+	        /* La metà sinistra resta libera quando il pannello rubrica è aperto. */
+	        table.github-grades-table col.col-gh { width: 12%; }
+	        table.github-grades-table col.col-repo { width: 18%; }
+	        table.github-grades-table col.col-student { width: 12%; }
+	        table.github-grades-table col.col-vote { width: 8%; }
 	        table.github-grades-table td.repo-col a { word-break: break-all; }
 	        table.github-grades-table th.vote-col,
-	        table.github-grades-table td.vote-col { width: 90px; }
+	        table.github-grades-table td.vote-col { width: 8%; }
+	        .github-review-page { width: 100%; max-width: none !important; margin-left: 0; margin-right: 0; }
 	        table.github-grades-table td.comment-col { vertical-align: top; }
 	        table.github-grades-table .comment-wrap { display: flex; align-items: stretch; width: 100%; height: 100%; }
 	        table.github-grades-table td.comment-col textarea { flex: 1; width: 100%; min-height: 120px; resize: vertical; }
 	        table.github-grades-table td.vote-col select { width: 100% !important; }
 	        .commit-message-body { white-space: pre-wrap; }
 	        .rubric-modal-table th.weight-col,
-	        .rubric-modal-table td.weight-col { width: 110px; }
-	        .rubric-modal-table input.rubric-weight { width: 100%; min-width: 0; padding: .1rem .25rem; font-size: .85rem; }
+	        .rubric-modal-table td.weight-col { width: 140px; min-width: 140px; }
+	        .rubric-modal-table input.rubric-weight { width: 100%; min-width: 4.5rem; padding: .1rem .25rem; font-size: .85rem; }
 
             /* Mantieni il colore di sfondo della riga anche dentro i dettagli (commit/LOC) */
             table.github-grades-table td .collapse .repo-loc,
@@ -1111,6 +1114,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	        }
 	        table.github-grades-table tr.rubric-row-active td:first-child {
 	            border-left: 4px solid #fd7e14;
+	        }
+	        @keyframes github-student-row-flash {
+	            0%, 100% { background-color: transparent; }
+	            35%, 65% { background-color: #ffe08a; }
+	        }
+	        table.github-grades-table tr.student-row-flash > td {
+	            animation: github-student-row-flash 1.2s ease-in-out;
+	        }
+	        @media (prefers-reduced-motion: reduce) {
+	            table.github-grades-table tr.student-row-flash > td { animation: none; }
 	        }
 
 	        .rubric-panel {
@@ -1144,6 +1157,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         <?php
     $pageTitle = $test['nome'] ?? 'Assignment GitHub';
     $pageSubtitle = 'Assignment GitHub Classroom - UDA: ' . ($test['id_uda'] ?? '');
+    $headerContainerClass = 'container-fluid px-3 github-review-header';
     ob_start();
     ?>
     <a class="nav-link" href="uda_tests.php?id=<?= urlencode($test['id_uda']) ?>">
@@ -1161,7 +1175,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
     ?>
 
 
-    <div class="container mt-4">
+    <div class="container github-review-page mt-4">
 <?php if ($successMessage): ?>
             <div class="alert alert-success alert-dismissible fade show">
                 <i class="bi bi-check-circle"></i> <?= htmlspecialchars($successMessage) ?>
@@ -1474,13 +1488,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	    </div>
 
 		    <!-- Pannello flottante Rubrica GitHub (non modale) -->
-		    <div id="rubricPanel" class="rubric-panel shadow border rounded bg-white">
+	    <div id="rubricPanel" class="rubric-panel shadow border rounded bg-white">
 		        <div class="d-flex justify-content-between align-items-start px-3 py-2 border-bottom">
 		            <div>
 		                <div class="fw-semibold"><i class="bi bi-clipboard-check"></i> Rubrica GitHub</div>
 		                <div class="text-muted small" id="rubricModalSubtitle"></div>
 		            </div>
 		            <div class="d-flex gap-2 align-items-center">
+		                <div class="btn-group btn-group-sm" role="group" aria-label="Navigazione studenti">
+		                    <button type="button" class="btn btn-outline-primary" id="rubricNavPrev" title="Studente precedente" aria-label="Studente precedente" disabled>
+		                        <i class="bi bi-chevron-up"></i>
+		                    </button>
+		                    <button type="button" class="btn btn-outline-primary" id="rubricNavNext" title="Studente successivo" aria-label="Studente successivo" disabled>
+		                        <i class="bi bi-chevron-down"></i>
+		                    </button>
+		                </div>
+	                <span class="text-muted small text-nowrap" id="rubricNavPosition"></span>
 		                <a class="btn btn-sm btn-outline-secondary" id="rubricEditLink" target="_blank" title="Modifica rubrica">
 		                    <i class="bi bi-pencil-square"></i>
 		                </a>
@@ -1850,12 +1873,81 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 		        const rubricApplyBtn = document.getElementById('rubricApplyBtn');
 		        const rubricEditLink = document.getElementById('rubricEditLink');
 		        const rubricCloseBtn = document.getElementById('rubricCloseBtn');
+		        const rubricNavPrevEl = document.getElementById('rubricNavPrev');
+		        const rubricNavNextEl = document.getElementById('rubricNavNext');
+		        const rubricNavPositionEl = document.getElementById('rubricNavPosition');
 
 		        let rubricContext = null;
 		        let rubricState = null;
 		        let rubricSaveTimer = null;
 		        let rubricLastSavedAt = 0;
 		        let rubricHighlightedRow = null;
+		        let rubricCurrentButton = null;
+
+		        function getRubricButtons() {
+		            return Array.from(document.querySelectorAll('.rubric-open-btn'));
+		        }
+
+		        function updateRubricNavigation() {
+		            const buttons = getRubricButtons();
+		            const currentIndex = rubricCurrentButton ? buttons.indexOf(rubricCurrentButton) : -1;
+		            const hasCurrent = currentIndex >= 0;
+		            if (rubricNavPrevEl) rubricNavPrevEl.disabled = !hasCurrent || currentIndex <= 0;
+		            if (rubricNavNextEl) rubricNavNextEl.disabled = !hasCurrent || currentIndex >= buttons.length - 1;
+		            if (rubricNavPositionEl) {
+		                rubricNavPositionEl.textContent = hasCurrent ? `${currentIndex + 1}/${buttons.length}` : '';
+		            }
+		        }
+
+		        function getRowDetailsCollapse(row) {
+		            if (!row) return null;
+		            const detailsButton = row.querySelector('.show-details-btn');
+		            const cell = detailsButton ? detailsButton.closest('td') : null;
+		            const commitsToggle = cell ? cell.querySelector('.commits-toggle-btn') : null;
+		            const target = commitsToggle ? (commitsToggle.getAttribute('data-bs-target') || commitsToggle.dataset.bsTarget || '') : '';
+		            return target ? document.querySelector(target) : null;
+		        }
+
+		        function ensureRowDetails(row) {
+		            const detailsButton = row ? row.querySelector('.show-details-btn') : null;
+		            if (!detailsButton) return;
+		            const detailsCollapse = getRowDetailsCollapse(row);
+		            if (!detailsCollapse || !detailsCollapse.classList.contains('show')) {
+		                detailsButton.click();
+		            }
+		        }
+
+		        function flashAndScrollToRow(row) {
+		            if (!row) return;
+		            row.classList.remove('student-row-flash');
+		            void row.offsetWidth;
+		            row.classList.add('student-row-flash');
+		            window.setTimeout(function () {
+		                row.classList.remove('student-row-flash');
+		            }, 1400);
+
+		            const header = document.querySelector('.uda-app-header');
+		            const headerOffset = (header ? header.getBoundingClientRect().height : 0) + 16;
+		            const targetTop = Math.max(0, window.scrollY + row.getBoundingClientRect().top - headerOffset);
+		            window.scrollTo({top: targetTop, behavior: 'smooth'});
+		        }
+
+		        function navigateRubricStudent(delta) {
+		            const buttons = getRubricButtons();
+		            if (!buttons.length) return;
+		            let currentIndex = rubricCurrentButton ? buttons.indexOf(rubricCurrentButton) : -1;
+		            if (currentIndex < 0) currentIndex = delta > 0 ? -1 : buttons.length;
+		            const targetIndex = currentIndex + delta;
+		            if (targetIndex < 0 || targetIndex >= buttons.length) return;
+
+		            const targetButton = buttons[targetIndex];
+		            const targetRow = targetButton.closest('tr');
+		            rubricCurrentButton = targetButton;
+		            updateRubricNavigation();
+		            ensureRowDetails(targetRow);
+		            flashAndScrollToRow(targetRow);
+		            openRubricModal(targetButton, {focusRow: false});
+		        }
 
 		        function setRubricHighlightedRow(rowEl) {
 		            if (rubricHighlightedRow && rubricHighlightedRow !== rowEl) {
@@ -1887,6 +1979,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
 		        if (rubricCloseBtn) {
 		            rubricCloseBtn.addEventListener('click', closeRubricPanel);
+		        }
+		        if (rubricNavPrevEl) {
+		            rubricNavPrevEl.addEventListener('click', function () { navigateRubricStudent(-1); });
+		        }
+		        if (rubricNavNextEl) {
+		            rubricNavNextEl.addEventListener('click', function () { navigateRubricStudent(1); });
 		        }
 
 		        document.addEventListener('keydown', function (e) {
@@ -2075,8 +2173,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            return false;
 	        }
 
-	        async function openRubricModal(btn) {
+	        async function openRubricModal(btn, options = {}) {
 	            if (!rubricPanelEl) return;
+	            const focusRow = !!options.focusRow;
 	            const studentId = btn.dataset.studentId || '';
 	            const githubUsername = btn.dataset.githubUsername || '';
 	            const studentName = btn.dataset.studentName || '';
@@ -2093,6 +2192,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            const lastCommit = btn.dataset.lastCommit || '';
 
 	            const row = btn.closest('tr');
+	            rubricCurrentButton = btn;
+	            updateRubricNavigation();
+	            ensureRowDetails(row);
+	            if (focusRow) flashAndScrollToRow(row);
 	            setRubricHighlightedRow(row);
 	            const voteSelect = row ? row.querySelector('.voto-select') : null;
 
