@@ -23,6 +23,9 @@ $require(str_contains($source, 'id="rubricNavPrev"'), 'pulsante studente precede
 $require(str_contains($source, 'id="rubricNavNext"'), 'pulsante studente successivo assente');
 $require(str_contains($source, 'function ensureRowDetails'), 'apertura automatica dei dettagli assente');
 $require(str_contains($source, 'function navigateRubricStudent'), 'funzione navigazione studenti assente');
+$require(str_contains($source, 'function hideRowDetails'), 'chiusura dettagli della riga corrente assente');
+$require(str_contains($source, 'await hideRowDetails'), 'navigazione non attende la chiusura dei dettagli correnti');
+$require(str_contains($source, 'await ensureRowDetails'), 'navigazione non attende l\'apertura dei dettagli successivi');
 $require(str_contains($source, "behavior: 'smooth'"), 'scroll fluido assente');
 $require(str_contains($source, 'student-row-flash'), 'feedback visivo sulla riga assente');
 

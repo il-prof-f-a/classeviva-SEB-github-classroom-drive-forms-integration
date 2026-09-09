@@ -109,6 +109,19 @@ function getClasseVivaGrades()
     return $grades;
 }
 
+function normalizeGithubReviewGrade($value): string
+{
+    $value = trim((string)$value);
+    if ($value === '' || in_array($value, ['i', 'a', 'skip'], true)) {
+        return $value;
+    }
+    if (is_numeric($value)) {
+        $numeric = round((float)$value * 2) / 2;
+        return number_format((float)$numeric, 1, '.', '');
+    }
+    return $value;
+}
+
 // Risolve le email degli studenti di un gruppo (Google Classroom primario, ClasseViva fallback).
 // Le email non vengono mai persistite: sono ricavate just-in-time dai roster.
 function gh_review_resolve_students(string $groupId): array
@@ -247,6 +260,17 @@ if ($getAction === 'rubric_load') {
         if ($idGruppo !== '') $where['id_gruppo'] = $idGruppo;
 
         $saved = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $where);
+        // Compatibilità con le valutazioni create prima dell'associazione al
+        // gruppo: se non c'è una riga nel gruppo corrente, recupera quella
+        // dello stesso studente/rubrica anche senza id_gruppo.
+        if (empty($saved) && $idGruppo !== '') {
+            $legacyWhere = [
+                'id_uda' => $idUda,
+                'id_rubrica' => $rubricId,
+                'id_studente' => $studentId
+            ];
+            $saved = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $legacyWhere);
+        }
         $savedRow = $saved[0] ?? null;
         $savedJson = null;
         if ($savedRow && !empty($savedRow['dati_json'])) {
@@ -877,6 +901,73 @@ foreach ($dbAdapter->findWhere('GITHUB_ASSIGNMENT_STUDENT_LINKS', ['id_assignmen
     ];
 }
 
+// Precarica i voti già registrati per questo assignment: dopo un salvataggio
+// la select deve mostrare il voto esistente invece di tornare a "skip".
+$existingGradesByStudent = [];
+$existingGradeSortByStudent = [];
+$gradeLinkMarker = 'github_assignment_review.php?test_id=' . rawurlencode((string)$testId);
+$udaForGrades = (string)($test['id_uda'] ?? '');
+if ($udaForGrades !== '' && $groupId !== '') {
+    foreach ($dbAdapter->findWhere('VOTI', ['id_uda' => $udaForGrades, 'id_gruppo' => $groupId]) as $savedVote) {
+        $studentIdForGrade = trim((string)($savedVote['id_studente'] ?? ''));
+        if ($studentIdForGrade === '') {
+            continue;
+        }
+
+        $origin = trim((string)($savedVote['link_origine'] ?? ''));
+        $description = (string)($savedVote['descrizione'] ?? '');
+        $isAssignmentGrade = $origin !== ''
+            ? str_contains($origin, $gradeLinkMarker)
+            : str_starts_with(strtolower(ltrim($description)), 'github classroom:');
+        if (!$isAssignmentGrade) {
+            continue;
+        }
+
+        $gradeValue = trim((string)($savedVote['voto'] ?? ''));
+        if ($gradeValue === '') {
+            $gradeValue = trim((string)($savedVote['giudizio'] ?? ''));
+        }
+        if ($gradeValue === '') {
+            continue;
+        }
+
+        $gradeSort = trim((string)($savedVote['data_creazione'] ?? ''))
+            ?: trim((string)($savedVote['data_valutazione'] ?? ''));
+        if (!isset($existingGradeSortByStudent[$studentIdForGrade])
+            || strcmp($gradeSort, $existingGradeSortByStudent[$studentIdForGrade]) >= 0) {
+            $existingGradesByStudent[$studentIdForGrade] = normalizeGithubReviewGrade($gradeValue);
+            $existingGradeSortByStudent[$studentIdForGrade] = $gradeSort;
+        }
+    }
+}
+
+// Fallback per valutazioni salvate dalla rubrica ma non ancora replicate in VOTI.
+$savedRubricGradesByStudent = [];
+if ($udaForGrades !== '' && $groupId !== '') {
+    foreach ($dbAdapter->findWhere('VALUTAZIONI_RUBRICA', [
+        'id_uda' => $udaForGrades,
+        'id_rubrica' => (string)$testId,
+        'id_gruppo' => $groupId
+    ]) as $savedRubricGrade) {
+        $note = strtolower(trim((string)($savedRubricGrade['note'] ?? '')));
+        $savedJson = (string)($savedRubricGrade['dati_json'] ?? '');
+        if ($note !== 'github_rubric' && !str_contains($savedJson, '"kind":"github_rubric"')) {
+            continue;
+        }
+        $studentIdForGrade = trim((string)($savedRubricGrade['id_studente'] ?? ''));
+        if ($studentIdForGrade === '') {
+            continue;
+        }
+        $gradeValue = trim((string)($savedRubricGrade['voto_numerico'] ?? ''));
+        if ($gradeValue === '') {
+            $gradeValue = trim((string)($savedRubricGrade['voto_finale'] ?? ''));
+        }
+        if ($gradeValue !== '') {
+            $savedRubricGradesByStudent[$studentIdForGrade] = normalizeGithubReviewGrade($gradeValue);
+        }
+    }
+}
+
 // Nomi studenti risolti dal resolver centrale del gruppo (mai persistiti).
 $runtimeNamesByStudent = [];
 if ($groupId !== '') {
@@ -930,6 +1021,78 @@ if ($isAuthenticated && !empty($studentMap)) {
             ];
         }
     }
+}
+
+function gh_review_build_family_note($dbAdapter, array $test, string $testId, string $idUda, string $idGruppo, string $studentId): string
+{
+    $title = trim((string)($test['nome'] ?? ''));
+    $lines = ['Attività di laboratorio con GitHub: ' . ($title !== '' ? $title : 'Progetto GitHub')];
+    $lines[] = 'Valutazione:';
+
+    $rubricRows = $dbAdapter->findWhere('RUBRICA', ['id_rubrica' => $testId]);
+    usort($rubricRows, static function (array $a, array $b): int {
+        return (int)($a['ordine'] ?? 0) <=> (int)($b['ordine'] ?? 0);
+    });
+
+    $where = [
+        'id_uda' => $idUda,
+        'id_rubrica' => $testId,
+        'id_studente' => $studentId
+    ];
+    if ($idGruppo !== '') {
+        $where['id_gruppo'] = $idGruppo;
+    }
+    $savedRows = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $where);
+    if (empty($savedRows) && $idGruppo !== '') {
+        unset($where['id_gruppo']);
+        $savedRows = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $where);
+    }
+
+    $savedJson = [];
+    $savedRow = $savedRows[0] ?? null;
+    if ($savedRow && !empty($savedRow['dati_json'])) {
+        $decoded = json_decode((string)$savedRow['dati_json'], true);
+        if (is_array($decoded)) {
+            $savedJson = $decoded;
+        }
+    }
+    $savedItems = is_array($savedJson['items'] ?? null) ? $savedJson['items'] : [];
+    $hasDescriptor = false;
+
+    foreach ($rubricRows as $rubricRow) {
+        $order = (int)($rubricRow['ordine'] ?? 0);
+        $savedItem = null;
+        foreach ($savedItems as $item) {
+            if (is_array($item) && (int)($item['ordine'] ?? 0) === $order) {
+                $savedItem = $item;
+                break;
+            }
+        }
+        if (!$savedItem || !($savedItem['enabled'] ?? false)) {
+            continue;
+        }
+
+        $level = (int)($savedItem['level'] ?? 0);
+        if ($level < 1 || $level > 5) {
+            continue;
+        }
+        $descriptor = trim((string)($rubricRow['livello_' . $level . '_desc'] ?? ''));
+        if ($descriptor === '') {
+            continue;
+        }
+        $indicator = trim((string)($rubricRow['nome_indicatore'] ?? ''));
+        if ($indicator === '') {
+            $indicator = 'Indicatore ' . $order;
+        }
+        $lines[] = $indicator . ': ' . $descriptor;
+        $hasDescriptor = true;
+    }
+
+    if (!$hasDescriptor) {
+        $lines[] = 'Nessun indicatore con descrittore assegnato.';
+    }
+
+    return implode("\n", $lines);
 }
 
 // Invio link di accettazione per email (riusa NotificationManager).
@@ -1021,18 +1184,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             $repoUrl = $repos[$idx] ?? '';
             $username = $usernames[$idx] ?? '';
 
-            $descrizione = 'GitHub Classroom: ' . ($test['nome'] ?? '');
+            $familyNote = gh_review_build_family_note(
+                $dbAdapter,
+                $test,
+                (string)$testId,
+                (string)($test['id_uda'] ?? ''),
+                $idGruppo,
+                (string)$studentId
+            );
+            $internalNote = 'GitHub Classroom: ' . ($test['nome'] ?? '');
             if (!empty($repoUrl)) {
-                $descrizione .= "\nRepo: " . $repoUrl;
+                $internalNote .= "\nRepo: " . $repoUrl;
             }
             if (!empty($test['url_assignment_student'])) {
-                $descrizione .= "\nLink Studente: " . $test['url_assignment_student'];
+                $internalNote .= "\nLink Studente: " . $test['url_assignment_student'];
             }
             if (!empty($test['url_assignment_teacher'])) {
-                $descrizione .= "\nLink Docente: " . $test['url_assignment_teacher'];
+                $internalNote .= "\nLink Docente: " . $test['url_assignment_teacher'];
             }
             if ($commento !== '') {
-                $descrizione .= "\nCommento: " . $commento;
+                $internalNote .= "\nCommento: " . $commento;
             }
 
             $linkOrigine = app_url('public/github_assignment_review.php?test_id=' . urlencode((string)$testId));
@@ -1043,8 +1214,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 'id_studente' => $studentId,
                 'tipo_voto' => $tipoVoto,
                 'voto' => $voto,
-                'giudizio' => $giudizio,
-                'descrizione' => $descrizione,
+                'giudizio' => $familyNote,
+                'descrizione' => $internalNote,
                 'data_valutazione' => $testDate,
                 'data_creazione' => date('Y-m-d H:i:s'),
                 'pubblicato' => 0,
@@ -1085,13 +1256,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	    <style>
 	        table.github-grades-table { width: 100%; table-layout: fixed; }
 	        /* La metà sinistra resta libera quando il pannello rubrica è aperto. */
-	        table.github-grades-table col.col-gh { width: 12%; }
-	        table.github-grades-table col.col-repo { width: 18%; }
-	        table.github-grades-table col.col-student { width: 12%; }
-	        table.github-grades-table col.col-vote { width: 8%; }
+	        table.github-grades-table col.col-gh { width: 7%; }
+	        table.github-grades-table col.col-repo { width: 32%; }
+	        table.github-grades-table col.col-vote { width: 11%; }
 	        table.github-grades-table td.repo-col a { word-break: break-all; }
 	        table.github-grades-table th.vote-col,
-	        table.github-grades-table td.vote-col { width: 8%; }
+	        table.github-grades-table td.vote-col { width: 11%; }
+	        table.github-grades-table td.vote-col .student-vote-cell { display: flex; flex-direction: column; gap: .45rem; }
+	        table.github-grades-table td.vote-col .student-info { line-height: 1.25; }
+	        table.github-grades-table td.vote-col .rubric-open-btn { width: 100%; }
 	        .github-review-page { width: 100%; max-width: none !important; margin-left: 0; margin-right: 0; }
 	        table.github-grades-table td.comment-col { vertical-align: top; }
 	        table.github-grades-table .comment-wrap { display: flex; align-items: stretch; width: 100%; height: 100%; }
@@ -1099,15 +1272,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	        table.github-grades-table td.vote-col select { width: 100% !important; }
 	        .commit-message-body { white-space: pre-wrap; }
 	        .rubric-modal-table th.weight-col,
-	        .rubric-modal-table td.weight-col { width: 140px; min-width: 140px; }
-	        .rubric-modal-table input.rubric-weight { width: 100%; min-width: 4.5rem; padding: .1rem .25rem; font-size: .85rem; }
+	        .rubric-modal-table td.weight-col { width: 40px; min-width: 40px; }
+	        .rubric-modal-table input.rubric-weight { width: 100%; min-width: 2.5rem; padding: .1rem .1rem; font-size: .85rem; }
+	        .rubric-modal-table td:nth-child(2) > .small,
+	        .rubric-modal-table td.rubric-level > .small { font-size: .72rem; line-height: 1.2; }
 
             /* Mantieni il colore di sfondo della riga anche dentro i dettagli (commit/LOC) */
             table.github-grades-table td .collapse .repo-loc,
-            table.github-grades-table td .collapse .commit-details,
-            table.github-grades-table td .collapse .list-group-item {
-                background-color: transparent !important;
-            }
+	        table.github-grades-table td .collapse .commit-details,
+	        table.github-grades-table td .collapse .list-group-item {
+	            background-color: transparent !important;
+	        }
+	        .repo-loc table { font-size: .75rem; }
 
 	        table.github-grades-table tr.rubric-row-active {
 	            background-color: #fff3cd !important;
@@ -1181,7 +1357,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 <i class="bi bi-check-circle"></i> <?= htmlspecialchars($successMessage) ?>
 	            <?php if (!empty($test['id_uda'])): ?>
 	                <a class="btn btn-sm btn-success ms-3" href="uda_grades.php?id=<?= urlencode($test['id_uda']) ?>">
-	                    <i class="bi bi-upload"></i> Pubblica voti sul registro elettronico
+	                    <i class="bi bi-upload"></i> Vai alla pagina per la pubblicazione dei voti
 	                </a>
 	            <?php endif; ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
@@ -1237,7 +1413,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                        <colgroup>
 	                            <col class="col-gh">
 	                            <col class="col-repo">
-	                            <col class="col-student">
 	                            <col class="col-vote">
 	                            <col class="col-comment">
 	                        </colgroup>
@@ -1245,8 +1420,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                            <tr>
 	                                <th>GitHub</th>
 	                                <th>Repo</th>
-                                <th>Studente</th>
-                                <th class="vote-col">Voto</th>
+                                <th class="vote-col">Studente/Voto</th>
                                 <th class="comment-col">Commento</th>
                             </tr>
                         </thead>
@@ -1403,66 +1577,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                             </div>
                                         <?php endif; ?>
                                     </td>
-                                    <td>
+                                    <td class="vote-col">
                                         <input type="hidden" name="id_studente[<?= $idx ?>]" value="<?= htmlspecialchars($studentId) ?>">
                                         <?php if ($studentId): ?>
                                             <?php
                                             $accepted = trim((string)($row['github_username'] ?? '')) !== '' || trim((string)($row['accepted_at'] ?? '')) !== '';
                                             $acceptanceCode = trim((string)($row['acceptance_code'] ?? ''));
+                                            $savedGrade = $existingGradesByStudent[$studentId]
+                                                ?? ($savedRubricGradesByStudent[$studentId] ?? 'skip');
+                                            $defaultVoto = $_POST['voto'][$idx] ?? $savedGrade;
                                             ?>
-                                            <?php if ($accepted): ?>
-                                                <span class="badge bg-success">Accettato</span>
-                                            <?php else: ?>
-                                                <span class="badge bg-warning text-dark">Assignment non ancora accettato</span>
-                                            <?php endif; ?>
-                                            <?php if ($studentName !== ''): ?><strong class="d-block show-name"><?= htmlspecialchars($studentName) ?></strong><?php endif; ?>
-                                            <small class="text-muted d-block">ID: <?= htmlspecialchars($studentId) ?></small>
-                                            <?php if (!$accepted && $acceptanceCode !== ''): ?>
-                                                <code class="small d-block text-break"><?= htmlspecialchars(app_url('public/accept_assignment.php') . '?code=' . urlencode($acceptanceCode)) ?></code>
-                                                <form method="POST" class="d-inline" onsubmit="return confirm('Inviare il link di accettazione per email?');">
-                                                    <input type="hidden" name="action" value="send_student_email">
-                                                    <input type="hidden" name="student_id" value="<?= htmlspecialchars($studentId) ?>">
-                                                    <button type="submit" class="btn btn-sm btn-outline-primary mt-1"><i class="bi bi-envelope"></i> invia per email</button>
-                                                </form>
-                                            <?php endif; ?>
+                                            <div class="student-vote-cell">
+                                                <div class="student-info">
+                                                    <?php if ($accepted): ?>
+                                                        <span class="badge bg-success">Accettato</span>
+                                                    <?php else: ?>
+                                                        <span class="badge bg-warning text-dark">Assignment non ancora accettato</span>
+                                                    <?php endif; ?>
+                                                    <?php if ($studentName !== ''): ?><strong class="d-block show-name"><?= htmlspecialchars($studentName) ?></strong><?php endif; ?>
+                                                    <small class="text-muted d-block">ID: <?= htmlspecialchars($studentId) ?></small>
+                                                    <?php if (!$accepted && $acceptanceCode !== ''): ?>
+                                                        <code class="small d-block text-break"><?= htmlspecialchars(app_url('public/accept_assignment.php') . '?code=' . urlencode($acceptanceCode)) ?></code>
+                                                        <form method="POST" class="d-inline" onsubmit="return confirm('Inviare il link di accettazione per email?');">
+                                                            <input type="hidden" name="action" value="send_student_email">
+                                                            <input type="hidden" name="student_id" value="<?= htmlspecialchars($studentId) ?>">
+                                                            <button type="submit" class="btn btn-sm btn-outline-primary mt-1"><i class="bi bi-envelope"></i> invia per email</button>
+                                                        </form>
+                                                    <?php endif; ?>
+                                                </div>
+                                                <select name="voto[<?= $idx ?>]" class="form-select form-select-sm voto-select">
+                                                    <?php foreach ($availableGrades as $g): ?>
+                                                        <?php
+                                                        $label = $g;
+                                                        if ($g === 'i') $label = 'i (impreparato)';
+                                                        elseif ($g === 'a') $label = 'a (assente)';
+                                                        elseif ($g === 'skip') $label = '- non importare voto -';
+                                                        ?>
+                                                        <option value="<?= htmlspecialchars($g) ?>" <?= ($g === $defaultVoto) ? 'selected' : '' ?>><?= htmlspecialchars($label) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                                <button type="button"
+                                                        class="btn btn-sm btn-outline-primary rubric-open-btn"
+                                                        title="Apri rubrica"
+                                                        aria-label="Apri rubrica"
+                                                        data-student-id="<?= htmlspecialchars($studentId) ?>"
+                                                        data-student-name="<?= htmlspecialchars($studentName) ?>"
+                                                        data-github-username="<?= htmlspecialchars($uname) ?>"
+                                                        data-blind-github="<?= htmlspecialchars($githubIdDisplay) ?>"
+                                                        data-repo-url="<?= htmlspecialchars($repoUrl) ?>"
+                                                        data-repo-full="<?= htmlspecialchars($repoFullRow) ?>"
+                                                        data-ref="<?= htmlspecialchars($locRef) ?>"
+                                                        data-commit-total="<?= htmlspecialchars((string)($commitCountTotal ?? '')) ?>"
+                                                        data-commit-loaded="<?= htmlspecialchars((string)($recentCount ?? '')) ?>"
+                                                        data-last-commit="<?= htmlspecialchars((string)($lastCommit ?? '')) ?>">
+                                                    <i class="bi bi-clipboard-check"></i>
+                                                </button>
+                                            </div>
                                         <?php else: ?>
-                                            <span class="badge bg-secondary">Non associato</span>
+                                            <em class="text-muted">Associa studente</em>
                                         <?php endif; ?>
                                     </td>
-	                                    <td class="vote-col">
-	                                        <?php if ($studentId): ?>
-	                                            <?php $defaultVoto = $_POST['voto'][$idx] ?? 'skip'; ?>
-	                                            <div class="d-flex flex-column gap-1">
-	                                                <select name="voto[<?= $idx ?>]" class="form-select form-select-sm voto-select">
-	                                                    <?php foreach ($availableGrades as $g): ?>
-	                                                        <?php
-	                                                        $label = $g;
-	                                                        if ($g === 'i') $label = 'i (impreparato)';
-	                                                        elseif ($g === 'a') $label = 'a (assente)';
-	                                                        elseif ($g === 'skip') $label = '- non importare voto -';
-	                                                        ?>
-	                                                        <option value="<?= htmlspecialchars($g) ?>" <?= ($g === $defaultVoto) ? 'selected' : '' ?>><?= htmlspecialchars($label) ?></option>
-	                                                    <?php endforeach; ?>
-	                                                </select>
-	                                                <button type="button"
-	                                                        class="btn btn-sm btn-outline-primary rubric-open-btn"
-	                                                        data-student-id="<?= htmlspecialchars($studentId) ?>"
-	                                                        data-student-name="<?= htmlspecialchars($studentName) ?>"
-	                                                        data-github-username="<?= htmlspecialchars($uname) ?>"
-	                                                        data-blind-github="<?= htmlspecialchars($githubIdDisplay) ?>"
-	                                                        data-repo-url="<?= htmlspecialchars($repoUrl) ?>"
-	                                                        data-repo-full="<?= htmlspecialchars($repoFullRow) ?>"
-	                                                        data-ref="<?= htmlspecialchars($locRef) ?>"
-	                                                        data-commit-total="<?= htmlspecialchars((string)($commitCountTotal ?? '')) ?>"
-	                                                        data-commit-loaded="<?= htmlspecialchars((string)($recentCount ?? '')) ?>"
-	                                                        data-last-commit="<?= htmlspecialchars((string)($lastCommit ?? '')) ?>">
-	                                                    <i class="bi bi-clipboard-check"></i>
-	                                                </button>
-	                                            </div>
-	                                        <?php else: ?>
-	                                            <em class="text-muted">Associa studente</em>
-	                                        <?php endif; ?>
-		                                    </td>
 	                                    <td class="comment-col">
 	                                        <?php if ($studentId): ?>
 	                                            <div class="comment-wrap">
@@ -1531,11 +1705,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 		                                <div class="text-muted small">Punti (su 24): <span id="rubricPoints">-</span></div>
 		                            </div>
 		                            <div class="text-end">
-		                                <div class="fs-4 fw-bold" id="rubricGrade">-</div>
-		                                <div class="text-muted small">Voto (non arrotondato): <span id="rubricGradeRaw">-</span></div>
-		                            </div>
-		                        </div>
-		                        <div class="mt-2 d-grid gap-2">
+	                                <div class="fs-4 fw-bold" id="rubricGrade">-</div>
+	                                <div class="text-muted small">Voto (non arrotondato): <span id="rubricGradeRaw">-</span></div>
+	                            </div>
+	                        </div>
+	                        <div class="border-top mt-2 pt-2 small" id="rubricEvaluationSummary"></div>
+	                        <div class="mt-2 d-grid gap-2">
 		                            <button type="button" class="btn btn-primary" id="rubricApplyBtn">
 		                                <i class="bi bi-check2-circle"></i> Applica al voto
 		                            </button>
@@ -1671,7 +1846,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
             const entries = Object.entries(byLang || {});
             if (entries.length) {
-                html += '<div class="table-responsive"><table class="table table-sm mb-2"><thead><tr>' +
+                html += '<div class="table-responsive"><table class="table table-sm mb-2 loc-table"><thead><tr>' +
                     '<th>Linguaggio</th><th class="text-end">File</th><th class="text-end">Tot</th><th class="text-end">Code</th><th class="text-end">Comm</th><th class="text-end">Blank</th>' +
                     '</tr></thead><tbody>';
                 entries.forEach(function ([lang, row]) {
@@ -1868,6 +2043,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 		        const rubricPointsEl = document.getElementById('rubricPoints');
 		        const rubricGradeEl = document.getElementById('rubricGrade');
 		        const rubricGradeRawEl = document.getElementById('rubricGradeRaw');
+		        const rubricEvaluationSummaryEl = document.getElementById('rubricEvaluationSummary');
 		        const rubricSubtitleEl = document.getElementById('rubricModalSubtitle');
 		        const rubricSaveStatusEl = document.getElementById('rubricSaveStatus');
 		        const rubricApplyBtn = document.getElementById('rubricApplyBtn');
@@ -1880,6 +2056,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 		        let rubricContext = null;
 		        let rubricState = null;
 		        let rubricSaveTimer = null;
+		        let rubricSaveInFlight = Promise.resolve();
 		        let rubricLastSavedAt = 0;
 		        let rubricHighlightedRow = null;
 		        let rubricCurrentButton = null;
@@ -1910,11 +2087,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
 		        function ensureRowDetails(row) {
 		            const detailsButton = row ? row.querySelector('.show-details-btn') : null;
-		            if (!detailsButton) return;
+		            if (!detailsButton) return Promise.resolve();
 		            const detailsCollapse = getRowDetailsCollapse(row);
-		            if (!detailsCollapse || !detailsCollapse.classList.contains('show')) {
-		                detailsButton.click();
+		            if (!detailsCollapse || detailsCollapse.classList.contains('show')) {
+		                return Promise.resolve();
 		            }
+
+		            return new Promise(function (resolve) {
+		                let settled = false;
+		                const finish = function () {
+		                    if (settled) return;
+		                    settled = true;
+		                    resolve();
+		                };
+		                detailsCollapse.addEventListener('shown.bs.collapse', finish, {once: true});
+		                detailsButton.click();
+		                window.setTimeout(finish, 450);
+		            });
+		        }
+
+		        function hideRowDetails(row) {
+		            const detailsButton = row ? row.querySelector('.show-details-btn') : null;
+		            const detailsCollapse = getRowDetailsCollapse(row);
+		            if (!detailsButton || !detailsCollapse || !detailsCollapse.classList.contains('show')) {
+		                return Promise.resolve();
+		            }
+
+		            return new Promise(function (resolve) {
+		                let settled = false;
+		                const finish = function () {
+		                    if (settled) return;
+		                    settled = true;
+		                    resolve();
+		                };
+		                detailsCollapse.addEventListener('hidden.bs.collapse', finish, {once: true});
+		                detailsButton.click();
+		                window.setTimeout(finish, 450);
+		            });
 		        }
 
 		        function flashAndScrollToRow(row) {
@@ -1932,7 +2141,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 		            window.scrollTo({top: targetTop, behavior: 'smooth'});
 		        }
 
-		        function navigateRubricStudent(delta) {
+		        async function navigateRubricStudent(delta) {
 		            const buttons = getRubricButtons();
 		            if (!buttons.length) return;
 		            let currentIndex = rubricCurrentButton ? buttons.indexOf(rubricCurrentButton) : -1;
@@ -1942,9 +2151,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
 		            const targetButton = buttons[targetIndex];
 		            const targetRow = targetButton.closest('tr');
+		            const currentRow = rubricCurrentButton ? rubricCurrentButton.closest('tr') : null;
+		            await flushRubricSave();
+		            if (currentRow && currentRow !== targetRow) {
+		                await hideRowDetails(currentRow);
+		            }
 		            rubricCurrentButton = targetButton;
 		            updateRubricNavigation();
-		            ensureRowDetails(targetRow);
+		            await ensureRowDetails(targetRow);
 		            flashAndScrollToRow(targetRow);
 		            openRubricModal(targetButton, {focusRow: false});
 		        }
@@ -1971,8 +2185,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 		            rubricPanelEl.classList.add('open');
 		        }
 
-		        function closeRubricPanel() {
+		        async function closeRubricPanel() {
 		            if (!rubricPanelEl) return;
+		            await flushRubricSave();
 		            rubricPanelEl.classList.remove('open');
 		            clearRubricHighlightedRow();
 		        }
@@ -2075,6 +2290,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            if (rubricPointsEl) rubricPointsEl.textContent = points24 !== null ? points24.toFixed(1) : '-';
 	            if (rubricGradeEl) rubricGradeEl.textContent = gradeRounded !== null ? gradeRounded.toFixed(1) : '-';
 	            if (rubricGradeRawEl) rubricGradeRawEl.textContent = gradeRaw !== null ? gradeRaw.toFixed(2) : '-';
+	            if (rubricEvaluationSummaryEl) {
+	                const selectedItems = rubricState.items.filter((it) => it.enabled && Number(it.level || 0) > 0);
+	                let summaryHtml = '<div class="fw-semibold mb-1">Valutazione per indicatore</div>';
+	                if (!selectedItems.length) {
+	                    summaryHtml += '<div class="text-muted">Nessun livello assegnato.</div>';
+	                } else {
+	                    selectedItems.forEach((it) => {
+	                        const level = Number(it.level || 0);
+	                        const description = (it.levels && it.levels[level]) ? it.levels[level] : ('Livello ' + level);
+	                        summaryHtml += '<div><strong>' + escapeHtml(it.name || 'Indicatore') + ':</strong> ' + escapeHtml(description) + '</div>';
+	                    });
+	                }
+	                rubricEvaluationSummaryEl.innerHTML = summaryHtml;
+	            }
 
 	            let html = '';
 	            html += '<table class="table table-sm align-top mb-0 rubric-modal-table">';
@@ -2107,56 +2336,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            rubricHost.innerHTML = html;
 	        }
 
-	        async function saveRubricDebounced() {
-	            if (!rubricContext || !rubricState) return;
-	            if (rubricSaveTimer) clearTimeout(rubricSaveTimer);
-	            rubricSaveTimer = setTimeout(async function () {
-	                try {
-	                    const {points24, gradeRaw, gradeRounded} = computeRubric();
-	                    const now = Date.now();
-	                    if (now - rubricLastSavedAt < 400) return;
+	        async function saveRubricNow() {
+	            if (!rubricContext || !rubricState) return false;
+	            try {
+	                const {points24, gradeRaw, gradeRounded} = computeRubric();
+	                const now = Date.now();
+	                if (now - rubricLastSavedAt < 400) return true;
 
-	                    setSaveStatus('muted', 'Salvataggio...');
-	                    const payload = {
-	                        action: 'rubric_save',
-	                        student_id: rubricContext.student_id,
-	                        nome_studente: rubricContext.nome_studente || '',
-	                        id_gruppo: RUBRIC_CTX.id_gruppo || '',
-	                        dati_json: {
-	                            kind: 'github_rubric',
-	                            test_id: RUBRIC_CTX.test_id,
-	                            id_uda: RUBRIC_CTX.id_uda,
-	                            points24: points24,
-	                            grade_raw: gradeRaw,
-	                            grade_rounded: gradeRounded,
-	                            items: rubricState.items.map((it) => ({
-	                                ordine: it.order,
-	                                nome: it.name,
-	                                enabled: !!it.enabled,
-	                                level: it.level ? Number(it.level) : null,
-	                                weight: it.weight !== '' ? Number(it.weight) : null
-	                            })),
-	                            metrics: rubricContext.metrics || {}
-	                        }
-	                    };
-
-	                    const res = await fetch(window.location.href, {
-	                        method: 'POST',
-	                        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
-	                        body: JSON.stringify(payload)
-	                    });
-	                    const data = await res.json();
-	                    if (!data.ok) {
-	                        setSaveStatus('err', 'Errore salvataggio: ' + (data.error || 'Errore'));
-	                        return;
+	                setSaveStatus('muted', 'Salvataggio...');
+	                const payload = {
+	                    action: 'rubric_save',
+	                    student_id: rubricContext.student_id,
+	                    nome_studente: rubricContext.nome_studente || '',
+	                    id_gruppo: RUBRIC_CTX.id_gruppo || '',
+	                    voto_numerico: gradeRounded,
+	                    dati_json: {
+	                        kind: 'github_rubric',
+	                        test_id: RUBRIC_CTX.test_id,
+	                        id_uda: RUBRIC_CTX.id_uda,
+	                        points24: points24,
+	                        grade_raw: gradeRaw,
+	                        grade_rounded: gradeRounded,
+	                        items: rubricState.items.map((it) => ({
+	                            ordine: it.order,
+	                            nome: it.name,
+	                            enabled: !!it.enabled,
+	                            level: it.level ? Number(it.level) : null,
+	                            weight: it.weight !== '' ? Number(it.weight) : null
+	                        })),
+	                        metrics: rubricContext.metrics || {}
 	                    }
-	                    rubricLastSavedAt = Date.now();
-	                    setSaveStatus('ok', 'Salvato.');
-	                } catch (e) {
-	                    setSaveStatus('err', 'Errore salvataggio.');
+	                };
+
+	                const res = await fetch(window.location.href, {
+	                    method: 'POST',
+	                    headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+	                    body: JSON.stringify(payload)
+	                });
+                const data = await res.json();
+                if (!data.ok) {
+	                    setSaveStatus('err', 'Errore salvataggio: ' + (data.error || 'Errore'));
+	                    return false;
 	                }
-	            }, 500);
-	        }
+                rubricLastSavedAt = Date.now();
+                setSaveStatus('ok', 'Salvato.');
+                return true;
+            } catch (e) {
+                setSaveStatus('err', 'Errore salvataggio.');
+                return false;
+            }
+        }
+
+        function saveRubricDebounced() {
+            if (!rubricContext || !rubricState) return;
+            if (rubricSaveTimer) clearTimeout(rubricSaveTimer);
+            rubricSaveTimer = setTimeout(function () {
+                rubricSaveTimer = null;
+                rubricSaveInFlight = saveRubricNow();
+            }, 500);
+        }
+
+        async function flushRubricSave() {
+            if (rubricSaveTimer) {
+                clearTimeout(rubricSaveTimer);
+                rubricSaveTimer = null;
+                rubricSaveInFlight = saveRubricNow();
+            }
+            await rubricSaveInFlight;
+        }
 
 	        function applyGradeToSelect() {
 	            if (!rubricContext) return;
@@ -2175,6 +2422,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
 	        async function openRubricModal(btn, options = {}) {
 	            if (!rubricPanelEl) return;
+	            await flushRubricSave();
 	            const focusRow = !!options.focusRow;
 	            const studentId = btn.dataset.studentId || '';
 	            const githubUsername = btn.dataset.githubUsername || '';
@@ -2230,6 +2478,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            }
 
 	            if (rubricHost) rubricHost.innerHTML = '<div class="text-muted">Caricamento rubrica...</div>';
+	            if (rubricEvaluationSummaryEl) rubricEvaluationSummaryEl.innerHTML = '<span class="text-muted">Caricamento valutazione...</span>';
 	            setSaveStatus('muted', '');
 	            openRubricPanel();
 
