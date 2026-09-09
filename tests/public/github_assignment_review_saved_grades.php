@@ -23,6 +23,8 @@ $require(str_contains($source, "findWhere('VOTI'"), 'lettura dei voti salvati as
 $require(str_contains($source, '$existingGradesByStudent[$studentId]'), 'voto salvato non usato come default');
 $require(str_contains($source, 'savedRubricGradesByStudent'), 'fallback dei voti rubricati non definito');
 $require(str_contains($source, 'number_format((float)'), 'normalizzazione del formato voto assente');
+$require(str_contains($source, "\$selectedSaveIndexes"), 'filtro degli indici selezionati non definito');
+$require(str_contains($source, "if (!isset(\$selectedSaveIndexes[\$idx]))"), 'voti non selezionati non esclusi dal salvataggio');
 
 if ($failures !== []) {
     foreach ($failures as $failure) {

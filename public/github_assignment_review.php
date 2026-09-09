@@ -1145,6 +1145,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         $studentIds = $_POST['id_studente'] ?? [];
         $usernames = $_POST['github_username'] ?? [];
         $repos = $_POST['repo_url'] ?? [];
+        $selectedSaveIndexes = [];
+        $selectedRaw = $_POST['salva_voto'] ?? [];
+        if (is_array($selectedRaw)) {
+            foreach ($selectedRaw as $idx => $flag) {
+                if ((string)$flag === '1' && ctype_digit((string)$idx)) {
+                    $selectedSaveIndexes[(int)$idx] = true;
+                }
+            }
+        }
 
         $idGruppo = trim((string)($test['id_gruppo'] ?? ''));
         if ($idGruppo === '') {
@@ -1165,6 +1174,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
         $inserted = 0;
         foreach ($grades as $idx => $grade) {
+            if (!isset($selectedSaveIndexes[$idx])) {
+                continue;
+            }
             $studentId = $studentIds[$idx] ?? '';
             if (!$studentId || ($grade === 'skip')) {
                 continue;
@@ -1329,7 +1341,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	        body.review-names .show-blind { display: none !important; }
 	    </style>
 	</head>
-<body class="review-blind">
+<body class="review-names">
         <?php
     $pageTitle = $test['nome'] ?? 'Assignment GitHub';
     $pageSubtitle = 'Assignment GitHub Classroom - UDA: ' . ($test['id_uda'] ?? '');
@@ -1401,9 +1413,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                         </div>
                     </div>
 	                </div>
+	                <div class="mb-2">
+	                    <button type="button" class="btn btn-success open-save-votes-modal" data-bs-toggle="modal" data-bs-target="#saveVotesModal">
+	                        <i class="bi bi-save"></i> Salva voti selezionati
+	                    </button>
+	                </div>
 	                <div class="d-flex align-items-center gap-2 mb-3">
 	                    <div class="form-check form-switch">
-	                        <input class="form-check-input" type="checkbox" role="switch" id="review-show-names" autocomplete="off">
+	                        <input class="form-check-input" type="checkbox" role="switch" id="review-show-names" autocomplete="off" checked>
 	                        <label class="form-check-label" for="review-show-names">Mostra nomi e repository</label>
 	                    </div>
 	                    <small class="text-muted">Se disattivato, la revisione è "alla cieca": si vedono solo gli ID.</small>
@@ -1587,8 +1604,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                                 ?? ($savedRubricGradesByStudent[$studentId] ?? 'skip');
                                             $defaultVoto = $_POST['voto'][$idx] ?? $savedGrade;
                                             ?>
-                                            <div class="student-vote-cell">
-                                                <div class="student-info">
+	                                            <div class="student-vote-cell">
+	                                                <div class="student-info">
                                                     <?php if ($accepted): ?>
                                                         <span class="badge bg-success">Accettato</span>
                                                     <?php else: ?>
@@ -1603,9 +1620,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                                             <input type="hidden" name="student_id" value="<?= htmlspecialchars($studentId) ?>">
                                                             <button type="submit" class="btn btn-sm btn-outline-primary mt-1"><i class="bi bi-envelope"></i> invia per email</button>
                                                         </form>
-                                                    <?php endif; ?>
-                                                </div>
-                                                <select name="voto[<?= $idx ?>]" class="form-select form-select-sm voto-select">
+	                                                    <?php endif; ?>
+	                                                </div>
+	                                                <div class="form-check save-vote-wrap">
+	                                                    <input class="form-check-input save-vote-checkbox"
+	                                                           type="checkbox"
+	                                                           id="save-vote-<?= $idx ?>"
+	                                                           name="salva_voto[<?= $idx ?>]"
+	                                                           value="1"
+	                                                           data-index="<?= $idx ?>"
+	                                                           data-student-name="<?= htmlspecialchars($studentName !== '' ? $studentName : $studentId) ?>"
+	                                                           data-github-name="<?= htmlspecialchars($uname !== '' ? $uname : $studentId) ?>"
+	                                                           data-blind-student="Studente <?= htmlspecialchars($githubIdDisplay) ?>"
+	                                                           data-blind-github="<?= htmlspecialchars($githubIdDisplay) ?>">
+	                                                    <label class="form-check-label small" for="save-vote-<?= $idx ?>">Seleziona per salvare</label>
+	                                                </div>
+	                                                <select name="voto[<?= $idx ?>]" class="form-select form-select-sm voto-select">
                                                     <?php foreach ($availableGrades as $g): ?>
                                                         <?php
                                                         $label = $g;
@@ -1621,9 +1651,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                                         title="Apri rubrica"
                                                         aria-label="Apri rubrica"
                                                         data-student-id="<?= htmlspecialchars($studentId) ?>"
-                                                        data-student-name="<?= htmlspecialchars($studentName) ?>"
-                                                        data-github-username="<?= htmlspecialchars($uname) ?>"
-                                                        data-blind-github="<?= htmlspecialchars($githubIdDisplay) ?>"
+	                                                        data-student-name="<?= htmlspecialchars($studentName) ?>"
+	                                                        data-github-username="<?= htmlspecialchars($uname) ?>"
+	                                                        data-blind-github="<?= htmlspecialchars($githubIdDisplay) ?>"
+	                                                        data-index="<?= $idx ?>"
                                                         data-repo-url="<?= htmlspecialchars($repoUrl) ?>"
                                                         data-repo-full="<?= htmlspecialchars($repoFullRow) ?>"
                                                         data-ref="<?= htmlspecialchars($locRef) ?>"
@@ -1654,10 +1685,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                         </tbody>
                     </table>
                 </div>
-                <button type="submit" class="btn btn-success">
-                    <i class="bi bi-save"></i> Salva voti
+                <button type="button" class="btn btn-success open-save-votes-modal" data-bs-toggle="modal" data-bs-target="#saveVotesModal">
+                    <i class="bi bi-save"></i> Salva voti selezionati
                 </button>
             </form>
+
+	        <div class="modal fade" id="saveVotesModal" tabindex="-1" aria-labelledby="saveVotesModalLabel" aria-hidden="true">
+	            <div class="modal-dialog modal-xl modal-dialog-scrollable">
+	                <div class="modal-content">
+	                    <div class="modal-header">
+	                        <h5 class="modal-title" id="saveVotesModalLabel"><i class="bi bi-save"></i> Seleziona i voti da salvare</h5>
+	                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+	                    </div>
+	                    <div class="modal-body">
+	                        <p class="text-muted small">Sono elencati tutti i voti disponibili, compresi quelli già presenti nel database. Verranno salvate solo le righe selezionate con un voto diverso da “- non importare voto -”.</p>
+	                        <div id="saveVotesModalStatus" class="alert alert-warning d-none" role="alert"></div>
+	                        <div class="table-responsive">
+	                            <table class="table table-sm align-middle" id="saveVotesSummaryTable">
+	                                <thead><tr><th></th><th>Studente</th><th>GitHub</th><th>Voto</th></tr></thead>
+	                                <tbody id="saveVotesSummaryBody"></tbody>
+	                            </table>
+	                        </div>
+	                    </div>
+	                    <div class="modal-footer">
+	                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
+	                        <button type="button" class="btn btn-success" id="confirmSaveVotesBtn"><i class="bi bi-check2"></i> Conferma salvataggio voti</button>
+	                    </div>
+	                </div>
+	            </div>
+	        </div>
 	        <?php endif; ?>
 	    </div>
 
@@ -2446,6 +2502,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            if (focusRow) flashAndScrollToRow(row);
 	            setRubricHighlightedRow(row);
 	            const voteSelect = row ? row.querySelector('.voto-select') : null;
+	            const saveVoteCheckbox = row ? row.querySelector('.save-vote-checkbox') : null;
 
 	            rubricContext = {
 	                student_id: studentId,
@@ -2454,6 +2511,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                repo_full: repoFull,
 	                ref: ref,
 	                voteSelect: voteSelect,
+	                saveVoteCheckbox: saveVoteCheckbox,
+	                index: btn.dataset.index || '',
 	                nome_studente: studentName,
 	                metrics: {
 	                    repo_url: repoUrl,
@@ -2565,12 +2624,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            openRubricModal(btn);
 	        });
 
-		        if (rubricApplyBtn) {
-		            rubricApplyBtn.addEventListener('click', function () {
-		                const applied = applyGradeToSelect();
-		                if (applied) closeRubricPanel();
-		            });
-		        }
+	        if (rubricApplyBtn) {
+	            rubricApplyBtn.addEventListener('click', function () {
+	                const applied = applyGradeToSelect();
+	                if (applied) {
+	                    const saveVoteCheckbox = rubricContext ? rubricContext.saveVoteCheckbox : null;
+	                    if (saveVoteCheckbox) {
+	                        saveVoteCheckbox.checked = true;
+	                        syncSaveVoteCheckbox(rubricContext.index, true);
+	                    }
+	                    closeRubricPanel();
+	                }
+	            });
+	        }
 
 	        if (rubricHost) {
 	            rubricHost.addEventListener('click', function (e) {
@@ -2604,6 +2670,128 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                }
 	            });
 	        }
+
+        function getSaveVoteCheckbox(index) {
+            return Array.from(document.querySelectorAll('.save-vote-checkbox')).find(function (checkbox) {
+                return String(checkbox.dataset.index || '') === String(index);
+            }) || null;
+        }
+
+        function syncSaveVoteCheckbox(index, checked) {
+            const mainCheckbox = getSaveVoteCheckbox(index);
+            if (mainCheckbox) mainCheckbox.checked = !!checked;
+            document.querySelectorAll('.save-vote-modal-checkbox').forEach(function (modalCheckbox) {
+                if (String(modalCheckbox.dataset.index || '') === String(index)) {
+                    modalCheckbox.checked = !!checked;
+                }
+            });
+        }
+
+        function renderSaveVotesSummary() {
+            const summaryBody = document.getElementById('saveVotesSummaryBody');
+            if (!summaryBody) return;
+            summaryBody.replaceChildren();
+
+            const showNames = document.getElementById('review-show-names')?.checked !== false;
+            const mainCheckboxes = Array.from(document.querySelectorAll('.save-vote-checkbox'));
+            if (!mainCheckboxes.length) {
+                const emptyRow = document.createElement('tr');
+                const emptyCell = document.createElement('td');
+                emptyCell.colSpan = 4;
+                emptyCell.className = 'text-muted';
+                emptyCell.textContent = 'Nessun voto disponibile.';
+                emptyRow.appendChild(emptyCell);
+                summaryBody.appendChild(emptyRow);
+                return;
+            }
+
+            mainCheckboxes.forEach(function (mainCheckbox) {
+                const index = mainCheckbox.dataset.index || '';
+                const row = mainCheckbox.closest('tr');
+                const select = row ? row.querySelector('.voto-select') : null;
+                const selectedOption = select && select.selectedOptions.length ? select.selectedOptions[0] : null;
+                const summaryRow = document.createElement('tr');
+
+                const selectCell = document.createElement('td');
+                const modalCheckbox = document.createElement('input');
+                modalCheckbox.type = 'checkbox';
+                modalCheckbox.className = 'form-check-input save-vote-modal-checkbox';
+                modalCheckbox.dataset.index = index;
+                modalCheckbox.checked = mainCheckbox.checked;
+                modalCheckbox.addEventListener('change', function () {
+                    syncSaveVoteCheckbox(index, modalCheckbox.checked);
+                });
+                selectCell.appendChild(modalCheckbox);
+
+                const studentCell = document.createElement('td');
+                studentCell.textContent = showNames
+                    ? (mainCheckbox.dataset.studentName || 'Nome non disponibile')
+                    : (mainCheckbox.dataset.blindStudent || 'Studente');
+
+                const githubCell = document.createElement('td');
+                githubCell.textContent = showNames
+                    ? (mainCheckbox.dataset.githubName || 'GitHub non disponibile')
+                    : (mainCheckbox.dataset.blindGithub || 'NASCOSTO');
+
+                const gradeCell = document.createElement('td');
+                gradeCell.textContent = selectedOption ? selectedOption.textContent.trim() : '- non importare voto -';
+
+                summaryRow.append(selectCell, studentCell, githubCell, gradeCell);
+                summaryBody.appendChild(summaryRow);
+            });
+        }
+
+        (function () {
+            const showNamesToggle = document.getElementById('review-show-names');
+            const summaryModal = document.getElementById('saveVotesModal');
+            const summaryStatus = document.getElementById('saveVotesModalStatus');
+            const confirmButton = document.getElementById('confirmSaveVotesBtn');
+            const saveForm = document.querySelector('form input[name="action"][value="save_grades"]')?.closest('form');
+
+            document.querySelectorAll('.save-vote-checkbox').forEach(function (checkbox) {
+                checkbox.addEventListener('change', function () {
+                    syncSaveVoteCheckbox(checkbox.dataset.index || '', checkbox.checked);
+                });
+            });
+            document.querySelectorAll('.voto-select').forEach(function (select) {
+                select.addEventListener('change', renderSaveVotesSummary);
+            });
+            document.querySelectorAll('.open-save-votes-modal').forEach(function (button) {
+                button.addEventListener('click', function () {
+                    if (summaryStatus) {
+                        summaryStatus.classList.add('d-none');
+                        summaryStatus.textContent = '';
+                    }
+                    renderSaveVotesSummary();
+                });
+            });
+            if (confirmButton) {
+                confirmButton.addEventListener('click', function () {
+                    const selected = Array.from(document.querySelectorAll('.save-vote-checkbox')).filter(function (checkbox) {
+                        const row = checkbox.closest('tr');
+                        const select = row ? row.querySelector('.voto-select') : null;
+                        return checkbox.checked && select && select.value !== 'skip';
+                    });
+                    if (!selected.length) {
+                        if (summaryStatus) {
+                            summaryStatus.textContent = 'Seleziona almeno un voto con un valore diverso da “- non importare voto -”.';
+                            summaryStatus.classList.remove('d-none');
+                        }
+                        return;
+                    }
+                    if (!saveForm) return;
+                    if (summaryModal && window.bootstrap) {
+                        bootstrap.Modal.getOrCreateInstance(summaryModal).hide();
+                    }
+                    if (typeof saveForm.requestSubmit === 'function') {
+                        saveForm.requestSubmit();
+                    } else {
+                        saveForm.submit();
+                    }
+                });
+            }
+        })();
+
 	    // Toggle "Mostra nomi e repository" (revisione alla cieca)
 	    (function () {
 	        var toggle = document.getElementById("review-show-names");
@@ -2622,7 +2810,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	        document.querySelectorAll(".review-comment").forEach(function (ta) {
 	            ta.addEventListener("input", function () { ta.dataset.touched = "1"; });
 	        });
-	        apply(false);
+	        apply(true);
+	        if (typeof renderSaveVotesSummary === 'function') renderSaveVotesSummary();
 	    })();
 	    </script>
 	</body>
