@@ -203,6 +203,7 @@ if ($selectedTestId !== '' && $selectedSource === '' && $selectedRubricId !== ''
 if ($temporaryRows !== [] && $selectedSource === 'temporary') [$temporaryPayload, $temporarySignature] = encodeGithubRubricTemporaryRows($temporaryRows, $csrfToken);
 $templateSelection = $selectedSource !== '';
 $targetRubricId = $selectedTestId !== '' ? $selectedTestId : ($selectedSource !== '' && str_starts_with($selectedSource, 'db:') ? substr($selectedSource, 3) : '');
+$noRubricForSelectedTest = $selectedTestId !== '' && $selectedSource === '' && $editingRows === [];
 ?>
 <!DOCTYPE html>
 <html lang="it">
@@ -217,23 +218,135 @@ $targetRubricId = $selectedTestId !== '' ? $selectedTestId : ($selectedSource !=
 <?php $pageTitle = '<i class="bi bi-github"></i> Rubriche GitHub'; $pageSubtitle = 'Seleziona un test e carica una rubrica esistente o un template conforme.'; ob_start(); if ($selectedTestId !== ''): ?><a class="btn btn-outline-light btn-sm" href="github_assignment_review.php?test_id=<?= githubRubricH($selectedTestId) ?>"><i class="bi bi-arrow-left"></i> Torna al test</a><?php endif; ?><?php $headerActions = ob_get_clean(); include __DIR__ . '/partials/app_header.php'; ?>
 <div class="container mt-4">
     <?php if ($message !== ''): ?><div class="alert alert-success"><?= githubRubricH($message) ?></div><?php endif; ?><?php if ($error !== ''): ?><div class="alert alert-danger"><?= githubRubricH($error) ?></div><?php endif; ?>
-    <div class="card mb-4"><div class="card-header bg-light d-flex justify-content-between align-items-center gap-2 flex-wrap"><strong>Rubriche esistenti e template disponibili</strong><div class="d-flex gap-2 align-items-center"><a class="btn btn-outline-secondary btn-sm" href="<?= githubRubricH($templateService->defaultTemplateUrl()) ?>" download><i class="bi bi-download"></i> Scarica template</a><button type="submit" form="templateSelectionForm" class="btn btn-primary btn-sm" id="loadTemplateButton" <?= $templateSelection ? '' : 'disabled' ?>><i class="bi bi-arrow-repeat"></i> Carica rubrica da template</button><a class="btn btn-outline-secondary btn-sm" href="github_rubriche.php"><i class="bi bi-x-circle"></i> Reset</a></div></div>
-        <div class="card-body"><form method="POST" id="templateSelectionForm"><input type="hidden" name="action" value="load_template"><input type="hidden" name="_csrf_token" value="<?= githubRubricH($csrfToken) ?>"><input type="hidden" name="test_id" value="<?= githubRubricH($selectedTestId) ?>"><?php if ($temporaryRows !== []): ?><input type="hidden" name="temporary_template_payload" value="<?= githubRubricH($temporaryPayload) ?>"><input type="hidden" name="temporary_template_signature" value="<?= githubRubricH($temporarySignature) ?>"><input type="hidden" name="temporary_template_name" value="<?= githubRubricH($temporaryTemplateName) ?>"><?php endif; ?>
-            <?php if ($rubricheList === [] && $persistentTemplates === [] && $temporaryRows === []): ?><div class="text-muted">Nessuna rubrica o template conforme trovato.</div><?php else: ?><div class="table-responsive"><table class="table table-striped align-middle rubric-list-table mb-0"><thead><tr><th></th><th>Origine</th><th>Nome / id</th><th># indicatori</th><th>Note</th><th class="text-end">Azioni</th></tr></thead><tbody>
-                <?php foreach ($rubricheList as $rubric): $source = 'db:' . $rubric['id_rubrica']; ?><tr><td><input class="form-check-input template-source-radio" type="radio" name="source" value="<?= githubRubricH($source) ?>" <?= $selectedSource === $source ? 'checked' : '' ?>></td><td><span class="badge text-bg-secondary">Database</span></td><td class="font-monospace"><?= githubRubricH($rubric['id_rubrica']) ?></td><td><?= (int)$rubric['count'] ?></td><td class="note-cell text-muted small"><?= githubRubricH($rubric['note']) ?></td><td class="text-end"><form method="POST" class="d-inline" onsubmit="return confirm('Eliminare la rubrica?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="_csrf_token" value="<?= githubRubricH($csrfToken) ?>"><input type="hidden" name="id_rubrica" value="<?= githubRubricH($rubric['id_rubrica']) ?>"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form></td></tr><?php endforeach; ?>
-                <?php foreach ($persistentTemplates as $template): ?><tr class="template-source-file"><td><input class="form-check-input template-source-radio" type="radio" name="source" value="<?= githubRubricH($template['id']) ?>" <?= $selectedSource === $template['id'] ? 'checked' : '' ?>></td><td><span class="badge text-bg-info">Materiale</span></td><td><?= githubRubricH($template['name']) ?></td><td><?= (int)$template['count'] ?></td><td class="note-cell text-muted small">Template Excel conforme</td><td class="text-end"><a class="btn btn-sm btn-outline-secondary" href="<?= githubRubricH(app_url('Materiale/' . rawurlencode($template['file_name']))) ?>" download title="Scarica template"><i class="bi bi-download"></i></a></td></tr><?php endforeach; ?>
-                <?php if ($temporaryRows !== []): ?><tr class="template-source-temporary"><td><input class="form-check-input template-source-radio" type="radio" name="source" value="temporary" <?= $selectedSource === 'temporary' ? 'checked' : '' ?>></td><td><span class="badge text-bg-warning">Temporanea</span></td><td><?= githubRubricH($temporaryTemplateName ?: 'Rubrica personalizzata') ?></td><td><?= count($temporaryRows) ?></td><td class="note-cell text-muted small">Scompare al ricaricamento della pagina</td><td class="text-end">—</td></tr><?php endif; ?>
-            </tbody></table></div><?php endif; ?></form></div>
+    <div class="card mb-4" id="githubTestSelectionPanel">
+        <div class="card-header bg-light"><strong>Selezione Test GitHub</strong></div>
+        <div class="card-body">
+            <form method="GET" id="githubTestSelectionForm" class="row g-2 align-items-end">
+                <div class="col-lg-9">
+                    <label class="form-label" for="selectTest">Test GitHub</label>
+                    <select class="form-select" name="test_id" id="selectTest">
+                        <option value="">-- Seleziona test GitHub --</option>
+                        <?php foreach ($githubTests as $testRow): $tid=(string)($testRow['id_test']??'');$tname=(string)($testRow['nome']??$tid);$tuda=(string)($testRow['id_uda']??''); ?>
+                            <option value="<?= githubRubricH($tid) ?>" <?= $tid === $selectedTestId ? 'selected' : '' ?>><?= githubRubricH($tname) ?> — <?= githubRubricH($tid) ?> — UDA <?= githubRubricH($tuda) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-lg-3">
+                    <button class="btn btn-outline-primary w-100" type="submit"><i class="bi bi-arrow-repeat"></i> Ricarica rubrica associata al test</button>
+                </div>
+            </form>
+        </div>
     </div>
-    <div class="card mb-4"><div class="card-header bg-light"><strong>Selezione Test GitHub</strong></div><div class="card-body"><form method="GET" class="row g-2 align-items-end"><div class="col-lg-8"><label class="form-label" for="selectTest">Test GitHub</label><select class="form-select" name="test_id" id="selectTest"><option value="">-- Seleziona test GitHub --</option><?php foreach ($githubTests as $testRow): $tid=(string)($testRow['id_test']??'');$tname=(string)($testRow['nome']??$tid);$tuda=(string)($testRow['id_uda']??''); ?><option value="<?= githubRubricH($tid) ?>" <?= $tid === $selectedTestId ? 'selected' : '' ?>><?= githubRubricH($tname) ?> — <?= githubRubricH($tid) ?> — UDA <?= githubRubricH($tuda) ?></option><?php endforeach; ?></select><div class="form-text">Il salvataggio della rubrica usa l’id del test selezionato.</div></div><div class="col-lg-4"><button class="btn btn-outline-primary w-100"><i class="bi bi-search"></i> Mostra test</button></div></form></div></div>
+    <?php if ($noRubricForSelectedTest): ?>
+        <div class="alert alert-warning d-flex align-items-start gap-2" role="status">
+            <i class="bi bi-info-circle-fill mt-1"></i>
+            <div>Questo test GitHub non ha ancora una rubrica associata. Seleziona una rubrica disponibile oppure caricane una con il pulsante qui sotto.</div>
+        </div>
+    <?php endif; ?>
+    <div class="card mb-4">
+        <div class="card-header bg-light d-flex justify-content-between align-items-center gap-2 flex-wrap">
+            <strong>Rubriche esistenti e template disponibili</strong>
+            <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#github_rubric_template_modal">
+                <i class="bi bi-upload"></i> Carica Rubrica Personalizzata
+            </button>
+        </div>
+        <div class="card-body">
+            <form method="POST" id="templateSelectionForm">
+                <input type="hidden" name="action" value="load_template">
+                <input type="hidden" name="_csrf_token" value="<?= githubRubricH($csrfToken) ?>">
+                <input type="hidden" name="test_id" value="<?= githubRubricH($selectedTestId) ?>">
+                <?php if ($temporaryRows !== []): ?>
+                    <input type="hidden" name="temporary_template_payload" value="<?= githubRubricH($temporaryPayload) ?>">
+                    <input type="hidden" name="temporary_template_signature" value="<?= githubRubricH($temporarySignature) ?>">
+                    <input type="hidden" name="temporary_template_name" value="<?= githubRubricH($temporaryTemplateName) ?>">
+                <?php endif; ?>
+                <label class="form-label" for="templateSourceSelect">Rubrica o template da caricare nell’editor</label>
+                <select class="form-select mb-3" name="source" id="templateSourceSelect">
+                    <option value="">-- Seleziona una rubrica o un template --</option>
+                    <?php if ($rubricheList !== []): ?>
+                        <optgroup label="Rubriche salvate">
+                            <?php foreach ($rubricheList as $rubric): $source = 'db:' . $rubric['id_rubrica']; ?>
+                                <option value="<?= githubRubricH($source) ?>" <?= $selectedSource === $source ? 'selected' : '' ?>><?= githubRubricH($rubric['id_rubrica']) ?> (<?= (int)$rubric['count'] ?> indicatori)</option>
+                            <?php endforeach; ?>
+                        </optgroup>
+                    <?php endif; ?>
+                    <?php if ($persistentTemplates !== []): ?>
+                        <optgroup label="Template nella cartella Materiale">
+                            <?php foreach ($persistentTemplates as $template): ?>
+                                <option value="<?= githubRubricH($template['id']) ?>" <?= $selectedSource === $template['id'] ? 'selected' : '' ?>><?= githubRubricH($template['name']) ?> (<?= (int)$template['count'] ?> indicatori)</option>
+                            <?php endforeach; ?>
+                        </optgroup>
+                    <?php endif; ?>
+                    <?php if ($temporaryRows !== []): ?>
+                        <optgroup label="Template temporaneo">
+                            <option value="temporary" <?= $selectedSource === 'temporary' ? 'selected' : '' ?>><?= githubRubricH($temporaryTemplateName ?: 'Rubrica personalizzata') ?> (<?= count($temporaryRows) ?> indicatori)</option>
+                        </optgroup>
+                    <?php endif; ?>
+                </select>
+            </form>
+            <?php if ($rubricheList === [] && $persistentTemplates === [] && $temporaryRows === []): ?>
+                <div class="text-muted">Nessuna rubrica o template conforme trovato.</div>
+            <?php else: ?>
+                <div class="table-responsive">
+                    <table class="table table-striped align-middle rubric-list-table mb-0">
+                        <thead><tr><th>Origine</th><th>Nome / id</th><th># indicatori</th><th>Note</th><th class="text-end">Azioni</th></tr></thead>
+                        <tbody>
+                        <?php foreach ($rubricheList as $rubric): ?>
+                            <tr>
+                                <td><span class="badge text-bg-secondary">Database</span></td>
+                                <td class="font-monospace"><?= githubRubricH($rubric['id_rubrica']) ?></td>
+                                <td><?= (int)$rubric['count'] ?></td>
+                                <td class="note-cell text-muted small"><?= githubRubricH($rubric['note']) ?></td>
+                                <td class="text-end">
+                                    <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare la rubrica?')">
+                                        <input type="hidden" name="action" value="delete">
+                                        <input type="hidden" name="_csrf_token" value="<?= githubRubricH($csrfToken) ?>">
+                                        <input type="hidden" name="id_rubrica" value="<?= githubRubricH($rubric['id_rubrica']) ?>">
+                                        <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        <?php foreach ($persistentTemplates as $template): ?>
+                            <tr class="template-source-file">
+                                <td><span class="badge text-bg-info">Materiale</span></td>
+                                <td><?= githubRubricH($template['name']) ?></td>
+                                <td><?= (int)$template['count'] ?></td>
+                                <td class="note-cell text-muted small">Template Excel conforme</td>
+                                <td class="text-end">—</td>
+                            </tr>
+                        <?php endforeach; ?>
+                        <?php if ($temporaryRows !== []): ?>
+                            <tr class="template-source-temporary">
+                                <td><span class="badge text-bg-warning">Temporanea</span></td>
+                                <td><?= githubRubricH($temporaryTemplateName ?: 'Rubrica personalizzata') ?></td>
+                                <td><?= count($temporaryRows) ?></td>
+                                <td class="note-cell text-muted small">Scompare al ricaricamento della pagina</td>
+                                <td class="text-end">—</td>
+                            </tr>
+                        <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+        </div>
+    </div>
     <div class="card mb-4"><div class="card-header bg-light"><strong>Editor rubrica</strong><?php if ($selectedSource !== ''): ?><span class="text-muted small ms-2">Sorgente: <?= githubRubricH($selectedSource) ?></span><?php endif; ?></div><div class="card-body">
-        <?php if ($editingRows === []): ?><div class="text-muted">Seleziona una rubrica o un template e premi “Carica rubrica da template”.</div><?php else: ?><?php if ($targetRubricId === '' && !str_starts_with($selectedSource, 'db:')): ?><div class="alert alert-warning py-2">Seleziona un Test GitHub per poter salvare questa rubrica.</div><?php endif; ?><form method="POST"><input type="hidden" name="action" value="save"><input type="hidden" name="_csrf_token" value="<?= githubRubricH($csrfToken) ?>"><input type="hidden" name="test_id" value="<?= githubRubricH($selectedTestId) ?>"><input type="hidden" name="id_rubrica" value="<?= githubRubricH($targetRubricId) ?>"><input type="hidden" name="source" value="<?= githubRubricH($selectedSource) ?>"><?php if ($temporaryRows !== [] && $selectedSource === 'temporary'): ?><input type="hidden" name="temporary_template_payload" value="<?= githubRubricH($temporaryPayload) ?>"><input type="hidden" name="temporary_template_signature" value="<?= githubRubricH($temporarySignature) ?>"><input type="hidden" name="temporary_template_name" value="<?= githubRubricH($temporaryTemplateName) ?>"><?php endif; ?><div class="table-responsive"><table class="table table-striped align-top rubric-editor-table"><thead><tr><th style="width:180px">Indicatore</th><th style="width:220px">Descrizione</th><th class="level-col">Livello 1</th><th class="level-col">Livello 2</th><th class="level-col">Livello 3</th><th class="level-col">Livello 4</th><th class="level5-col">Livello 5</th><th style="width:80px">Peso</th><th style="width:80px">Ordine</th><th style="width:140px">Pubblicato</th><th style="width:220px">Note</th><th style="width:180px">Annotazione CV</th><th style="width:180px">Data pubbl.</th><th style="width:60px"></th></tr></thead><tbody id="rowsBody">
+        <?php if ($editingRows === []): ?><div class="text-muted">Seleziona una rubrica o un template dal pannello superiore per caricarlo nell’editor.</div><?php else: ?><?php if ($targetRubricId === '' && !str_starts_with($selectedSource, 'db:')): ?><div class="alert alert-warning py-2">Seleziona un Test GitHub per poter salvare questa rubrica.</div><?php endif; ?><form method="POST"><input type="hidden" name="action" value="save"><input type="hidden" name="_csrf_token" value="<?= githubRubricH($csrfToken) ?>"><input type="hidden" name="test_id" value="<?= githubRubricH($selectedTestId) ?>"><input type="hidden" name="id_rubrica" value="<?= githubRubricH($targetRubricId) ?>"><input type="hidden" name="source" value="<?= githubRubricH($selectedSource) ?>"><?php if ($temporaryRows !== [] && $selectedSource === 'temporary'): ?><input type="hidden" name="temporary_template_payload" value="<?= githubRubricH($temporaryPayload) ?>"><input type="hidden" name="temporary_template_signature" value="<?= githubRubricH($temporarySignature) ?>"><input type="hidden" name="temporary_template_name" value="<?= githubRubricH($temporaryTemplateName) ?>"><?php endif; ?><div class="table-responsive"><table class="table table-striped align-top rubric-editor-table"><thead><tr><th style="width:180px">Indicatore</th><th style="width:220px">Descrizione</th><th class="level-col">Livello 1</th><th class="level-col">Livello 2</th><th class="level-col">Livello 3</th><th class="level-col">Livello 4</th><th class="level5-col">Livello 5</th><th style="width:80px">Peso</th><th style="width:80px">Ordine</th><th style="width:140px">Pubblicato</th><th style="width:220px">Note</th><th style="width:180px">Annotazione CV</th><th style="width:180px">Data pubbl.</th><th style="width:60px"></th></tr></thead><tbody id="rowsBody">
             <?php foreach (array_values($editingRows) as $index => $row): ?><tr><td><textarea class="form-control indicatore-text" name="rows[<?= $index ?>][nome_indicatore]"><?= githubRubricH($row['nome_indicatore']??'') ?></textarea></td><td><textarea class="form-control" name="rows[<?= $index ?>][descrizione]"><?= githubRubricH($row['descrizione']??'') ?></textarea></td><td class="level-col"><textarea class="form-control" name="rows[<?= $index ?>][livello_1_desc]"><?= githubRubricH($row['livello_1_desc']??'') ?></textarea></td><td class="level-col"><textarea class="form-control" name="rows[<?= $index ?>][livello_2_desc]"><?= githubRubricH($row['livello_2_desc']??'') ?></textarea></td><td class="level-col"><textarea class="form-control" name="rows[<?= $index ?>][livello_3_desc]"><?= githubRubricH($row['livello_3_desc']??'') ?></textarea></td><td class="level-col"><textarea class="form-control" name="rows[<?= $index ?>][livello_4_desc]"><?= githubRubricH($row['livello_4_desc']??'') ?></textarea></td><td class="level5-col"><textarea class="form-control" name="rows[<?= $index ?>][livello_5_desc]"><?= githubRubricH($row['livello_5_desc']??'') ?></textarea></td><td><input class="form-control form-control-sm" name="rows[<?= $index ?>][peso]" value="<?= githubRubricH($row['peso']??'1') ?>"></td><td><input class="form-control form-control-sm" name="rows[<?= $index ?>][ordine]" value="<?= githubRubricH($row['ordine']??(string)($index+1)) ?>"></td><td><select class="form-select form-select-sm" name="rows[<?= $index ?>][pubblicato]"><option value="0" selected>0</option><option value="1" <?= ((string)($row['pubblicato']??'0')==='1')?'selected':'' ?>>1</option></select></td><td><input class="form-control form-control-sm" name="rows[<?= $index ?>][note]" value="<?= githubRubricH($row['note']??'github_rubric') ?>"></td><td><input class="form-control form-control-sm" name="rows[<?= $index ?>][id_annotazione_cv]" value="<?= githubRubricH($row['id_annotazione_cv']??'') ?>"></td><td><input class="form-control form-control-sm" name="rows[<?= $index ?>][data_pubblicazione]" value="<?= githubRubricH($row['data_pubblicazione']??'') ?>"></td><td class="text-end"><button type="button" class="btn btn-sm btn-outline-danger remove-row"><i class="bi bi-x-lg"></i></button></td></tr><?php endforeach; ?>
         </tbody></table></div><div class="d-flex gap-2"><button type="button" class="btn btn-outline-primary" id="addRowBtn"><i class="bi bi-plus-lg"></i> Aggiungi indicatore</button><button type="submit" class="btn btn-success" <?= $targetRubricId === '' ? 'disabled' : '' ?>><i class="bi bi-save"></i> Salva rubrica</button></div></form><?php endif; ?></div></div>
-    <div class="card mb-5"><div class="card-header bg-light"><strong>Carica Rubrica Personalizzata</strong></div><div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-3"><span class="text-muted">Importa un file Excel o un Google Sheet conforme al template. Il file viene usato solo temporaneamente.</span><button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#github_rubric_template_modal"><i class="bi bi-upload"></i> Scegli file o Google Sheet</button></div></div>
 </div>
 <div class="modal fade" id="github_rubric_template_modal" tabindex="-1" aria-labelledby="githubRubricTemplateModalLabel" aria-hidden="true"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="githubRubricTemplateModalLabel">Carica Rubrica Personalizzata</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div><form method="POST" enctype="multipart/form-data"><div class="modal-body"><input type="hidden" name="action" value="load_custom_template"><input type="hidden" name="_csrf_token" value="<?= githubRubricH($csrfToken) ?>"><input type="hidden" name="test_id" value="<?= githubRubricH($selectedTestId) ?>"><div class="mb-3"><label class="form-label" for="rubrica_sheet_url">Link Google Sheet</label><input class="form-control" type="url" id="rubrica_sheet_url" name="rubrica_sheet_url" placeholder="https://docs.google.com/spreadsheets/d/..."><div class="form-text">In alternativa al file Excel.</div></div><div class="text-center text-muted small mb-3">oppure</div><div class="mb-3"><label class="form-label" for="rubrica_file">File Excel (.xlsx)</label><input class="form-control" type="file" id="rubrica_file" name="rubrica_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></div><div class="small text-muted">Il formato viene verificato prima dell’uso. <a href="<?= githubRubricH($templateService->defaultTemplateUrl()) ?>" download>Scarica il template vuoto</a>.</div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button><button type="submit" class="btn btn-primary"><i class="bi bi-check2"></i> Valida e carica</button></div></form></div></div></div>
 <template id="rowTemplate"><tr><td><textarea class="form-control indicatore-text" name=""></textarea></td><td><textarea class="form-control" name=""></textarea></td><td class="level-col"><textarea class="form-control" name=""></textarea></td><td class="level-col"><textarea class="form-control" name=""></textarea></td><td class="level-col"><textarea class="form-control" name=""></textarea></td><td class="level-col"><textarea class="form-control" name=""></textarea></td><td class="level5-col"><textarea class="form-control" name=""></textarea></td><td><input class="form-control form-control-sm" name="" value="1"></td><td><input class="form-control form-control-sm" name="" value=""></td><td><select class="form-select form-select-sm" name=""><option value="0" selected>0</option><option value="1">1</option></select></td><td><input class="form-control form-control-sm" name="" value="github_rubric"></td><td><input class="form-control form-control-sm" name="" value=""></td><td><input class="form-control form-control-sm" name="" value=""></td><td class="text-end"><button type="button" class="btn btn-sm btn-outline-danger remove-row"><i class="bi bi-x-lg"></i></button></td></tr></template>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script><script>
 (()=>{const fields=['nome_indicatore','descrizione','livello_1_desc','livello_2_desc','livello_3_desc','livello_4_desc','livello_5_desc','peso','ordine','pubblicato','note','id_annotazione_cv','data_pubblicazione'];const form=document.getElementById('templateSelectionForm'),load=document.getElementById('loadTemplateButton');const refresh=()=>{if(form&&load)load.disabled=!form.querySelector('input[name="source"]:checked')};document.querySelectorAll('.template-source-radio').forEach(r=>r.addEventListener('change',refresh));refresh();const reindex=()=>{const body=document.getElementById('rowsBody');if(!body)return;body.querySelectorAll('tr').forEach((tr,i)=>tr.querySelectorAll('input,textarea,select').forEach((el,j)=>{if(fields[j]){el.name=`rows[${i}][${fields[j]}]`;if(fields[j]==='ordine'&&!el.value)el.value=String(i+1)}}))};const add=document.getElementById('addRowBtn');if(add)add.addEventListener('click',()=>{const t=document.getElementById('rowTemplate'),b=document.getElementById('rowsBody');if(t&&b){b.appendChild(t.content.cloneNode(true));reindex()}});const body=document.getElementById('rowsBody');if(body){body.addEventListener('click',e=>{const b=e.target.closest('.remove-row');if(b){b.closest('tr')?.remove();reindex()}});reindex()}})();
+</script><script>
+(() => {
+    const testForm = document.getElementById('githubTestSelectionForm');
+    const testSelect = document.getElementById('selectTest');
+    if (testForm && testSelect) testSelect.addEventListener('change', () => testForm.submit());
+    const sourceForm = document.getElementById('templateSelectionForm');
+    const sourceSelect = document.getElementById('templateSourceSelect');
+    if (sourceForm && sourceSelect) sourceSelect.addEventListener('change', () => sourceForm.submit());
+})();
 </script></body></html>

@@ -18,7 +18,9 @@ $require = static function (bool $condition, string $message) use (&$failures): 
 
 $require(is_file($templatePath), 'template Excel GitHub default assente');
 $require(str_contains($rubricPage, 'GitHubRubricTemplateService'), 'pagina senza servizio template');
-$require(str_contains($rubricPage, 'Carica rubrica da template'), 'etichetta pulsante template assente');
+$require(str_contains($rubricPage, 'Ricarica rubrica associata al test'), 'etichetta ricarica test assente');
+$require(str_contains($rubricPage, 'githubTestSelectionForm') && str_contains($rubricPage, 'selectTest'), 'selettore test GitHub assente');
+$require(str_contains($rubricPage, 'templateSourceSelect'), 'optionbox rubriche assente');
 $require(!str_contains($rubricPage, 'Carica Rubrica di default'), 'vecchia etichetta rubrica default ancora presente');
 $require(!str_contains($reviewPage, 'ghDefaultGitRubricDefinition'), 'fallback hardcoded ancora presente nella review');
 $service = file_get_contents($root . '/src/Core/GitHubRubricTemplateService.php');
