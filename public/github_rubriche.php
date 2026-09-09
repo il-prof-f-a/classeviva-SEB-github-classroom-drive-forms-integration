@@ -294,7 +294,11 @@ $noRubricForSelectedTest = $selectedTestId !== '' && $selectedSource === '' && $
                                 <td><?= githubRubricH($template['name']) ?></td>
                                 <td><?= (int)$template['count'] ?></td>
                                 <td class="note-cell text-muted small">Template Excel conforme</td>
-                                <td class="text-end">—</td>
+                                <td class="text-end">
+                                    <a class="btn btn-sm btn-outline-primary" href="<?= githubRubricH(app_url('Materiale/' . rawurlencode((string)$template['file_name']))) ?>" download title="Scarica il template Excel conforme">
+                                        <i class="bi bi-download"></i> Scarica
+                                    </a>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                         <?php if ($temporaryRows !== []): ?>

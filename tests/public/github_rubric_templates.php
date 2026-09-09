@@ -30,6 +30,7 @@ $require(str_contains($rubricPage, 'Ricarica rubrica associata al test'), 'pulsa
 $require(str_contains($rubricPage, "testSelect.addEventListener('change'"), 'selezione test non ricarica automaticamente la pagina');
 $require(str_contains($rubricPage, 'sourceRadios.forEach'), 'selezione optionbox non carica automaticamente l’editor');
 $require(str_contains($rubricPage, 'sourceForm.submit()'), 'selezione optionbox non invia il caricamento dell’editor');
+$require(str_contains($rubricPage, 'bi-download') && str_contains($rubricPage, 'Scarica il template Excel conforme'), 'download del template Excel Materiale assente');
 $require(str_contains($rubricPage, 'Questo test GitHub non ha ancora una rubrica associata'), 'banner test senza rubrica assente');
 $require(!str_contains($rubricPage, 'id="loadTemplateButton"'), 'vecchio pulsante caricamento ancora presente');
 $require(str_contains($rubricPage, 'Carica Rubrica Personalizzata'), 'pulsante upload personalizzato assente');
