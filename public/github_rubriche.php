@@ -1,542 +1,239 @@
 <?php
-/**
- * Pagina unica: gestione + editing rubriche GitHub (tabella RUBRICA).
- *
- * - Mostra elenco rubriche esistenti (distinct id_rubrica)
- * - Permette di selezionare: Test GitHub / id_rubrica / UDA dai valori presenti nel DB
- * - Permette di creare/modificare la rubrica (una riga per indicatore)
- *
- * Convenzione GitHub: per rubrica "per assegnazione" usa id_rubrica = TEST.id_test.
- */
+
+declare(strict_types=1);
+
+/** Gestione, selezione e modifica delle rubriche di valutazione GitHub. */
 
 require_once '../bootstrap.php';
 
-use App\Core\Database\DatabaseFactory;
-
-$dbAdapter = DatabaseFactory::createWithInitialization($config, true);
-
-function defaultGitHubRubricRows(string $rubricId, string $idUda): array
-{
-    $defs = [
-        [
-            'nome' => 'Progressione e scomposizione del lavoro',
-            'descr' => 'Valuta se lo sviluppo è organizzato in passaggi significativi e riconoscibili. Il numero di commit non è un obiettivo in sé: contano distribuzione, granularità e significatività.',
-            'l1' => 'La cronologia è dominata da uno o pochi caricamenti finali o da commit molto ampi; non emergono passaggi intermedi riconoscibili.',
-            'l2' => 'Sono presenti alcuni passaggi intermedi, ma lo sviluppo è irregolare o la scomposizione del lavoro è solo parziale.',
-            'l3' => 'I commit corrispondono generalmente a step logici e permettono di riconoscere una progressione del lavoro.',
-            'l4' => 'Lo sviluppo è articolato in micro-obiettivi coerenti; la cronologia mostra una progressione chiara, intenzionale e proporzionata alla complessità del progetto.',
-            'peso' => '25',
-        ],
-        [
-            'nome' => 'Verifica tecnica degli avanzamenti',
-            'descr' => 'Valuta la capacità di controllare che uno step sia verificabile rispetto all’obiettivo dichiarato.',
-            'l1' => 'Numerosi checkpoint risultano non compilabili/non eseguibili o incoerenti con l’obiettivo dichiarato, senza spiegazione.',
-            'l2' => 'La verifica è discontinua; alcuni avanzamenti sono instabili o incompleti e solo in parte documentati.',
-            'l3' => 'Gli avanzamenti sono generalmente compilabili/eseguibili e vengono effettuati controlli essenziali; eventuali problemi sono riconoscibili.',
-            'l4' => 'Ogni checkpoint significativo è verificabile rispetto all’obiettivo dichiarato; test o modalità di verifica sono documentati e gli eventuali stati WIP sono isolati e motivati.',
-            'peso' => '20',
-        ],
-        [
-            'nome' => 'Organizzazione dello sviluppo',
-            'descr' => 'Valuta la capacità di separare funzionalità, fix o fasi di lavoro quando la complessità del progetto lo richiede. Indicatore da escludere se i branch non sono richiesti dalla consegna.',
-            'l1' => 'Quando richiesto, tutto lo sviluppo avviene su main/master con modifiche eterogenee e difficili da isolare.',
-            'l2' => 'I branch sono usati in modo occasionale, poco coerente o con nomi poco significativi.',
-            'l3' => 'I branch separano le principali funzionalità/fasi e sono generalmente ben gestiti.',
-            'l4' => 'Branch e relativa integrazione rispecchiano chiaramente la scomposizione del progetto; nomi, finalità e ciclo di vita risultano coerenti e leggibili.',
-            'peso' => '15',
-        ],
-        [
-            'nome' => 'Documentazione e motivazione delle scelte',
-            'descr' => 'Valuta se i messaggi di commit rendono comprensibile problema, scelta effettuata, soluzione e verifica.',
-            'l1' => 'Messaggi vaghi o puramente descrittivi (fix, modifica, aggiornamento), che non permettono di comprendere il lavoro svolto.',
-            'l2' => 'Il messaggio descrive cosa è stato fatto, ma chiarisce poco il problema, la motivazione o la verifica.',
-            'l3' => 'Titolo e descrizione rendono comprensibili problema e soluzione, con un livello tecnico adeguato.',
-            'l4' => 'Il commit funziona come breve diario tecnico: problema/domanda, soluzione, verifica, eventuali rischi/limiti e fonti utilizzate, compreso l’eventuale supporto di strumenti di IA quando rilevante.',
-            'peso' => '20',
-        ],
-        [
-            'nome' => 'Integrazione e collaborazione',
-            'descr' => 'Valuta l’affidabilità nel contribuire a un flusso di lavoro condiviso. Indicatore da escludere nelle attività individuali se push/merge non hanno funzione collaborativa.',
-            'l1' => 'Push o merge compromettono frequentemente branch condivisi; integrazioni premature o conflitti sono gestiti senza attenzione al lavoro altrui.',
-            'l2' => 'Il flusso condiviso è rispettato solo in parte; push e merge sono talvolta disordinati o poco coordinati.',
-            'l3' => 'Push e merge avvengono generalmente su modifiche verificate e con una separazione sufficientemente chiara delle attività.',
-            'l4' => 'Lo studente integra in modo consapevole e riproducibile: protegge i branch condivisi, gestisce correttamente conflitti e merge e, quando previsto, usa PR/review/issue in modo funzionale alla collaborazione.',
-            'peso' => '15',
-        ],
-        [
-            'nome' => 'Revisione e tracciabilità del processo',
-            'descr' => 'Valuta se la cronologia permette di ricostruire non solo cosa è stato prodotto, ma come la soluzione è stata corretta, raffinata e migliorata.',
-            'l1' => 'La cronologia è confusa o non consente di ricostruire il percorso; correzioni e cambiamenti appaiono opachi.',
-            'l2' => 'Il percorso è ricostruibile solo in parte; le correzioni sono visibili ma raramente motivate o collegate ai problemi incontrati.',
-            'l3' => 'La cronologia è chiara e permette di comprendere le principali revisioni, correzioni e miglioramenti.',
-            'l4' => 'La storia del repository racconta il processo passo-passo: problema/errore → analisi → revisione → verifica. Le modifiche successive mostrano capacità di apprendere dagli errori e migliorare consapevolmente la soluzione.',
-            'peso' => '20',
-        ],
-    ];
-
-    $rows = [];
-    foreach ($defs as $idx => $d) {
-        $rows[] = [
-            'id_rubrica' => $rubricId,
-            'id_uda' => $idUda,
-            'nome_indicatore' => $d['nome'],
-            'descrizione' => $d['descr'],
-            'livello_1_desc' => $d['l1'],
-            'livello_2_desc' => $d['l2'],
-            'livello_3_desc' => $d['l3'],
-            'livello_4_desc' => $d['l4'],
-            'livello_5_desc' => '',
-            'peso' => $d['peso'],
-            'ordine' => (string)($idx + 1),
-            'note' => 'github_rubric',
-            'pubblicato' => '0',
-            'data_pubblicazione' => '',
-            'id_annotazione_cv' => ''
-        ];
-    }
-    return $rows;
+if (PHP_SAPI !== 'cli') {
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
 }
 
-function distinctRubriche(array $allRows): array
+use App\Core\Database\DatabaseFactory;
+use App\Core\GitHubRubricTemplateService;
+use App\Core\Security\Csrf;
+use App\Integration\GoogleDriveAPI;
+
+$dbAdapter = DatabaseFactory::createWithInitialization($config, true);
+$templateService = new GitHubRubricTemplateService();
+$csrfToken = Csrf::token($_SESSION);
+
+function githubRubricH(mixed $value): string
+{
+    return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
+
+function distinctGithubRubriche(array $allRows, array $githubTestIdSet): array
 {
     $rubriche = [];
-    foreach ($allRows as $r) {
-        $id = (string)($r['id_rubrica'] ?? '');
+    foreach ($allRows as $row) {
+        $id = trim((string)($row['id_rubrica'] ?? ''));
         if ($id === '') continue;
+        $note = trim((string)($row['note'] ?? ''));
+        if (!isset($githubTestIdSet[$id]) && $note !== 'github_rubric') continue;
         if (!isset($rubriche[$id])) {
             $rubriche[$id] = [
                 'id_rubrica' => $id,
-                'id_uda' => (string)($r['id_uda'] ?? ''),
+                'id_uda' => (string)($row['id_uda'] ?? ''),
                 'count' => 0,
-                'note' => (string)($r['note'] ?? '')
+                'note' => $note !== '' ? $note : 'github_rubric',
             ];
         }
         $rubriche[$id]['count']++;
     }
-    ksort($rubriche);
+    ksort($rubriche, SORT_NATURAL | SORT_FLAG_CASE);
     return array_values($rubriche);
 }
 
-$message = '';
-$error = '';
+function githubRubricBase64UrlEncode(string $value): string
+{
+    return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+}
 
+function githubRubricBase64UrlDecode(string $value): ?string
+{
+    if ($value === '' || !preg_match('/^[A-Za-z0-9_-]+$/', $value)) return null;
+    $decoded = base64_decode(strtr($value, '-_', '+/') . str_repeat('=', (4 - strlen($value) % 4) % 4), true);
+    return $decoded === false ? null : $decoded;
+}
+
+/** @param list<array<string,string>> $rows */
+function encodeGithubRubricTemporaryRows(array $rows, string $csrfToken): array
+{
+    $payload = githubRubricBase64UrlEncode((string)json_encode($rows, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+    return [$payload, hash_hmac('sha256', $payload, $csrfToken)];
+}
+
+/** @return list<array<string,string>> */
+function decodeGithubRubricTemporaryRows(mixed $payload, mixed $signature, string $csrfToken, GitHubRubricTemplateService $service): array
+{
+    if (!is_string($payload) || !is_string($signature) || $payload === '' || !hash_equals(hash_hmac('sha256', $payload, $csrfToken), $signature)) {
+        throw new RuntimeException('Template temporaneo non valido o scaduto.');
+    }
+    $decoded = githubRubricBase64UrlDecode($payload);
+    if ($decoded === null) throw new RuntimeException('Template temporaneo non leggibile.');
+    try {
+        $rows = json_decode($decoded, true, 32, JSON_THROW_ON_ERROR);
+    } catch (Throwable $exception) {
+        throw new RuntimeException('Template temporaneo non leggibile.', 0, $exception);
+    }
+    return $service->validateRows($rows);
+}
+
+$message = trim((string)($_GET['saved'] ?? '')) !== '' ? 'Rubrica salvata.' : '';
+$error = '';
 $selectedTestId = trim((string)($_GET['test_id'] ?? $_POST['test_id'] ?? ''));
 $selectedRubricId = trim((string)($_GET['id_rubrica'] ?? $_POST['id_rubrica'] ?? ''));
+$selectedSource = trim((string)($_GET['source'] ?? $_POST['source'] ?? ''));
 $selectedUdaId = '';
+$selectedTest = null;
+$editingRows = [];
+$temporaryRows = [];
+$temporaryTemplateName = trim((string)($_POST['temporary_template_name'] ?? ''));
+$temporaryPayload = trim((string)($_POST['temporary_template_payload'] ?? ''));
+$temporarySignature = trim((string)($_POST['temporary_template_signature'] ?? ''));
 
-$test = null;
 if ($selectedTestId !== '') {
-    $test = $dbAdapter->findOne('TEST', 'id_test', $selectedTestId);
-    if ($test) {
-        $selectedUdaId = (string)($test['id_uda'] ?? '');
-        $selectedRubricId = $selectedTestId; // convenzione GitHub
+    $selectedTest = $dbAdapter->findOne('TEST', 'id_test', $selectedTestId);
+    if ($selectedTest) {
+        $selectedUdaId = (string)($selectedTest['id_uda'] ?? '');
+        if ($selectedRubricId === '') $selectedRubricId = $selectedTestId;
     }
 }
 if ($selectedTestId === '' && $selectedRubricId !== '') {
-    $candidateTest = $dbAdapter->findOne('TEST', 'id_test', $selectedRubricId);
-    if ($candidateTest && strtolower((string)($candidateTest['piattaforma'] ?? '')) === 'github') {
+    $candidate = $dbAdapter->findOne('TEST', 'id_test', $selectedRubricId);
+    if ($candidate && strtolower((string)($candidate['piattaforma'] ?? '')) === 'github') {
         $selectedTestId = $selectedRubricId;
-        $test = $candidateTest;
-        $selectedUdaId = (string)($candidateTest['id_uda'] ?? '');
+        $selectedTest = $candidate;
+        $selectedUdaId = (string)($candidate['id_uda'] ?? '');
     }
 }
 
-$action = (string)($_POST['action'] ?? '');
-
+$action = trim((string)($_POST['action'] ?? ''));
 try {
-    if ($action === 'delete' && !empty($_POST['id_rubrica'])) {
-        $idRubrica = (string)$_POST['id_rubrica'];
-        $existing = $dbAdapter->findWhere('RUBRICA', ['id_rubrica' => $idRubrica]);
-        if (empty($existing)) {
-            $error = 'Rubrica non trovata.';
-        } else {
-            $dbAdapter->deleteRow('RUBRICA', $idRubrica, 'id_rubrica');
-            $message = 'Rubrica eliminata.';
-            if ($selectedRubricId === $idRubrica) {
-                $selectedRubricId = '';
-                $selectedTestId = '';
-            }
+    if ($action !== '') Csrf::assertValid($_SESSION, Csrf::providedToken($_POST, $_SERVER));
+
+    if ($action === 'delete') {
+        $idRubrica = trim((string)($_POST['id_rubrica'] ?? ''));
+        if ($idRubrica === '') throw new RuntimeException('Rubrica non specificata.');
+        if ($dbAdapter->findWhere('RUBRICA', ['id_rubrica' => $idRubrica]) === []) throw new RuntimeException('Rubrica non trovata.');
+        $dbAdapter->deleteRow('RUBRICA', $idRubrica, 'id_rubrica');
+        $message = 'Rubrica eliminata.';
+        if ($selectedRubricId === $idRubrica) { $selectedRubricId = ''; $selectedSource = ''; $editingRows = []; }
+    }
+
+    if ($action === 'load_template') {
+        $selectedSource = trim((string)($_POST['source'] ?? ''));
+        if ($selectedSource === '') throw new RuntimeException('Seleziona una rubrica o un template.');
+    }
+
+    if ($action === 'load_custom_template') {
+        $sheetUrl = trim((string)($_POST['rubrica_sheet_url'] ?? ''));
+        $temporaryPath = null;
+        $temporaryOriginalName = null;
+        try {
+            if ($sheetUrl !== '') {
+                $driveFileId = null;
+                if (preg_match('~/d/([a-zA-Z0-9_-]+)~', $sheetUrl, $match)) $driveFileId = $match[1];
+                else {
+                    $parts = parse_url($sheetUrl);
+                    if (is_array($parts) && !empty($parts['query'])) { parse_str($parts['query'], $query); $driveFileId = isset($query['id']) ? trim((string)$query['id']) : null; }
+                }
+                if (!$driveFileId || !preg_match('/^[a-zA-Z0-9_-]{10,}$/', $driveFileId)) throw new RuntimeException('Link Google Sheet non valido.');
+                $temporaryPath = tempnam(sys_get_temp_dir(), 'github-rubric-');
+                if ($temporaryPath === false) throw new RuntimeException('Impossibile creare il file temporaneo.');
+                $temporaryXlsxPath = $temporaryPath . '.xlsx';
+                @rename($temporaryPath, $temporaryXlsxPath);
+                $temporaryPath = $temporaryXlsxPath;
+                $meta = (new GoogleDriveAPI($config))->downloadFileAsXlsx($driveFileId, $temporaryPath);
+                $allowedMime = ['application/vnd.google-apps.spreadsheet', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'];
+                if (!in_array((string)($meta['mimeType'] ?? ''), $allowedMime, true)) throw new RuntimeException('Il file Google non è un foglio Excel compatibile.');
+                $temporaryOriginalName = 'Rubrica GitHub Google Sheet.xlsx';
+            } elseif (isset($_FILES['rubrica_file']) && (int)($_FILES['rubrica_file']['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK) {
+                $temporaryPath = (string)($_FILES['rubrica_file']['tmp_name'] ?? '');
+                $temporaryOriginalName = (string)($_FILES['rubrica_file']['name'] ?? 'rubrica.xlsx');
+                if (!is_file($temporaryPath)) throw new RuntimeException('Upload non leggibile.');
+            } else throw new RuntimeException('Seleziona un file Excel oppure inserisci un link Google Sheet.');
+
+            $temporaryRows = $templateService->parseFile((string)$temporaryPath, '', '', $temporaryOriginalName);
+            $temporaryTemplateName = $temporaryOriginalName ?: 'Rubrica GitHub temporanea';
+            [$temporaryPayload, $temporarySignature] = encodeGithubRubricTemporaryRows($temporaryRows, $csrfToken);
+            $selectedSource = 'temporary';
+            $message = 'Template personalizzato validato e caricato temporaneamente.';
+        } finally {
+            if ($temporaryPath !== null && is_file($temporaryPath)) @unlink($temporaryPath);
         }
     }
 
     if ($action === 'save') {
-        if ($selectedRubricId === '') {
-            throw new Exception('Seleziona prima un Test GitHub o una rubrica.');
-        }
-
-        $rows = $_POST['rows'] ?? [];
-        if (!is_array($rows)) {
-            throw new Exception('Dati righe non validi');
-        }
-
-        $toInsert = [];
-        foreach ($rows as $row) {
-            if (!is_array($row)) continue;
-            $nome = trim((string)($row['nome_indicatore'] ?? ''));
-            if ($nome === '') continue;
-
-            $toInsert[] = [
-                'id_rubrica' => $selectedRubricId,
-                'id_uda' => $selectedUdaId,
-                'nome_indicatore' => $nome,
-                'descrizione' => trim((string)($row['descrizione'] ?? '')),
-                'livello_1_desc' => trim((string)($row['livello_1_desc'] ?? '')),
-                'livello_2_desc' => trim((string)($row['livello_2_desc'] ?? '')),
-                'livello_3_desc' => trim((string)($row['livello_3_desc'] ?? '')),
-                'livello_4_desc' => trim((string)($row['livello_4_desc'] ?? '')),
-                'livello_5_desc' => trim((string)($row['livello_5_desc'] ?? '')),
-                'peso' => (string)($row['peso'] ?? '1'),
-                'ordine' => (string)($row['ordine'] ?? ''),
-                'note' => (string)($row['note'] ?? 'github_rubric'),
-                'pubblicato' => (string)($row['pubblicato'] ?? '0'),
-                'data_pubblicazione' => (string)($row['data_pubblicazione'] ?? ''),
-                'id_annotazione_cv' => (string)($row['id_annotazione_cv'] ?? '')
-            ];
-        }
-
-        if (empty($toInsert)) {
-            throw new Exception('Nessun indicatore valido da salvare');
-        }
-
-        // Sostituisci tutte le righe della rubrica
-        $dbAdapter->deleteRow('RUBRICA', $selectedRubricId, 'id_rubrica');
-        foreach ($toInsert as $r) {
-            $dbAdapter->insertRow('RUBRICA', $r);
-        }
-
-        header('Location: github_rubriche.php?test_id=' . urlencode($selectedTestId) . '&id_rubrica=' . urlencode($selectedRubricId) . '&saved=1');
+        $targetRubricId = $selectedTestId !== '' ? $selectedTestId : ($selectedSource !== '' && str_starts_with($selectedSource, 'db:') ? substr($selectedSource, 3) : $selectedRubricId);
+        if ($targetRubricId === '') throw new RuntimeException('Seleziona un Test GitHub prima di salvare la rubrica.');
+        $toInsert = $templateService->validateRows($_POST['rows'] ?? [], $targetRubricId, $selectedUdaId);
+        $dbAdapter->deleteRow('RUBRICA', $targetRubricId, 'id_rubrica');
+        foreach ($toInsert as $row) $dbAdapter->insertRow('RUBRICA', $row);
+        header('Location: github_rubriche.php?test_id=' . urlencode($selectedTestId ?: $targetRubricId) . '&id_rubrica=' . urlencode($targetRubricId) . '&source=db:' . urlencode($targetRubricId) . '&saved=1');
         exit;
     }
-} catch (Exception $e) {
-    $error = $e->getMessage();
-}
+} catch (Throwable $exception) { $error = $exception->getMessage(); }
 
-if (!empty($_GET['saved'])) {
-    $message = 'Rubrica salvata.';
-}
-
-// Liste da DB (selezionabili)
 $allTests = $dbAdapter->findAll('TEST');
-$githubTests = array_values(array_filter($allTests, function ($t) {
-    return strtolower((string)($t['piattaforma'] ?? '')) === 'github';
-}));
-usort($githubTests, function ($a, $b) {
-    return strcmp((string)($a['nome'] ?? ''), (string)($b['nome'] ?? ''));
-});
-
-$rubricaAllRows = $dbAdapter->findAll('RUBRICA');
-$rubricheListAll = distinctRubriche($rubricaAllRows);
+$githubTests = array_values(array_filter($allTests, static fn(array $test): bool => strtolower((string)($test['piattaforma'] ?? '')) === 'github'));
+usort($githubTests, static fn(array $a, array $b): int => strcmp((string)($a['nome'] ?? ''), (string)($b['nome'] ?? '')));
 $githubTestIdSet = [];
-foreach ($githubTests as $t) {
-    $tid = (string)($t['id_test'] ?? '');
-    if ($tid !== '') $githubTestIdSet[$tid] = true;
+foreach ($githubTests as $testRow) { $testId = trim((string)($testRow['id_test'] ?? '')); if ($testId !== '') $githubTestIdSet[$testId] = true; }
+$rubricheList = distinctGithubRubriche($dbAdapter->findAll('RUBRICA'), $githubTestIdSet);
+$persistentTemplates = $templateService->listPersistentTemplates();
+
+if ($selectedSource === '' && $selectedRubricId !== '' && $dbAdapter->findWhere('RUBRICA', ['id_rubrica' => $selectedRubricId]) !== []) $selectedSource = 'db:' . $selectedRubricId;
+if ($selectedSource === 'temporary') {
+    try { $temporaryRows = decodeGithubRubricTemporaryRows($temporaryPayload, $temporarySignature, $csrfToken, $templateService); }
+    catch (Throwable $exception) { $error = $error !== '' ? $error : $exception->getMessage(); $selectedSource = ''; $temporaryRows = []; }
 }
-
-// Questa pagina è dedicata a rubriche GitHub: filtra la lista per evitare rubriche "orali" o di altri contesti.
-$rubricheList = array_values(array_filter($rubricheListAll, function ($r) use ($githubTestIdSet) {
-    $id = (string)($r['id_rubrica'] ?? '');
-    $note = (string)($r['note'] ?? '');
-    return ($id !== '' && isset($githubTestIdSet[$id])) || $note === 'github_rubric';
-}));
-
-// Se è selezionato un test GitHub, mostra solo la rubrica relativa a quel test.
-if ($selectedTestId !== '') {
-    $rubricheList = array_values(array_filter($rubricheList, function ($r) use ($selectedTestId) {
-        return (string)($r['id_rubrica'] ?? '') === $selectedTestId;
-    }));
-}
-
-// Carica righe rubrica selezionata (o default)
-$editingRows = [];
-if ($selectedRubricId !== '') {
+if ($selectedSource !== '' && str_starts_with($selectedSource, 'db:')) {
+    $selectedRubricId = substr($selectedSource, 3);
     $editingRows = $dbAdapter->findWhere('RUBRICA', ['id_rubrica' => $selectedRubricId]);
-    if ($selectedUdaId === '' && !empty($editingRows)) {
-        $selectedUdaId = (string)($editingRows[0]['id_uda'] ?? '');
-    }
-    if (empty($editingRows)) {
-        $editingRows = defaultGitHubRubricRows($selectedRubricId, $selectedUdaId);
-    }
-    usort($editingRows, function ($a, $b) {
-        return (int)($a['ordine'] ?? 0) <=> (int)($b['ordine'] ?? 0);
-    });
-}
+    if ($selectedUdaId === '' && $editingRows !== []) $selectedUdaId = (string)($editingRows[0]['id_uda'] ?? '');
+} elseif ($selectedSource !== '' && str_starts_with($selectedSource, 'file:')) {
+    foreach ($persistentTemplates as $template) if ($template['id'] === $selectedSource) { $editingRows = $template['rows']; $temporaryTemplateName = $template['name']; break; }
+    if ($editingRows === []) $error = $error !== '' ? $error : 'Template persistente non trovato o non conforme.';
+} elseif ($selectedSource === 'temporary') $editingRows = $temporaryRows;
+if ($selectedTestId !== '' && $selectedSource === '' && $selectedRubricId !== '') { $candidateRows = $dbAdapter->findWhere('RUBRICA', ['id_rubrica' => $selectedRubricId]); if ($candidateRows !== []) { $selectedSource = 'db:' . $selectedRubricId; $editingRows = $candidateRows; } }
+if ($temporaryRows !== [] && $selectedSource === 'temporary') [$temporaryPayload, $temporarySignature] = encodeGithubRubricTemporaryRows($temporaryRows, $csrfToken);
+$templateSelection = $selectedSource !== '';
+$targetRubricId = $selectedTestId !== '' ? $selectedTestId : ($selectedSource !== '' && str_starts_with($selectedSource, 'db:') ? substr($selectedSource, 3) : '');
 ?>
 <!DOCTYPE html>
 <html lang="it">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rubriche GitHub</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Rubriche GitHub</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <style>
-        .rubric-editor-table { min-width: 2000px; }
-	        .rubric-editor-table td, .rubric-editor-table th { min-height: 140px; vertical-align: top; padding: .25rem .25rem; }
-	        .rubric-editor-table textarea.form-control { min-height: 140px; resize: vertical; }
-	        .rubric-editor-table textarea.form-control-sm { min-height: 140px; resize: vertical; }
-	        .rubric-editor-table textarea.indicatore-text { min-height: 140px; }
-	        .rubric-editor-table th.level-col,
-	        .rubric-editor-table td.level-col { width: 200px; }
-	        .rubric-editor-table th.level5-col,
-	        .rubric-editor-table td.level5-col { width: 160px; }
-	        .rubric-editor-table input.form-control-sm,
-	        .rubric-editor-table select.form-select-sm { padding: .2rem .35rem; }
-	        .rubric-list-table td { white-space: nowrap; }
-	        .rubric-list-table td.note-cell { white-space: normal; }
+        .rubric-editor-table { min-width: 2000px; }.rubric-editor-table td,.rubric-editor-table th{min-height:140px;vertical-align:top;padding:.25rem}.rubric-editor-table textarea.form-control{min-height:140px;resize:vertical}.rubric-editor-table th.level-col,.rubric-editor-table td.level-col{width:200px}.rubric-editor-table th.level5-col,.rubric-editor-table td.level5-col{width:160px}.rubric-editor-table input.form-control-sm,.rubric-editor-table select.form-select-sm{padding:.2rem .35rem}.rubric-list-table td{white-space:nowrap}.rubric-list-table td.note-cell{white-space:normal}.template-source-file{background:#f8fbff}.template-source-temporary{background:#fff8e1}
     </style>
 </head>
 <body>
-    <?php
-    $pageTitle = '<i class="bi bi-github"></i> Rubriche GitHub';
-    $pageSubtitle = 'Seleziona da DB un Test GitHub o una rubrica, poi crea o modifica indicatori.';
-    ob_start();
-    ?>
-    <?php if ($selectedTestId !== ''): ?>
-        <a class="btn btn-outline-light btn-sm" href="github_assignment_review.php?test_id=<?= urlencode($selectedTestId) ?>">
-            <i class="bi bi-arrow-left"></i> Torna al test
-        </a>
-    <?php endif; ?>
-    <?php
-    $headerActions = ob_get_clean();
-    include __DIR__ . '/partials/app_header.php';
-    ?>
-
-
+<?php $pageTitle = '<i class="bi bi-github"></i> Rubriche GitHub'; $pageSubtitle = 'Seleziona un test e carica una rubrica esistente o un template conforme.'; ob_start(); if ($selectedTestId !== ''): ?><a class="btn btn-outline-light btn-sm" href="github_assignment_review.php?test_id=<?= githubRubricH($selectedTestId) ?>"><i class="bi bi-arrow-left"></i> Torna al test</a><?php endif; ?><?php $headerActions = ob_get_clean(); include __DIR__ . '/partials/app_header.php'; ?>
 <div class="container mt-4">
-<?php if ($message): ?><div class="alert alert-success"><?= htmlspecialchars($message) ?></div><?php endif; ?>
-	    <?php if ($error): ?><div class="alert alert-danger"><?= htmlspecialchars($error) ?></div><?php endif; ?>
-
-	    <div class="card mb-4">
-	        <div class="card-header bg-light">
-	            <strong>Rubriche esistenti</strong>
-	        </div>
-	        <div class="card-body">
-	            <?php if (empty($rubricheList)): ?>
-	                <div class="text-muted">Nessuna rubrica trovata<?= ($selectedTestId !== '') ? ' per questo test.' : '.' ?></div>
-	            <?php else: ?>
-	                <div class="table-responsive">
-	                    <table class="table table-striped align-middle rubric-list-table">
-	                        <thead>
-	                        <tr>
-	                            <th>id_rubrica</th>
-	                            <th># indicatori</th>
-	                            <th>note</th>
-	                            <th class="text-end">azioni</th>
-	                        </tr>
-	                        </thead>
-	                        <tbody>
-	                        <?php foreach ($rubricheList as $r): ?>
-	                            <tr>
-	                                <td class="font-monospace"><?= htmlspecialchars($r['id_rubrica']) ?></td>
-	                                <td><?= (int)$r['count'] ?></td>
-	                                <td class="note-cell text-muted small"><?= htmlspecialchars($r['note']) ?></td>
-	                                <td class="text-end">
-	                                    <a class="btn btn-sm btn-outline-primary"
-	                                       href="github_rubriche.php?id_rubrica=<?= urlencode($r['id_rubrica']) ?>">
-	                                        <i class="bi bi-pencil-square"></i>
-	                                    </a>
-	                                    <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare la rubrica?')">
-	                                        <input type="hidden" name="action" value="delete">
-	                                        <input type="hidden" name="id_rubrica" value="<?= htmlspecialchars($r['id_rubrica']) ?>">
-	                                        <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
-	                                    </form>
-	                                </td>
-	                            </tr>
-	                        <?php endforeach; ?>
-	                        </tbody>
-	                    </table>
-	                </div>
-	            <?php endif; ?>
-	        </div>
-	    </div>
-	
-	    <div class="card mb-4">
-	        <div class="card-header bg-light">
-	            <strong>Selezione</strong>
-        </div>
-        <div class="card-body">
-            <form method="GET" class="row g-2 align-items-end">
-                <div class="col-lg-6">
-                    <label class="form-label">Test GitHub</label>
-                    <select class="form-select" name="test_id" id="selectTest">
-                        <option value="">-- Seleziona test GitHub --</option>
-                        <?php foreach ($githubTests as $t): ?>
-                            <?php
-                            $tid = (string)($t['id_test'] ?? '');
-                            $tname = (string)($t['nome'] ?? $tid);
-                            $tuda = (string)($t['id_uda'] ?? '');
-                            ?>
-                            <option value="<?= htmlspecialchars($tid) ?>" <?= ($tid === $selectedTestId) ? 'selected' : '' ?>>
-                                <?= htmlspecialchars($tname) ?> — <?= htmlspecialchars($tid) ?> — UDA <?= htmlspecialchars($tuda) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                    <div class="form-text">Se selezioni un test, la rubrica usa automaticamente <code>id_rubrica = test_id</code>.</div>
-                </div>
-                <div class="col-lg-6">
-                    <label class="form-label">Rubrica esistente</label>
-                    <select class="form-select" name="id_rubrica" id="selectRubrica">
-                        <option value="">-- Seleziona id_rubrica --</option>
-                        <?php foreach ($rubricheList as $r): ?>
-                            <option value="<?= htmlspecialchars($r['id_rubrica']) ?>" <?= ($r['id_rubrica'] === $selectedRubricId) ? 'selected' : '' ?>>
-                                <?= htmlspecialchars($r['id_rubrica']) ?> (<?= (int)$r['count'] ?>)
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="col-12">
-                    <button class="btn btn-primary"><i class="bi bi-arrow-repeat"></i> Carica Rubrica di default</button>
-                    <a class="btn btn-outline-secondary" href="github_rubriche.php"><i class="bi bi-x-circle"></i> Reset</a>
-                </div>
-            </form>
-        </div>
+    <?php if ($message !== ''): ?><div class="alert alert-success"><?= githubRubricH($message) ?></div><?php endif; ?><?php if ($error !== ''): ?><div class="alert alert-danger"><?= githubRubricH($error) ?></div><?php endif; ?>
+    <div class="card mb-4"><div class="card-header bg-light d-flex justify-content-between align-items-center gap-2 flex-wrap"><strong>Rubriche esistenti e template disponibili</strong><div class="d-flex gap-2 align-items-center"><a class="btn btn-outline-secondary btn-sm" href="<?= githubRubricH($templateService->defaultTemplateUrl()) ?>" download><i class="bi bi-download"></i> Scarica template</a><button type="submit" form="templateSelectionForm" class="btn btn-primary btn-sm" id="loadTemplateButton" <?= $templateSelection ? '' : 'disabled' ?>><i class="bi bi-arrow-repeat"></i> Carica rubrica da template</button><a class="btn btn-outline-secondary btn-sm" href="github_rubriche.php"><i class="bi bi-x-circle"></i> Reset</a></div></div>
+        <div class="card-body"><form method="POST" id="templateSelectionForm"><input type="hidden" name="action" value="load_template"><input type="hidden" name="_csrf_token" value="<?= githubRubricH($csrfToken) ?>"><input type="hidden" name="test_id" value="<?= githubRubricH($selectedTestId) ?>"><?php if ($temporaryRows !== []): ?><input type="hidden" name="temporary_template_payload" value="<?= githubRubricH($temporaryPayload) ?>"><input type="hidden" name="temporary_template_signature" value="<?= githubRubricH($temporarySignature) ?>"><input type="hidden" name="temporary_template_name" value="<?= githubRubricH($temporaryTemplateName) ?>"><?php endif; ?>
+            <?php if ($rubricheList === [] && $persistentTemplates === [] && $temporaryRows === []): ?><div class="text-muted">Nessuna rubrica o template conforme trovato.</div><?php else: ?><div class="table-responsive"><table class="table table-striped align-middle rubric-list-table mb-0"><thead><tr><th></th><th>Origine</th><th>Nome / id</th><th># indicatori</th><th>Note</th><th class="text-end">Azioni</th></tr></thead><tbody>
+                <?php foreach ($rubricheList as $rubric): $source = 'db:' . $rubric['id_rubrica']; ?><tr><td><input class="form-check-input template-source-radio" type="radio" name="source" value="<?= githubRubricH($source) ?>" <?= $selectedSource === $source ? 'checked' : '' ?>></td><td><span class="badge text-bg-secondary">Database</span></td><td class="font-monospace"><?= githubRubricH($rubric['id_rubrica']) ?></td><td><?= (int)$rubric['count'] ?></td><td class="note-cell text-muted small"><?= githubRubricH($rubric['note']) ?></td><td class="text-end"><form method="POST" class="d-inline" onsubmit="return confirm('Eliminare la rubrica?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="_csrf_token" value="<?= githubRubricH($csrfToken) ?>"><input type="hidden" name="id_rubrica" value="<?= githubRubricH($rubric['id_rubrica']) ?>"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form></td></tr><?php endforeach; ?>
+                <?php foreach ($persistentTemplates as $template): ?><tr class="template-source-file"><td><input class="form-check-input template-source-radio" type="radio" name="source" value="<?= githubRubricH($template['id']) ?>" <?= $selectedSource === $template['id'] ? 'checked' : '' ?>></td><td><span class="badge text-bg-info">Materiale</span></td><td><?= githubRubricH($template['name']) ?></td><td><?= (int)$template['count'] ?></td><td class="note-cell text-muted small">Template Excel conforme</td><td class="text-end"><a class="btn btn-sm btn-outline-secondary" href="<?= githubRubricH(app_url('Materiale/' . rawurlencode($template['file_name']))) ?>" download title="Scarica template"><i class="bi bi-download"></i></a></td></tr><?php endforeach; ?>
+                <?php if ($temporaryRows !== []): ?><tr class="template-source-temporary"><td><input class="form-check-input template-source-radio" type="radio" name="source" value="temporary" <?= $selectedSource === 'temporary' ? 'checked' : '' ?>></td><td><span class="badge text-bg-warning">Temporanea</span></td><td><?= githubRubricH($temporaryTemplateName ?: 'Rubrica personalizzata') ?></td><td><?= count($temporaryRows) ?></td><td class="note-cell text-muted small">Scompare al ricaricamento della pagina</td><td class="text-end">—</td></tr><?php endif; ?>
+            </tbody></table></div><?php endif; ?></form></div>
     </div>
-
-    <div class="card mb-4">
-        <div class="card-header bg-light d-flex justify-content-between align-items-center">
-            <strong>Editor rubrica</strong>
-            <?php if ($selectedRubricId !== ''): ?>
-                <span class="text-muted small">id_rubrica: <span class="font-monospace"><?= htmlspecialchars($selectedRubricId) ?></span></span>
-            <?php endif; ?>
-        </div>
-        <div class="card-body">
-            <?php if ($selectedRubricId === ''): ?>
-                <div class="text-muted">Seleziona un Test GitHub o una Rubrica per iniziare.</div>
-            <?php else: ?>
-                <form method="POST">
-                    <input type="hidden" name="action" value="save">
-                    <input type="hidden" name="test_id" value="<?= htmlspecialchars($selectedTestId) ?>">
-                    <input type="hidden" name="id_rubrica" value="<?= htmlspecialchars($selectedRubricId) ?>">
-
-                    <div class="table-responsive">
-                        <table class="table table-striped align-top rubric-editor-table">
-                            <thead>
-                            <tr>
-                                <th style="width: 180px;">Indicatore</th>
-                                <th style="width: 220px;">Descrizione</th>
-	                                <th class="level-col">Livello 1</th>
-	                                <th class="level-col">Livello 2</th>
-	                                <th class="level-col">Livello 3</th>
-	                                <th class="level-col">Livello 4</th>
-	                                <th class="level5-col">Livello 5</th>
-                                <th style="width: 80px;">Peso</th>
-                                <th style="width: 80px;">Ordine</th>
-                                <th style="width: 140px;">Pubblicato</th>
-                                <th style="width: 220px;">Note</th>
-                                <th style="width: 180px;">Annotazione CV</th>
-                                <th style="width: 180px;">Data pubbl.</th>
-                                <th style="width: 60px;"></th>
-                            </tr>
-                            </thead>
-                            <tbody id="rowsBody">
-                            <?php foreach (array_values($editingRows) as $idx => $r): ?>
-                                <tr>
-                                    <td><textarea class="form-control indicatore-text" name="rows[<?= $idx ?>][nome_indicatore]"><?= htmlspecialchars($r['nome_indicatore'] ?? '') ?></textarea></td>
-                                    <td><textarea class="form-control" name="rows[<?= $idx ?>][descrizione]"><?= htmlspecialchars($r['descrizione'] ?? '') ?></textarea></td>
-	                                    <td class="level-col"><textarea class="form-control" name="rows[<?= $idx ?>][livello_1_desc]"><?= htmlspecialchars($r['livello_1_desc'] ?? '') ?></textarea></td>
-	                                    <td class="level-col"><textarea class="form-control" name="rows[<?= $idx ?>][livello_2_desc]"><?= htmlspecialchars($r['livello_2_desc'] ?? '') ?></textarea></td>
-	                                    <td class="level-col"><textarea class="form-control" name="rows[<?= $idx ?>][livello_3_desc]"><?= htmlspecialchars($r['livello_3_desc'] ?? '') ?></textarea></td>
-	                                    <td class="level-col"><textarea class="form-control" name="rows[<?= $idx ?>][livello_4_desc]"><?= htmlspecialchars($r['livello_4_desc'] ?? '') ?></textarea></td>
-	                                    <td class="level5-col"><textarea class="form-control" name="rows[<?= $idx ?>][livello_5_desc]"><?= htmlspecialchars($r['livello_5_desc'] ?? '') ?></textarea></td>
-                                    <td><input class="form-control form-control-sm" name="rows[<?= $idx ?>][peso]" value="<?= htmlspecialchars($r['peso'] ?? '1') ?>"></td>
-                                    <td><input class="form-control form-control-sm" name="rows[<?= $idx ?>][ordine]" value="<?= htmlspecialchars($r['ordine'] ?? (string)($idx + 1)) ?>"></td>
-                                    <td>
-                                        <select class="form-select form-select-sm" name="rows[<?= $idx ?>][pubblicato]">
-                                            <option value="0" <?= ((string)($r['pubblicato'] ?? '0') === '0') ? 'selected' : '' ?>>0</option>
-                                            <option value="1" <?= ((string)($r['pubblicato'] ?? '0') === '1') ? 'selected' : '' ?>>1</option>
-                                        </select>
-                                    </td>
-                                    <td><input class="form-control form-control-sm" name="rows[<?= $idx ?>][note]" value="<?= htmlspecialchars($r['note'] ?? '') ?>"></td>
-                                    <td><input class="form-control form-control-sm" name="rows[<?= $idx ?>][id_annotazione_cv]" value="<?= htmlspecialchars($r['id_annotazione_cv'] ?? '') ?>"></td>
-                                    <td><input class="form-control form-control-sm" name="rows[<?= $idx ?>][data_pubblicazione]" value="<?= htmlspecialchars($r['data_pubblicazione'] ?? '') ?>"></td>
-                                    <td class="text-end">
-                                        <button type="button" class="btn btn-sm btn-outline-danger remove-row"><i class="bi bi-x-lg"></i></button>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div class="d-flex gap-2">
-                        <button type="button" class="btn btn-outline-primary" id="addRowBtn"><i class="bi bi-plus-lg"></i> Aggiungi indicatore</button>
-                        <button type="submit" class="btn btn-success"><i class="bi bi-save"></i> Salva rubrica</button>
-                    </div>
-                </form>
-            <?php endif; ?>
-	        </div>
-	    </div>
-	</div>
-
-<template id="rowTemplate">
-	    <tr>
-	        <td><textarea class="form-control indicatore-text" name=""></textarea></td>
-	        <td><textarea class="form-control" name=""></textarea></td>
-	        <td class="level-col"><textarea class="form-control" name=""></textarea></td>
-	        <td class="level-col"><textarea class="form-control" name=""></textarea></td>
-	        <td class="level-col"><textarea class="form-control" name=""></textarea></td>
-	        <td class="level-col"><textarea class="form-control" name=""></textarea></td>
-	        <td class="level5-col"><textarea class="form-control" name=""></textarea></td>
-	        <td><input class="form-control form-control-sm" name="" value="1"></td>
-	        <td><input class="form-control form-control-sm" name="" value=""></td>
-	        <td>
-	            <select class="form-select form-select-sm" name="">
-                <option value="0" selected>0</option>
-                <option value="1">1</option>
-            </select>
-        </td>
-        <td><input class="form-control form-control-sm" name="" value="github_rubric"></td>
-        <td><input class="form-control form-control-sm" name="" value=""></td>
-        <td><input class="form-control form-control-sm" name="" value=""></td>
-        <td class="text-end"><button type="button" class="btn btn-sm btn-outline-danger remove-row"><i class="bi bi-x-lg"></i></button></td>
-    </tr>
-</template>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-<script>
-    function reindexRows() {
-        const body = document.getElementById('rowsBody');
-        if (!body) return;
-        const rows = Array.from(body.querySelectorAll('tr'));
-        rows.forEach((tr, idx) => {
-            const fields = [
-                'nome_indicatore','descrizione','livello_1_desc','livello_2_desc','livello_3_desc','livello_4_desc','livello_5_desc',
-                'peso','ordine','pubblicato','note','id_annotazione_cv','data_pubblicazione'
-            ];
-            const inputs = tr.querySelectorAll('input,textarea,select');
-            inputs.forEach((el, i) => {
-                const field = fields[i];
-                if (!field) return;
-                el.name = `rows[${idx}][${field}]`;
-                if (field === 'ordine' && (!el.value || el.value === '')) {
-                    el.value = String(idx + 1);
-                }
-            });
-        });
-    }
-
-    const addBtn = document.getElementById('addRowBtn');
-    if (addBtn) {
-        addBtn.addEventListener('click', function () {
-            const tpl = document.getElementById('rowTemplate');
-            const body = document.getElementById('rowsBody');
-            if (!tpl || !body) return;
-            body.appendChild(tpl.content.cloneNode(true));
-            reindexRows();
-        });
-    }
-
-    const body = document.getElementById('rowsBody');
-    if (body) {
-        body.addEventListener('click', function (e) {
-            const btn = e.target.closest('.remove-row');
-            if (!btn) return;
-            const tr = btn.closest('tr');
-            if (tr) tr.remove();
-            reindexRows();
-        });
-        reindexRows();
-    }
-</script>
-</body>
-</html>
+    <div class="card mb-4"><div class="card-header bg-light"><strong>Selezione Test GitHub</strong></div><div class="card-body"><form method="GET" class="row g-2 align-items-end"><div class="col-lg-8"><label class="form-label" for="selectTest">Test GitHub</label><select class="form-select" name="test_id" id="selectTest"><option value="">-- Seleziona test GitHub --</option><?php foreach ($githubTests as $testRow): $tid=(string)($testRow['id_test']??'');$tname=(string)($testRow['nome']??$tid);$tuda=(string)($testRow['id_uda']??''); ?><option value="<?= githubRubricH($tid) ?>" <?= $tid === $selectedTestId ? 'selected' : '' ?>><?= githubRubricH($tname) ?> — <?= githubRubricH($tid) ?> — UDA <?= githubRubricH($tuda) ?></option><?php endforeach; ?></select><div class="form-text">Il salvataggio della rubrica usa l’id del test selezionato.</div></div><div class="col-lg-4"><button class="btn btn-outline-primary w-100"><i class="bi bi-search"></i> Mostra test</button></div></form></div></div>
+    <div class="card mb-4"><div class="card-header bg-light"><strong>Editor rubrica</strong><?php if ($selectedSource !== ''): ?><span class="text-muted small ms-2">Sorgente: <?= githubRubricH($selectedSource) ?></span><?php endif; ?></div><div class="card-body">
+        <?php if ($editingRows === []): ?><div class="text-muted">Seleziona una rubrica o un template e premi “Carica rubrica da template”.</div><?php else: ?><?php if ($targetRubricId === '' && !str_starts_with($selectedSource, 'db:')): ?><div class="alert alert-warning py-2">Seleziona un Test GitHub per poter salvare questa rubrica.</div><?php endif; ?><form method="POST"><input type="hidden" name="action" value="save"><input type="hidden" name="_csrf_token" value="<?= githubRubricH($csrfToken) ?>"><input type="hidden" name="test_id" value="<?= githubRubricH($selectedTestId) ?>"><input type="hidden" name="id_rubrica" value="<?= githubRubricH($targetRubricId) ?>"><input type="hidden" name="source" value="<?= githubRubricH($selectedSource) ?>"><?php if ($temporaryRows !== [] && $selectedSource === 'temporary'): ?><input type="hidden" name="temporary_template_payload" value="<?= githubRubricH($temporaryPayload) ?>"><input type="hidden" name="temporary_template_signature" value="<?= githubRubricH($temporarySignature) ?>"><input type="hidden" name="temporary_template_name" value="<?= githubRubricH($temporaryTemplateName) ?>"><?php endif; ?><div class="table-responsive"><table class="table table-striped align-top rubric-editor-table"><thead><tr><th style="width:180px">Indicatore</th><th style="width:220px">Descrizione</th><th class="level-col">Livello 1</th><th class="level-col">Livello 2</th><th class="level-col">Livello 3</th><th class="level-col">Livello 4</th><th class="level5-col">Livello 5</th><th style="width:80px">Peso</th><th style="width:80px">Ordine</th><th style="width:140px">Pubblicato</th><th style="width:220px">Note</th><th style="width:180px">Annotazione CV</th><th style="width:180px">Data pubbl.</th><th style="width:60px"></th></tr></thead><tbody id="rowsBody">
+            <?php foreach (array_values($editingRows) as $index => $row): ?><tr><td><textarea class="form-control indicatore-text" name="rows[<?= $index ?>][nome_indicatore]"><?= githubRubricH($row['nome_indicatore']??'') ?></textarea></td><td><textarea class="form-control" name="rows[<?= $index ?>][descrizione]"><?= githubRubricH($row['descrizione']??'') ?></textarea></td><td class="level-col"><textarea class="form-control" name="rows[<?= $index ?>][livello_1_desc]"><?= githubRubricH($row['livello_1_desc']??'') ?></textarea></td><td class="level-col"><textarea class="form-control" name="rows[<?= $index ?>][livello_2_desc]"><?= githubRubricH($row['livello_2_desc']??'') ?></textarea></td><td class="level-col"><textarea class="form-control" name="rows[<?= $index ?>][livello_3_desc]"><?= githubRubricH($row['livello_3_desc']??'') ?></textarea></td><td class="level-col"><textarea class="form-control" name="rows[<?= $index ?>][livello_4_desc]"><?= githubRubricH($row['livello_4_desc']??'') ?></textarea></td><td class="level5-col"><textarea class="form-control" name="rows[<?= $index ?>][livello_5_desc]"><?= githubRubricH($row['livello_5_desc']??'') ?></textarea></td><td><input class="form-control form-control-sm" name="rows[<?= $index ?>][peso]" value="<?= githubRubricH($row['peso']??'1') ?>"></td><td><input class="form-control form-control-sm" name="rows[<?= $index ?>][ordine]" value="<?= githubRubricH($row['ordine']??(string)($index+1)) ?>"></td><td><select class="form-select form-select-sm" name="rows[<?= $index ?>][pubblicato]"><option value="0" selected>0</option><option value="1" <?= ((string)($row['pubblicato']??'0')==='1')?'selected':'' ?>>1</option></select></td><td><input class="form-control form-control-sm" name="rows[<?= $index ?>][note]" value="<?= githubRubricH($row['note']??'github_rubric') ?>"></td><td><input class="form-control form-control-sm" name="rows[<?= $index ?>][id_annotazione_cv]" value="<?= githubRubricH($row['id_annotazione_cv']??'') ?>"></td><td><input class="form-control form-control-sm" name="rows[<?= $index ?>][data_pubblicazione]" value="<?= githubRubricH($row['data_pubblicazione']??'') ?>"></td><td class="text-end"><button type="button" class="btn btn-sm btn-outline-danger remove-row"><i class="bi bi-x-lg"></i></button></td></tr><?php endforeach; ?>
+        </tbody></table></div><div class="d-flex gap-2"><button type="button" class="btn btn-outline-primary" id="addRowBtn"><i class="bi bi-plus-lg"></i> Aggiungi indicatore</button><button type="submit" class="btn btn-success" <?= $targetRubricId === '' ? 'disabled' : '' ?>><i class="bi bi-save"></i> Salva rubrica</button></div></form><?php endif; ?></div></div>
+    <div class="card mb-5"><div class="card-header bg-light"><strong>Carica Rubrica Personalizzata</strong></div><div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-3"><span class="text-muted">Importa un file Excel o un Google Sheet conforme al template. Il file viene usato solo temporaneamente.</span><button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#github_rubric_template_modal"><i class="bi bi-upload"></i> Scegli file o Google Sheet</button></div></div>
+</div>
+<div class="modal fade" id="github_rubric_template_modal" tabindex="-1" aria-labelledby="githubRubricTemplateModalLabel" aria-hidden="true"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="githubRubricTemplateModalLabel">Carica Rubrica Personalizzata</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div><form method="POST" enctype="multipart/form-data"><div class="modal-body"><input type="hidden" name="action" value="load_custom_template"><input type="hidden" name="_csrf_token" value="<?= githubRubricH($csrfToken) ?>"><input type="hidden" name="test_id" value="<?= githubRubricH($selectedTestId) ?>"><div class="mb-3"><label class="form-label" for="rubrica_sheet_url">Link Google Sheet</label><input class="form-control" type="url" id="rubrica_sheet_url" name="rubrica_sheet_url" placeholder="https://docs.google.com/spreadsheets/d/..."><div class="form-text">In alternativa al file Excel.</div></div><div class="text-center text-muted small mb-3">oppure</div><div class="mb-3"><label class="form-label" for="rubrica_file">File Excel (.xlsx)</label><input class="form-control" type="file" id="rubrica_file" name="rubrica_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></div><div class="small text-muted">Il formato viene verificato prima dell’uso. <a href="<?= githubRubricH($templateService->defaultTemplateUrl()) ?>" download>Scarica il template vuoto</a>.</div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button><button type="submit" class="btn btn-primary"><i class="bi bi-check2"></i> Valida e carica</button></div></form></div></div></div>
+<template id="rowTemplate"><tr><td><textarea class="form-control indicatore-text" name=""></textarea></td><td><textarea class="form-control" name=""></textarea></td><td class="level-col"><textarea class="form-control" name=""></textarea></td><td class="level-col"><textarea class="form-control" name=""></textarea></td><td class="level-col"><textarea class="form-control" name=""></textarea></td><td class="level-col"><textarea class="form-control" name=""></textarea></td><td class="level5-col"><textarea class="form-control" name=""></textarea></td><td><input class="form-control form-control-sm" name="" value="1"></td><td><input class="form-control form-control-sm" name="" value=""></td><td><select class="form-select form-select-sm" name=""><option value="0" selected>0</option><option value="1">1</option></select></td><td><input class="form-control form-control-sm" name="" value="github_rubric"></td><td><input class="form-control form-control-sm" name="" value=""></td><td><input class="form-control form-control-sm" name="" value=""></td><td class="text-end"><button type="button" class="btn btn-sm btn-outline-danger remove-row"><i class="bi bi-x-lg"></i></button></td></tr></template>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script><script>
+(()=>{const fields=['nome_indicatore','descrizione','livello_1_desc','livello_2_desc','livello_3_desc','livello_4_desc','livello_5_desc','peso','ordine','pubblicato','note','id_annotazione_cv','data_pubblicazione'];const form=document.getElementById('templateSelectionForm'),load=document.getElementById('loadTemplateButton');const refresh=()=>{if(form&&load)load.disabled=!form.querySelector('input[name="source"]:checked')};document.querySelectorAll('.template-source-radio').forEach(r=>r.addEventListener('change',refresh));refresh();const reindex=()=>{const body=document.getElementById('rowsBody');if(!body)return;body.querySelectorAll('tr').forEach((tr,i)=>tr.querySelectorAll('input,textarea,select').forEach((el,j)=>{if(fields[j]){el.name=`rows[${i}][${fields[j]}]`;if(fields[j]==='ordine'&&!el.value)el.value=String(i+1)}}))};const add=document.getElementById('addRowBtn');if(add)add.addEventListener('click',()=>{const t=document.getElementById('rowTemplate'),b=document.getElementById('rowsBody');if(t&&b){b.appendChild(t.content.cloneNode(true));reindex()}});const body=document.getElementById('rowsBody');if(body){body.addEventListener('click',e=>{const b=e.target.closest('.remove-row');if(b){b.closest('tr')?.remove();reindex()}});reindex()}})();
+</script></body></html>

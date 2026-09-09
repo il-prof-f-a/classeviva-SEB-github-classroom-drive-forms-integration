@@ -5,33 +5,28 @@ declare(strict_types=1);
 $root = dirname(__DIR__, 2);
 $rubricPage = file_get_contents($root . '/public/github_rubriche.php');
 $reviewPage = file_get_contents($root . '/public/github_assignment_review.php');
+$templatePath = $root . '/Materiale/Rubrica valutazione github VUOTA.xlsx';
 if ($rubricPage === false || $reviewPage === false) {
-    fwrite(STDERR, "FAIL: impossibile leggere le pagine delle rubriche GitHub\n");
+    fwrite(STDERR, "FAIL: impossibile leggere la pagina rubriche GitHub\n");
     exit(1);
 }
 
 $failures = [];
 $require = static function (bool $condition, string $message) use (&$failures): void {
-    if (!$condition) {
-        $failures[] = $message;
-    }
+    if (!$condition) $failures[] = $message;
 };
 
-$defaultIndicatorPos = strpos($rubricPage, "'nome' => 'Integrazione e collaborazione'");
-$defaultIndicatorBlock = $defaultIndicatorPos === false ? '' : substr($rubricPage, $defaultIndicatorPos, 1800);
-$require($defaultIndicatorPos !== false, 'indicatore Integrazione e collaborazione assente nella rubrica default');
-$require((bool)preg_match("/'peso'\s*=>\s*'15'/", $defaultIndicatorBlock), 'peso default Integrazione e collaborazione diverso da 15');
-$require(str_contains($rubricPage, 'Carica Rubrica di default'), 'etichetta pulsante rubrica default non aggiornata');
-
-$reviewIndicatorPos = strpos($reviewPage, "'nome_indicatore' => 'Integrazione e collaborazione'");
-$reviewIndicatorBlock = $reviewIndicatorPos === false ? '' : substr($reviewPage, $reviewIndicatorPos, 1800);
-$require((bool)preg_match("/'peso'\s*=>\s*'15'/", $reviewIndicatorBlock), 'peso default review GitHub diverso da 15');
+$require(is_file($templatePath), 'template Excel GitHub default assente');
+$require(str_contains($rubricPage, 'GitHubRubricTemplateService'), 'pagina senza servizio template');
+$require(str_contains($rubricPage, 'Carica rubrica da template'), 'etichetta pulsante template assente');
+$require(!str_contains($rubricPage, 'Carica Rubrica di default'), 'vecchia etichetta rubrica default ancora presente');
+$require(!str_contains($reviewPage, 'ghDefaultGitRubricDefinition'), 'fallback hardcoded ancora presente nella review');
+$service = file_get_contents($root . '/src/Core/GitHubRubricTemplateService.php');
+$require(is_string($service) && str_contains($service, 'Rubrica valutazione github VUOTA.xlsx'), 'nome template default non definito nel servizio');
 
 if ($failures !== []) {
-    foreach ($failures as $failure) {
-        fwrite(STDERR, "FAIL: {$failure}\n");
-    }
+    foreach ($failures as $failure) fwrite(STDERR, "FAIL: {$failure}\n");
     exit(1);
 }
 
-fwrite(STDOUT, "PASS: rubrica GitHub default con peso collaborazione 15.\n");
+fwrite(STDOUT, "PASS: rubrica GitHub default basata sul template Excel.\n");
