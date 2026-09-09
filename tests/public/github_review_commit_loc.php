@@ -34,6 +34,13 @@ $require(!str_contains($source, 'codeload.github.com'), 'LOC ancora con allowlis
 $require(str_contains($source, 'hop <= 5'), 'LOC senza loop multi-hop');
 $require(str_contains($source, 'hop === 0'), 'LOC non limita il token OAuth al primo hop');
 
+// Aruba può disabilitare shell_exec: in tal caso il calcolo interno deve
+// rimanere disponibile e il pulsante LOC deve avere un solo gestore.
+$require(substr_count($source, "document.querySelectorAll('.repo-loc-btn').forEach") === 1, 'LOC registrato da più gestori JavaScript');
+$require(str_contains($source, "function_exists('shell_exec')"), 'LOC chiama shell_exec senza verificare la disponibilità');
+$require(str_contains($source, 'catch (Throwable $e)'), 'handler LOC non intercetta errori PHP non-Exception');
+$require(str_contains($source, 'responseText') && str_contains($source, 'JSON.parse(responseText)'), 'client LOC non gestisce risposte vuote o non JSON');
+
 if ($failures !== []) {
     foreach ($failures as $failure) {
         fwrite(STDERR, "FAIL: {$failure}

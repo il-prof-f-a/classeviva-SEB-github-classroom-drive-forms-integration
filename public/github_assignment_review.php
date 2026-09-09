@@ -579,7 +579,13 @@ function ghComputeLocInternal($rootDir)
 
 function ghComputeLocWithClocIfAvailable($rootDir)
 {
-    $where = @shell_exec('where cloc 2>NUL');
+    // Aruba può disabilitare shell_exec: il conteggio interno deve restare
+    // disponibile anche quando cloc non è installato o non è invocabile.
+    if (!function_exists('shell_exec')) {
+        return null;
+    }
+    $probe = PHP_OS_FAMILY === 'Windows' ? 'where cloc 2>NUL' : 'command -v cloc 2>/dev/null';
+    $where = @shell_exec($probe);
     if (!is_string($where) || trim($where) === '') {
         return null;
     }
@@ -843,7 +849,7 @@ if ($postAction === 'repo_loc') {
             'totals' => $payload['totals'],
             'by_language' => $payload['by_language']
         ]);
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         jsonResponse([
             'ok' => false,
             'error' => \App\Core\Security\PublicError::message($e, 'github_repo_loc')
@@ -1888,8 +1894,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             container.innerHTML = '<div class="text-muted">Calcolo LOC...</div>';
 
             const body = new URLSearchParams({action: 'repo_loc', repo: repoFull, ref, force: force ? '1' : '0'});
-            const res = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body});
-            const data = await res.json();
+            let res = null;
+            let data = null;
+            try {
+                res = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body});
+                const responseText = await res.text();
+                data = JSON.parse(responseText);
+            } catch (error) {
+                const status = res && res.status ? ` (HTTP ${res.status})` : '';
+                container.innerHTML = '<div class="text-danger">Errore: risposta LOC non valida dal server' + status + '.</div>';
+                return;
+            }
 
             if (!data.ok) {
                 container.innerHTML = '<div class="text-danger">Errore: ' + escapeHtml(data.error || 'Errore') + '</div>';
@@ -1939,22 +1954,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 });
             }
         }
-
-        document.querySelectorAll('.repo-loc-btn').forEach(function (btn) {
-            btn.addEventListener('click', function () {
-                const repoFull = btn.dataset.repo;
-                const ref = btn.dataset.ref;
-                const targetSelector = btn.dataset.target;
-                const container = document.querySelector(targetSelector + ' .repo-loc');
-                if (!container) return;
-
-                if (container.dataset.loaded === '1') {
-                    return;
-                }
-
-                loadRepoLoc(container, repoFull, ref, false);
-            });
-        });
 
 	        function showCollapseElement(el) {
 	            if (!el) return;
