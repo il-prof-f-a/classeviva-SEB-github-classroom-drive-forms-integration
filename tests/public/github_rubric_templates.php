@@ -23,10 +23,13 @@ $require(str_contains($service, 'SpreadsheetPolicy::assertWithinLimits'), 'limit
 $require(str_contains($service, 'UploadPolicy::assertValid'), 'policy upload non applicata');
 $require(str_contains($service, 'livello_1_desc') && str_contains($service, 'livello_4_desc'), 'mapping dei livelli GitHub incompleto');
 $require(str_contains($rubricPage, 'GitHubRubricTemplateService'), 'pagina GitHub senza servizio template centralizzato');
-$require(str_contains($rubricPage, 'templateSourceSelect'), 'optionbox caricamento template assente');
+$require(str_contains($rubricPage, 'template-source-radio'), 'optionbox caricamento template assente');
+$require(str_contains($rubricPage, 'template-source-selected'), 'evidenziazione della riga selezionata assente');
+$require(!str_contains($rubricPage, 'id="templateSourceSelect"'), 'lista a tendina caricamento template ancora presente');
 $require(str_contains($rubricPage, 'Ricarica rubrica associata al test'), 'pulsante ricarica test assente');
 $require(str_contains($rubricPage, "testSelect.addEventListener('change'"), 'selezione test non ricarica automaticamente la pagina');
-$require(str_contains($rubricPage, "sourceSelect.addEventListener('change'"), 'selezione optionbox non carica automaticamente l’editor');
+$require(str_contains($rubricPage, 'sourceRadios.forEach'), 'selezione optionbox non carica automaticamente l’editor');
+$require(str_contains($rubricPage, 'sourceForm.submit()'), 'selezione optionbox non invia il caricamento dell’editor');
 $require(str_contains($rubricPage, 'Questo test GitHub non ha ancora una rubrica associata'), 'banner test senza rubrica assente');
 $require(!str_contains($rubricPage, 'id="loadTemplateButton"'), 'vecchio pulsante caricamento ancora presente');
 $require(str_contains($rubricPage, 'Carica Rubrica Personalizzata'), 'pulsante upload personalizzato assente');

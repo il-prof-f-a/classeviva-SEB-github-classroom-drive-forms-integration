@@ -211,7 +211,7 @@ $noRubricForSelectedTest = $selectedTestId !== '' && $selectedSource === '' && $
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Rubriche GitHub</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <style>
-        .rubric-editor-table { min-width: 2000px; }.rubric-editor-table td,.rubric-editor-table th{min-height:140px;vertical-align:top;padding:.25rem}.rubric-editor-table textarea.form-control{min-height:140px;resize:vertical}.rubric-editor-table th.level-col,.rubric-editor-table td.level-col{width:200px}.rubric-editor-table th.level5-col,.rubric-editor-table td.level5-col{width:160px}.rubric-editor-table input.form-control-sm,.rubric-editor-table select.form-select-sm{padding:.2rem .35rem}.rubric-list-table td{white-space:nowrap}.rubric-list-table td.note-cell{white-space:normal}.template-source-file{background:#f8fbff}.template-source-temporary{background:#fff8e1}
+        .rubric-editor-table { min-width: 2000px; }.rubric-editor-table td,.rubric-editor-table th{min-height:140px;vertical-align:top;padding:.25rem}.rubric-editor-table textarea.form-control{min-height:140px;resize:vertical}.rubric-editor-table th.level-col,.rubric-editor-table td.level-col{width:200px}.rubric-editor-table th.level5-col,.rubric-editor-table td.level5-col{width:160px}.rubric-editor-table input.form-control-sm,.rubric-editor-table select.form-select-sm{padding:.2rem .35rem}.rubric-list-table td{white-space:nowrap}.rubric-list-table td.note-cell{white-space:normal}.template-source-file{background:#f8fbff}.template-source-temporary{background:#fff8e1}.template-source-selected{background-color:#dff3ff !important}
     </style>
 </head>
 <body>
@@ -260,55 +260,36 @@ $noRubricForSelectedTest = $selectedTestId !== '' && $selectedSource === '' && $
                     <input type="hidden" name="temporary_template_signature" value="<?= githubRubricH($temporarySignature) ?>">
                     <input type="hidden" name="temporary_template_name" value="<?= githubRubricH($temporaryTemplateName) ?>">
                 <?php endif; ?>
-                <label class="form-label" for="templateSourceSelect">Rubrica o template da caricare nell’editor</label>
-                <select class="form-select mb-3" name="source" id="templateSourceSelect">
-                    <option value="">-- Seleziona una rubrica o un template --</option>
-                    <?php if ($rubricheList !== []): ?>
-                        <optgroup label="Rubriche salvate">
-                            <?php foreach ($rubricheList as $rubric): $source = 'db:' . $rubric['id_rubrica']; ?>
-                                <option value="<?= githubRubricH($source) ?>" <?= $selectedSource === $source ? 'selected' : '' ?>><?= githubRubricH($rubric['id_rubrica']) ?> (<?= (int)$rubric['count'] ?> indicatori)</option>
-                            <?php endforeach; ?>
-                        </optgroup>
-                    <?php endif; ?>
-                    <?php if ($persistentTemplates !== []): ?>
-                        <optgroup label="Template nella cartella Materiale">
-                            <?php foreach ($persistentTemplates as $template): ?>
-                                <option value="<?= githubRubricH($template['id']) ?>" <?= $selectedSource === $template['id'] ? 'selected' : '' ?>><?= githubRubricH($template['name']) ?> (<?= (int)$template['count'] ?> indicatori)</option>
-                            <?php endforeach; ?>
-                        </optgroup>
-                    <?php endif; ?>
-                    <?php if ($temporaryRows !== []): ?>
-                        <optgroup label="Template temporaneo">
-                            <option value="temporary" <?= $selectedSource === 'temporary' ? 'selected' : '' ?>><?= githubRubricH($temporaryTemplateName ?: 'Rubrica personalizzata') ?> (<?= count($temporaryRows) ?> indicatori)</option>
-                        </optgroup>
-                    <?php endif; ?>
-                </select>
+                <p class="form-text mb-3">Seleziona una riga per caricare la rubrica o il template nell’editor. La riga selezionata viene evidenziata in azzurro.</p>
             </form>
             <?php if ($rubricheList === [] && $persistentTemplates === [] && $temporaryRows === []): ?>
                 <div class="text-muted">Nessuna rubrica o template conforme trovato.</div>
             <?php else: ?>
                 <div class="table-responsive">
                     <table class="table table-striped align-middle rubric-list-table mb-0">
-                        <thead><tr><th>Origine</th><th>Nome / id</th><th># indicatori</th><th>Note</th><th class="text-end">Azioni</th></tr></thead>
+                        <thead><tr><th scope="col">Seleziona</th><th scope="col">Origine</th><th scope="col">Nome / id</th><th scope="col"># indicatori</th><th scope="col">Note</th><th scope="col" class="text-end">Azioni</th></tr></thead>
                         <tbody>
                         <?php foreach ($rubricheList as $rubric): ?>
-                            <tr>
+                            <?php $source = 'db:' . $rubric['id_rubrica']; ?>
+                            <tr class="<?= $selectedSource === $source ? 'template-source-selected' : '' ?>">
+                                <td>
+                                    <input class="form-check-input template-source-radio" form="templateSelectionForm" type="radio" name="source" value="<?= githubRubricH($source) ?>" <?= $selectedSource === $source ? 'checked' : '' ?> aria-label="Seleziona rubrica <?= githubRubricH($rubric['id_rubrica']) ?>">
+                                </td>
                                 <td><span class="badge text-bg-secondary">Database</span></td>
                                 <td class="font-monospace"><?= githubRubricH($rubric['id_rubrica']) ?></td>
                                 <td><?= (int)$rubric['count'] ?></td>
                                 <td class="note-cell text-muted small"><?= githubRubricH($rubric['note']) ?></td>
                                 <td class="text-end">
-                                    <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare la rubrica?')">
-                                        <input type="hidden" name="action" value="delete">
-                                        <input type="hidden" name="_csrf_token" value="<?= githubRubricH($csrfToken) ?>">
-                                        <input type="hidden" name="id_rubrica" value="<?= githubRubricH($rubric['id_rubrica']) ?>">
-                                        <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
-                                    </form>
+                                    <button type="button" class="btn btn-sm btn-outline-danger delete-rubric-button" data-rubric-id="<?= githubRubricH($rubric['id_rubrica']) ?>" data-csrf-token="<?= githubRubricH($csrfToken) ?>" title="Elimina rubrica"><i class="bi bi-trash"></i></button>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
                         <?php foreach ($persistentTemplates as $template): ?>
-                            <tr class="template-source-file">
+                            <?php $source = $template['id']; ?>
+                            <tr class="template-source-file <?= $selectedSource === $source ? 'template-source-selected' : '' ?>">
+                                <td>
+                                    <input class="form-check-input template-source-radio" form="templateSelectionForm" type="radio" name="source" value="<?= githubRubricH($source) ?>" <?= $selectedSource === $source ? 'checked' : '' ?> aria-label="Seleziona template <?= githubRubricH($template['name']) ?>">
+                                </td>
                                 <td><span class="badge text-bg-info">Materiale</span></td>
                                 <td><?= githubRubricH($template['name']) ?></td>
                                 <td><?= (int)$template['count'] ?></td>
@@ -317,7 +298,10 @@ $noRubricForSelectedTest = $selectedTestId !== '' && $selectedSource === '' && $
                             </tr>
                         <?php endforeach; ?>
                         <?php if ($temporaryRows !== []): ?>
-                            <tr class="template-source-temporary">
+                            <tr class="template-source-temporary <?= $selectedSource === 'temporary' ? 'template-source-selected' : '' ?>">
+                                <td>
+                                    <input class="form-check-input template-source-radio" form="templateSelectionForm" type="radio" name="source" value="temporary" <?= $selectedSource === 'temporary' ? 'checked' : '' ?> aria-label="Seleziona template temporaneo">
+                                </td>
                                 <td><span class="badge text-bg-warning">Temporanea</span></td>
                                 <td><?= githubRubricH($temporaryTemplateName ?: 'Rubrica personalizzata') ?></td>
                                 <td><?= count($temporaryRows) ?></td>
@@ -346,7 +330,31 @@ $noRubricForSelectedTest = $selectedTestId !== '' && $selectedSource === '' && $
     const testSelect = document.getElementById('selectTest');
     if (testForm && testSelect) testSelect.addEventListener('change', () => testForm.submit());
     const sourceForm = document.getElementById('templateSelectionForm');
-    const sourceSelect = document.getElementById('templateSourceSelect');
-    if (sourceForm && sourceSelect) sourceSelect.addEventListener('change', () => sourceForm.submit());
+    const sourceRadios = sourceForm ? document.querySelectorAll('.template-source-radio') : [];
+    const refreshSelectedRow = () => sourceRadios.forEach((radio) => {
+        const row = radio.closest('tr');
+        if (row) row.classList.toggle('template-source-selected', radio.checked);
+    });
+    sourceRadios.forEach((radio) => radio.addEventListener('change', () => {
+        refreshSelectedRow();
+        sourceForm.submit();
+    }));
+    refreshSelectedRow();
+
+    document.querySelectorAll('.delete-rubric-button').forEach((button) => button.addEventListener('click', () => {
+        if (!window.confirm('Eliminare la rubrica?')) return;
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = window.location.href.split('?')[0];
+        [['action', 'delete'], ['_csrf_token', button.dataset.csrfToken || ''], ['id_rubrica', button.dataset.rubricId || '']].forEach(([name, value]) => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = name;
+            input.value = value;
+            form.appendChild(input);
+        });
+        document.body.appendChild(form);
+        form.submit();
+    }));
 })();
 </script></body></html>
