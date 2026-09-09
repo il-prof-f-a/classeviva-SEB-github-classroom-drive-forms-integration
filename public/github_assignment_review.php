@@ -2703,14 +2703,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                const applied = applyGradeToSelect();
 	                if (applied) {
 	                    const saveVoteCheckbox = rubricContext ? rubricContext.saveVoteCheckbox : null;
-	                    if (saveVoteCheckbox) {
-	                        saveVoteCheckbox.checked = true;
-	                        syncSaveVoteCheckbox(rubricContext.index, true);
-	                    }
-	                    closeRubricPanel();
-	                }
-	            });
-	        }
+                    if (saveVoteCheckbox) {
+                        saveVoteCheckbox.checked = true;
+                        syncSaveVoteCheckbox(rubricContext.index, true);
+                    }
+                    setSaveStatus('ok', 'Voto applicato. Il popup resta aperto per eventuali modifiche.');
+                }
+            });
+        }
 
 	        if (rubricHost) {
 	            rubricHost.addEventListener('click', function (e) {

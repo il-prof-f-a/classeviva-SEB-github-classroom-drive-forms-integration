@@ -24,6 +24,10 @@ $require(str_contains($source, 'Salva voti selezionati'), 'dicitura Salva voti s
 $require(str_contains($source, 'save-vote-checkbox'), 'classe checkbox voto assente');
 $require(str_contains($source, 'syncSaveVoteCheckbox'), 'sincronizzazione checkbox non definita');
 $require(str_contains($source, 'rubricApplyBtn') && str_contains($source, 'saveVoteCheckbox.checked = true'), 'applicazione rubrica non seleziona il voto');
+$require(str_contains($source, "setSaveStatus('ok', 'Voto applicato."), 'feedback applicazione voto assente');
+$applyHandlerStart = strpos($source, "rubricApplyBtn.addEventListener('click'");
+$applyHandler = $applyHandlerStart === false ? '' : substr($source, $applyHandlerStart, 1200);
+$require($applyHandler !== '' && !str_contains($applyHandler, 'closeRubricPanel();'), 'applicazione voto chiude ancora il popup');
 
 if ($failures !== []) {
     foreach ($failures as $failure) {
