@@ -27,6 +27,11 @@ $require(str_contains($source, 'let rubricLoadSequence = 0'), 'sequenza caricame
 $require(str_contains($source, 'rubricLoadController'), 'AbortController caricamento rubrica assente');
 $require(str_contains($source, 'if (loadSequence !== rubricLoadSequence)'), 'risposte asincrone obsolete non filtrate');
 $require(str_contains($source, 'RUBRIC_CTX.rubric_rows'), 'render non usa la rubrica precaricata');
+$require(str_contains($source, 'id="rubricAttributionsStatus"'), 'banner caricamento attribuzioni assente');
+$require(str_contains($source, 'aria-live="polite"'), 'banner caricamento senza annuncio accessibile');
+$require(str_contains($source, 'setRubricLoadingStatus'), 'gestione stato banner caricamento assente');
+$require(str_contains($source, 'setRubricLoadingStatus(true)'), 'banner non mostrato all’apertura popup');
+$require(str_contains($source, 'setRubricLoadingStatus(false)'), 'banner non nascosto al completamento');
 
 if ($failures !== []) {
     foreach ($failures as $failure) {

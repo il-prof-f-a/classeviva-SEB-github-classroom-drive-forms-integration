@@ -538,6 +538,7 @@ $architectureTests = [
     'github review saved grades' => __DIR__ . '/public/github_assignment_review_saved_grades.php',
     'github review vote selection' => __DIR__ . '/public/github_assignment_review_selection.php',
     'github review rubric loading' => __DIR__ . '/public/github_assignment_review_rubric_loading.php',
+    'github default rubric' => __DIR__ . '/public/github_default_rubric.php',
     'github student list auth banner' => __DIR__ . '/public/github_student_list_auth_banner.php',
     'GitHub assignment roster' => __DIR__ . '/domain/github_assignment_roster.php',
     'GitHub assignment group roster' => __DIR__ . '/domain/github_assignment_group_roster.php',

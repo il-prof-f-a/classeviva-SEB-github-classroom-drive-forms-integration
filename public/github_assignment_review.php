@@ -228,7 +228,7 @@ function ghDefaultGitRubricDefinition(): array
             'livello_3_desc' => 'Push e merge avvengono generalmente su modifiche verificate e con una separazione sufficientemente chiara delle attività.',
             'livello_4_desc' => 'Lo studente integra in modo consapevole e riproducibile: protegge i branch condivisi, gestisce correttamente conflitti e merge e, quando previsto, usa PR/review/issue in modo funzionale alla collaborazione.',
             'livello_5_desc' => '',
-            'peso' => '0',
+            'peso' => '15',
             'ordine' => '5'
         ],
         [
@@ -1825,9 +1825,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 		                <div class="col-md-3">
 		                    <div class="border rounded p-2 bg-light h-100">
 		                        <div class="fw-semibold mb-1">Dati (dal portale)</div>
-		                        <div class="small" id="rubricMetrics"></div>
-		                        <hr class="my-2">
-		                        <div class="d-flex justify-content-between align-items-center">
+	                        <div class="small" id="rubricMetrics"></div>
+	                        <hr class="my-2">
+	                        <div id="rubricAttributionsStatus" class="alert alert-info py-1 px-2 small mb-2 d-none" role="status" aria-live="polite">
+	                            <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+	                            Caricamento attribuzioni…
+	                        </div>
+	                        <div class="d-flex justify-content-between align-items-center">
 		                            <div>
 		                                <div class="fw-semibold">Voto finale</div>
 		                                <div class="text-muted small">Punti (su 24): <span id="rubricPoints">-</span></div>
@@ -2167,9 +2171,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            rubric_editor_url: <?= \App\Core\Security\OutputEncoder::json('github_rubriche.php?test_id=' . urlencode((string)$testId)) ?>
 	        };
 
-		        const rubricPanelEl = document.getElementById('rubricPanel');
-		        const rubricHost = document.getElementById('rubricTableHost');
-		        const rubricMetrics = document.getElementById('rubricMetrics');
+	        const rubricPanelEl = document.getElementById('rubricPanel');
+	        const rubricHost = document.getElementById('rubricTableHost');
+	        const rubricMetrics = document.getElementById('rubricMetrics');
+	        const rubricAttributionsStatusEl = document.getElementById('rubricAttributionsStatus');
 		        const rubricPointsEl = document.getElementById('rubricPoints');
 		        const rubricGradeEl = document.getElementById('rubricGrade');
 		        const rubricGradeRawEl = document.getElementById('rubricGradeRaw');
@@ -2318,10 +2323,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 		            rubricPanelEl.classList.add('open');
 		        }
 
-		        async function closeRubricPanel() {
-		            if (!rubricPanelEl) return;
-		            await flushRubricSave();
-		            rubricPanelEl.classList.remove('open');
+	        async function closeRubricPanel() {
+	            if (!rubricPanelEl) return;
+	            await flushRubricSave();
+	            setRubricLoadingStatus(false);
+	            rubricPanelEl.classList.remove('open');
 		            clearRubricHighlightedRow();
 		        }
 
@@ -2415,6 +2421,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            if (kind === 'muted') rubricSaveStatusEl.classList.add('text-muted');
 	            rubricSaveStatusEl.textContent = text || '';
 	        }
+
+	        function setRubricLoadingStatus(loading, message = '') {
+	            if (!rubricAttributionsStatusEl) return;
+	            if (loading) {
+	                rubricAttributionsStatusEl.className = 'alert alert-info py-1 px-2 small mb-2';
+	                rubricAttributionsStatusEl.innerHTML = '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>Caricamento attribuzioni…';
+
+                return;
+            }
+            if (message) {
+                rubricAttributionsStatusEl.className = 'alert alert-warning py-1 px-2 small mb-2';
+                rubricAttributionsStatusEl.textContent = message;
+                return;
+            }
+            rubricAttributionsStatusEl.className = 'alert alert-info py-1 px-2 small mb-2 d-none';
+            rubricAttributionsStatusEl.textContent = '';
+        }
 
 	        function renderRubricTable() {
 	            if (!rubricHost || !rubricState) return;
@@ -2582,6 +2605,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
 	        async function openRubricModal(btn, options = {}) {
 	            if (!rubricPanelEl) return;
+	            setRubricLoadingStatus(true);
 	            const loadSequence = ++rubricLoadSequence;
 	            rubricAttributionsLoaded = false;
             if (rubricApplyBtn) rubricApplyBtn.disabled = true;
@@ -2657,6 +2681,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            // La rubrica è già nel contesto HTML: render immediato, senza
 	            // attendere una richiesta. Solo le attribuzioni sono dinamiche.
 	            if (!RUBRIC_CTX.has_rubric) {
+	                setRubricLoadingStatus(false);
 	                if (rubricHost) {
 	                    rubricHost.innerHTML = '<div class="alert alert-warning mb-0">Nessuna rubrica associata al test. Assegnane una da <a href="' + escapeHtml(RUBRIC_CTX.rubric_editor_url) + '" target="_blank">github_rubriche.php</a>.</div>';
 	                }
@@ -2686,6 +2711,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                if (loadSequence !== rubricLoadSequence) return;
 
 	                if (!data.ok) {
+	                    setRubricLoadingStatus(false, 'Attribuzioni non disponibili.');
 	                    if (rubricEvaluationSummaryEl) rubricEvaluationSummaryEl.innerHTML = '<span class="text-danger">Errore caricamento attribuzioni: ' + escapeHtml(data.error || 'Errore') + '</span>';
 	                    return;
 	                }
@@ -2693,12 +2719,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                rubricState = buildRubricState(rubricRows, data.saved_json || null);
 	                rubricAttributionsLoaded = true;
                 if (rubricApplyBtn) rubricApplyBtn.disabled = false;
-	                renderRubricTable();
+                setRubricLoadingStatus(false);
+                renderRubricTable();
             } catch (e) {
 	                if (e && e.name === 'AbortError') return;
 	                if (loadSequence !== rubricLoadSequence) return;
-	                rubricAttributionsLoaded = false;
-	                if (rubricEvaluationSummaryEl) rubricEvaluationSummaryEl.innerHTML = '<span class="text-danger">Errore caricamento attribuzioni.</span>';
+                rubricAttributionsLoaded = false;
+                setRubricLoadingStatus(false, 'Attribuzioni non disponibili.');
+                if (rubricEvaluationSummaryEl) rubricEvaluationSummaryEl.innerHTML = '<span class="text-danger">Errore caricamento attribuzioni.</span>';
 	            } finally {
                 if (loadSequence === rubricLoadSequence) {
                     rubricLoadController = null;

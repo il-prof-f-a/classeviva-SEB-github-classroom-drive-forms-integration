@@ -61,7 +61,7 @@ function defaultGitHubRubricRows(string $rubricId, string $idUda): array
             'l2' => 'Il flusso condiviso è rispettato solo in parte; push e merge sono talvolta disordinati o poco coordinati.',
             'l3' => 'Push e merge avvengono generalmente su modifiche verificate e con una separazione sufficientemente chiara delle attività.',
             'l4' => 'Lo studente integra in modo consapevole e riproducibile: protegge i branch condivisi, gestisce correttamente conflitti e merge e, quando previsto, usa PR/review/issue in modo funzionale alla collaborazione.',
-            'peso' => '0',
+            'peso' => '15',
         ],
         [
             'nome' => 'Revisione e tracciabilità del processo',
@@ -385,7 +385,7 @@ if ($selectedRubricId !== '') {
                     </select>
                 </div>
                 <div class="col-12">
-                    <button class="btn btn-primary"><i class="bi bi-arrow-repeat"></i> Carica</button>
+                    <button class="btn btn-primary"><i class="bi bi-arrow-repeat"></i> Carica Rubrica di default</button>
                     <a class="btn btn-outline-secondary" href="github_rubriche.php"><i class="bi bi-x-circle"></i> Reset</a>
                 </div>
             </form>
