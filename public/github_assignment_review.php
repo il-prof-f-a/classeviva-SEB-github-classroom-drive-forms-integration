@@ -5,6 +5,12 @@
 
 require_once '../bootstrap.php';
 
+// La review contiene voti e attribuzioni per-studente: anche la pagina HTML
+// deve arrivare sempre dallo stato corrente, senza cache del browser/proxy.
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+header('Expires: 0');
+
 use App\Core\Database\DatabaseFactory;
 use App\Core\GitHubAssignmentService;
 use App\Core\NotificationManager;
@@ -21,9 +27,14 @@ $userId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
 $github->loadTokenFromSession();
 $isAuthenticated = $github->isAuthenticated();
 
-function jsonResponse($data, $status = 200)
+function jsonResponse($data, $status = 200, bool $noStore = false)
 {
     http_response_code($status);
+    if ($noStore) {
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        header('Expires: 0');
+    }
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode($data);
     exit;
@@ -288,9 +299,63 @@ if ($getAction === 'rubric_load') {
             'rubric_rows' => $rubricaRows,
             'saved' => $savedRow,
             'saved_json' => $savedJson
-        ]);
+        ], 200, true);
     } catch (Exception $e) {
-        jsonResponse(['ok' => false, 'error' => \App\Core\Security\PublicError::message($e, 'github_rubric_load')], 400);
+        jsonResponse(['ok' => false, 'error' => \App\Core\Security\PublicError::message($e, 'github_rubric_load')], 400, true);
+    }
+}
+
+// Le attribuzioni sono per-studente e devono essere sempre lette dallo stato
+// corrente del database. La rubrica statica viene invece precaricata nella
+// pagina: questo endpoint restituisce quindi solo la valutazione salvata.
+if ($getAction === 'rubric_saved') {
+    try {
+        $studentId = trim((string)($_GET['student_id'] ?? ''));
+        if ($studentId === '') {
+            throw new Exception('student_id mancante');
+        }
+
+        $rubricId = (string)$testId;
+        $idUda = (string)($test['id_uda'] ?? '');
+        $idGruppo = trim((string)($_GET['id_gruppo'] ?? ''));
+        $where = [
+            'id_uda' => $idUda,
+            'id_rubrica' => $rubricId,
+            'id_studente' => $studentId
+        ];
+        if ($idGruppo !== '') {
+            $where['id_gruppo'] = $idGruppo;
+        }
+
+        $saved = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $where);
+        // Compatibilità con le valutazioni create prima dell'associazione al
+        // gruppo: manteniamo il fallback solo per l'attribuzione corrente.
+        if (empty($saved) && $idGruppo !== '') {
+            unset($where['id_gruppo']);
+            $saved = $dbAdapter->findWhere('VALUTAZIONI_RUBRICA', $where);
+        }
+
+        $savedRow = $saved[0] ?? null;
+        $savedJson = null;
+        if ($savedRow && !empty($savedRow['dati_json'])) {
+            $decoded = json_decode((string)$savedRow['dati_json'], true);
+            if (is_array($decoded)) {
+                $savedJson = $decoded;
+            }
+        }
+
+        jsonResponse([
+            'ok' => true,
+            'rubric_id' => $rubricId,
+            'id_uda' => $idUda,
+            'saved' => $savedRow,
+            'saved_json' => $savedJson
+        ], 200, true);
+    } catch (Exception $e) {
+        jsonResponse([
+            'ok' => false,
+            'error' => \App\Core\Security\PublicError::message($e, 'github_rubric_saved')
+        ], 400, true);
     }
 }
 
@@ -884,6 +949,13 @@ if (!function_exists('ghSlugify')) {
 // username GitHub (valorizzato all'accettazione) e repository (creata alla configurazione).
 $groupId = trim((string)($test['id_gruppo'] ?? ''));
 $idGruppo = $groupId;
+
+// La definizione della rubrica è comune a tutti gli studenti del test: viene
+// letta una sola volta durante il rendering della pagina e riusata dal popup.
+$pageRubricRows = $dbAdapter->findWhere('RUBRICA', ['id_rubrica' => (string)$testId]);
+usort($pageRubricRows, static function (array $a, array $b): int {
+    return (int)($a['ordine'] ?? 0) <=> (int)($b['ordine'] ?? 0);
+});
 
 $studentMap = [];
 foreach ($dbAdapter->findWhere('GITHUB_ASSIGNMENT_STUDENT_LINKS', ['id_assignment' => $testId]) as $link) {
@@ -2090,6 +2162,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            test_id: <?= \App\Core\Security\OutputEncoder::json((string)$testId) ?>,
 	            id_uda: <?= \App\Core\Security\OutputEncoder::json((string)($test['id_uda'] ?? '')) ?>,
 	            id_gruppo: <?= \App\Core\Security\OutputEncoder::json((string)($idGruppo ?? '')) ?>,
+	            rubric_rows: <?= \App\Core\Security\OutputEncoder::json($pageRubricRows) ?>,
+	            has_rubric: <?= !empty($pageRubricRows) ? 'true' : 'false' ?>,
 	            rubric_editor_url: <?= \App\Core\Security\OutputEncoder::json('github_rubriche.php?test_id=' . urlencode((string)$testId)) ?>
 	        };
 
@@ -2114,8 +2188,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 		        let rubricSaveTimer = null;
 		        let rubricSaveInFlight = Promise.resolve();
 		        let rubricLastSavedAt = 0;
-		        let rubricHighlightedRow = null;
-		        let rubricCurrentButton = null;
+	        let rubricHighlightedRow = null;
+	        let rubricCurrentButton = null;
+	        let rubricLoadSequence = 0;
+	        let rubricLoadController = null;
+	        let rubricAttributionsLoaded = false;
 
 		        function getRubricButtons() {
 		            return Array.from(document.querySelectorAll('.rubric-open-btn'));
@@ -2216,7 +2293,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 		            updateRubricNavigation();
 		            await ensureRowDetails(targetRow);
 		            flashAndScrollToRow(targetRow);
-		            openRubricModal(targetButton, {focusRow: false});
+	            await openRubricModal(targetButton, {focusRow: false});
 		        }
 
 		        function setRubricHighlightedRow(rowEl) {
@@ -2476,9 +2553,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            return false;
 	        }
 
+	        function buildRubricState(rows, savedJson) {
+	            const rubricRows = Array.isArray(rows) ? rows : [];
+	            const savedItems = Array.isArray(savedJson?.items) ? savedJson.items : null;
+            return {
+	                rubric_id: RUBRIC_CTX.test_id,
+	                items: rubricRows.map((r) => {
+	                    const order = Number(r.ordine ?? r['ordine'] ?? 0) || 0;
+	                    const name = r.nome_indicatore ?? r['nome_indicatore'] ?? '';
+	                    const matchSaved = savedItems ? savedItems.find(si => Number(si.ordine || 0) === order) : null;
+                    return {
+	                        order: order,
+	                        name: name,
+	                        description: r.descrizione ?? r['descrizione'] ?? '',
+	                        enabled: matchSaved ? !!matchSaved.enabled : true,
+	                        level: matchSaved && matchSaved.level ? Number(matchSaved.level) : null,
+	                        weight: matchSaved && matchSaved.weight !== null && matchSaved.weight !== undefined ? matchSaved.weight : (r.peso ?? r['peso'] ?? 1),
+	                        levels: {
+	                            1: r.livello_1_desc ?? r['livello_1_desc'] ?? '',
+	                            2: r.livello_2_desc ?? r['livello_2_desc'] ?? '',
+	                            3: r.livello_3_desc ?? r['livello_3_desc'] ?? '',
+	                            4: r.livello_4_desc ?? r['livello_4_desc'] ?? ''
+	                        }
+	                    };
+	                })
+	            };
+        }
+
 	        async function openRubricModal(btn, options = {}) {
 	            if (!rubricPanelEl) return;
+	            const loadSequence = ++rubricLoadSequence;
+	            rubricAttributionsLoaded = false;
+            if (rubricApplyBtn) rubricApplyBtn.disabled = true;
+	            if (rubricLoadController) {
+	                rubricLoadController.abort();
+	            }
+	            rubricLoadController = new AbortController();
+	            const loadSignal = rubricLoadController.signal;
 	            await flushRubricSave();
+	            if (loadSequence !== rubricLoadSequence) return;
 	            const focusRow = !!options.focusRow;
 	            const studentId = btn.dataset.studentId || '';
 	            const githubUsername = btn.dataset.githubUsername || '';
@@ -2536,69 +2649,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                    `<div class="mt-2"><strong>LOC</strong>: <span id="rubricLocSummary" class="text-muted">in caricamento...</span></div>`;
 	            }
 
-	            if (rubricHost) rubricHost.innerHTML = '<div class="text-muted">Caricamento rubrica...</div>';
-	            if (rubricEvaluationSummaryEl) rubricEvaluationSummaryEl.innerHTML = '<span class="text-muted">Caricamento valutazione...</span>';
+	            if (rubricHost) rubricHost.innerHTML = '';
+	            if (rubricEvaluationSummaryEl) rubricEvaluationSummaryEl.innerHTML = '<span class="text-muted">Caricamento attribuzioni...</span>';
 	            setSaveStatus('muted', '');
 	            openRubricPanel();
 
-	            // Carica rubric + eventuale salvataggio
-	            const url = new URL(window.location.href);
-	            url.searchParams.set('action', 'rubric_load');
-	            url.searchParams.set('student_id', studentId);
-	            url.searchParams.set('id_gruppo', RUBRIC_CTX.id_gruppo || '');
-
-	            const res = await fetch(url.toString(), {headers: {'Accept': 'application/json'}});
-	            const data = await res.json();
-
-	            if (!data.ok) {
-	                if (rubricHost) rubricHost.innerHTML = '<div class="text-danger">Errore: ' + escapeHtml(data.error || 'Errore') + '</div>';
-	                return;
-	            }
-
-	            if (!data.has_rubric) {
+	            // La rubrica è già nel contesto HTML: render immediato, senza
+	            // attendere una richiesta. Solo le attribuzioni sono dinamiche.
+	            if (!RUBRIC_CTX.has_rubric) {
 	                if (rubricHost) {
 	                    rubricHost.innerHTML = '<div class="alert alert-warning mb-0">Nessuna rubrica associata al test. Assegnane una da <a href="' + escapeHtml(RUBRIC_CTX.rubric_editor_url) + '" target="_blank">github_rubriche.php</a>.</div>';
 	                }
 	                return;
 	            }
 
-	            const rows = Array.isArray(data.rubric_rows) ? data.rubric_rows : [];
-	            const saved = data.saved_json || null;
-	            const savedItems = Array.isArray(saved?.items) ? saved.items : null;
+	            const rubricRows = Array.isArray(RUBRIC_CTX.rubric_rows) ? RUBRIC_CTX.rubric_rows : [];
+	            rubricState = buildRubricState(rubricRows, null);
+	            renderRubricTable();
+	            if (rubricEvaluationSummaryEl) rubricEvaluationSummaryEl.innerHTML = '<span class="text-muted">Caricamento attribuzioni...</span>';
+	            openRubricPanel();
 
-	            rubricState = {
-	                rubric_id: data.rubric_id || RUBRIC_CTX.test_id,
-	                items: rows.map((r) => {
-	                    const order = Number(r.ordine ?? r['ordine'] ?? 0) || 0;
-	                    const name = r.nome_indicatore ?? r['nome_indicatore'] ?? '';
-	                    const matchSaved = savedItems ? savedItems.find(si => Number(si.ordine || 0) === order) : null;
-	                    return {
-	                        order: order,
-	                        name: name,
-	                        description: r.descrizione ?? r['descrizione'] ?? '',
-	                        enabled: matchSaved ? !!matchSaved.enabled : true,
-	                        level: matchSaved && matchSaved.level ? Number(matchSaved.level) : null,
-	                        weight: matchSaved && matchSaved.weight !== null && matchSaved.weight !== undefined ? matchSaved.weight : (r.peso ?? r['peso'] ?? 1),
-	                        levels: {
-	                            1: r.livello_1_desc ?? r['livello_1_desc'] ?? '',
-	                            2: r.livello_2_desc ?? r['livello_2_desc'] ?? '',
-	                            3: r.livello_3_desc ?? r['livello_3_desc'] ?? '',
-	                            4: r.livello_4_desc ?? r['livello_4_desc'] ?? ''
-	                        }
-	                    };
-	                })
-	            };
+	            // Carica solo le attribuzioni del singolo studente, sempre senza cache.
+	            const url = new URL(window.location.href);
+	            url.searchParams.set('action', 'rubric_saved');
+	            url.searchParams.set('student_id', studentId);
+	            url.searchParams.set('id_gruppo', RUBRIC_CTX.id_gruppo || '');
+	            url.searchParams.set('_rubric_load', String(Date.now()));
 
-		            renderRubricTable();
-		            openRubricPanel();
+            try {
+	                const res = await fetch(url.toString(), {
+	                    headers: {'Accept': 'application/json'},
+	                    cache: 'no-store',
+	                    signal: loadSignal
+	                });
+	                const data = await res.json();
+	                if (loadSequence !== rubricLoadSequence) return;
+
+	                if (!data.ok) {
+	                    if (rubricEvaluationSummaryEl) rubricEvaluationSummaryEl.innerHTML = '<span class="text-danger">Errore caricamento attribuzioni: ' + escapeHtml(data.error || 'Errore') + '</span>';
+	                    return;
+	                }
+
+	                rubricState = buildRubricState(rubricRows, data.saved_json || null);
+	                rubricAttributionsLoaded = true;
+                if (rubricApplyBtn) rubricApplyBtn.disabled = false;
+	                renderRubricTable();
+            } catch (e) {
+	                if (e && e.name === 'AbortError') return;
+	                if (loadSequence !== rubricLoadSequence) return;
+	                rubricAttributionsLoaded = false;
+	                if (rubricEvaluationSummaryEl) rubricEvaluationSummaryEl.innerHTML = '<span class="text-danger">Errore caricamento attribuzioni.</span>';
+	            } finally {
+                if (loadSequence === rubricLoadSequence) {
+                    rubricLoadController = null;
+                }
+            }
 
 	            // Carica LOC (usa endpoint esistente, con cache)
 	            if (repoFull && !isBlind) {
 	                try {
-	                    const locBody = new URLSearchParams({action: 'repo_loc', repo: repoFull, ref: ref || 'main', force: '0'});
+                    const locBody = new URLSearchParams({action: 'repo_loc', repo: repoFull, ref: ref || 'main', force: '0'});
                     const locRes = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body: locBody});
-	                    const locData = await locRes.json();
-	                    const el = document.getElementById('rubricLocSummary');
+                    const locData = await locRes.json();
+                    if (loadSequence !== rubricLoadSequence) return;
+                    const el = document.getElementById('rubricLocSummary');
 	                    if (el) {
 	                        if (!locData.ok) {
 	                            el.textContent = 'errore';
@@ -2608,8 +2722,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                            rubricContext.metrics.loc = totals;
 	                        }
 	                    }
-	                } catch (e) {
-	                    const el = document.getElementById('rubricLocSummary');
+                } catch (e) {
+                    if (loadSequence !== rubricLoadSequence) return;
+                    const el = document.getElementById('rubricLocSummary');
 	                    if (el) el.textContent = 'errore';
 	                }
 	            } else {
@@ -2640,6 +2755,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
 	        if (rubricHost) {
 	            rubricHost.addEventListener('click', function (e) {
+	                if (!rubricAttributionsLoaded) return;
 	                const cell = e.target.closest('.rubric-level');
 	                if (!cell) return;
 	                const tr = cell.closest('tr');
@@ -2654,7 +2770,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            });
 
 	            rubricHost.addEventListener('change', function (e) {
-	                const tr = e.target.closest('tr');
+	                if (!rubricAttributionsLoaded) return;
+                const tr = e.target.closest('tr');
 	                if (!tr) return;
 	                const idx = Number(tr.dataset.idx || '0');
 	                if (!rubricState || !rubricState.items[idx]) return;
