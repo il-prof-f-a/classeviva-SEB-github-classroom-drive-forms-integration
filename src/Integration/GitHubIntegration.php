@@ -107,6 +107,7 @@ class GitHubIntegration
      */
     public function listRepoCommits($owner, $repo, $since = null, $until = null, $perPage = 20, $page = 1)
     {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
         $params = [
             'per_page' => $perPage,
             'page' => $page
@@ -121,10 +122,137 @@ class GitHubIntegration
     }
 
     /**
+     * Restituisce tutti i commit disponibili entro un limite di pagine. Il
+     * limite evita di bruciare la quota API per repository molto grandi.
+     */
+    public function listRepoCommitsAll($owner, $repo, $perPage = 100, $maxPages = 20): array
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        return $this->collectPages(
+            fn (int $page): array => (array)$this->listRepoCommits($owner, $repo, null, null, $perPage, $page),
+            $perPage,
+            $maxPages
+        );
+    }
+
+    /**
+     * Issue della repository. `state=all` consente di mostrare anche la data
+     * di chiusura; le pull request vengono filtrate dal normalizzatore della
+     * Review perché GitHub le espone anche dall'endpoint Issues.
+     */
+    public function listRepoIssues($owner, $repo, $state = 'all', $perPage = 100, $page = 1): array
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        $state = in_array($state, ['open', 'closed', 'all'], true) ? $state : 'all';
+        return (array)$this->apiRequest('GET', "/repos/{$owner}/{$repo}/issues", null, [
+            'state' => $state,
+            'sort' => 'created',
+            'direction' => 'asc',
+            'per_page' => min(100, max(1, (int)$perPage)),
+            'page' => max(1, (int)$page),
+        ]);
+    }
+
+    public function listRepoIssuesAll($owner, $repo, $state = 'all', $perPage = 100, $maxPages = 10): array
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        return $this->collectPages(
+            fn (int $page): array => $this->listRepoIssues($owner, $repo, $state, $perPage, $page),
+            $perPage,
+            $maxPages
+        );
+    }
+
+    /** Timeline di un issue; include gli eventi `referenced` con commit_id. */
+    public function listIssueTimeline($owner, $repo, $issueNumber, $perPage = 100, $page = 1): array
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        $issueNumber = $this->validatedIssueNumber($issueNumber);
+        return (array)$this->apiRequest(
+            'GET',
+            "/repos/{$owner}/{$repo}/issues/{$issueNumber}/timeline",
+            null,
+            [
+                'per_page' => min(100, max(1, (int)$perPage)),
+                'page' => max(1, (int)$page),
+            ]
+        );
+    }
+
+    public function listIssueTimelineAll($owner, $repo, $issueNumber, $perPage = 100, $maxPages = 5): array
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        $issueNumber = $this->validatedIssueNumber($issueNumber);
+        return $this->collectPages(
+            fn (int $page): array => $this->listIssueTimeline($owner, $repo, $issueNumber, $perPage, $page),
+            $perPage,
+            $maxPages
+        );
+    }
+
+    /** Branch presenti nella repository. */
+    public function listRepoBranches($owner, $repo, $perPage = 100, $page = 1): array
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        return (array)$this->apiRequest('GET', "/repos/{$owner}/{$repo}/branches", null, [
+            'per_page' => min(100, max(1, (int)$perPage)),
+            'page' => max(1, (int)$page),
+        ]);
+    }
+
+    public function listRepoBranchesAll($owner, $repo, $perPage = 100, $maxPages = 10): array
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        return $this->collectPages(
+            fn (int $page): array => $this->listRepoBranches($owner, $repo, $perPage, $page),
+            $perPage,
+            $maxPages
+        );
+    }
+
+    /** Tag della repository con lo SHA del commit puntato. */
+    public function listRepoTags($owner, $repo, $perPage = 100, $page = 1): array
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        return (array)$this->apiRequest('GET', "/repos/{$owner}/{$repo}/tags", null, [
+            'per_page' => min(100, max(1, (int)$perPage)),
+            'page' => max(1, (int)$page),
+        ]);
+    }
+
+    public function listRepoTagsAll($owner, $repo, $perPage = 100, $maxPages = 10): array
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        return $this->collectPages(
+            fn (int $page): array => $this->listRepoTags($owner, $repo, $perPage, $page),
+            $perPage,
+            $maxPages
+        );
+    }
+
+    /** Branch che hanno esattamente questo commit come HEAD. */
+    public function listCommitBranches($owner, $repo, $sha): array
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        $sha = $this->validatedSha($sha);
+        return (array)$this->apiRequest('GET', "/repos/{$owner}/{$repo}/commits/{$sha}/branches-where-head");
+    }
+
+    /** Pull request associate a un commit, utili per ricavare head.ref. */
+    public function listCommitPullRequests($owner, $repo, $sha): array
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        $sha = $this->validatedSha($sha);
+        return (array)$this->apiRequest('GET', "/repos/{$owner}/{$repo}/commits/{$sha}/pulls");
+    }
+
+    /**
      * Dettagli di un commit (include files e stats)
      */
     public function getCommit($owner, $repo, $sha)
     {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        $sha = $this->validatedSha($sha);
         return $this->apiRequest('GET', "/repos/{$owner}/{$repo}/commits/{$sha}");
     }
 
@@ -267,6 +395,68 @@ class GitHubIntegration
             return array_values(array_filter(array_map('trim', explode(',', $matches[1]))));
         }
         return [];
+    }
+
+    /** @return array{0:string,1:string} */
+    private function validatedRepository($owner, $repo): array
+    {
+        $owner = trim((string)$owner);
+        $repo = trim((string)$repo);
+        if (preg_match('/^[A-Za-z0-9_.-]{1,100}$/', $owner) !== 1
+            || preg_match('/^[A-Za-z0-9_.-]{1,100}$/', $repo) !== 1) {
+            throw new \InvalidArgumentException('Repository GitHub non valida.');
+        }
+        return [rawurlencode($owner), rawurlencode($repo)];
+    }
+
+    private function validatedSha($sha): string
+    {
+        $sha = strtolower(trim((string)$sha));
+        if (preg_match('/^[0-9a-f]{7,64}$/', $sha) !== 1) {
+            throw new \InvalidArgumentException('SHA commit non valido.');
+        }
+        return rawurlencode($sha);
+    }
+
+    private function validatedIssueNumber($issueNumber): int
+    {
+        $issueNumber = filter_var($issueNumber, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 2147483647]]);
+        if ($issueNumber === false) {
+            throw new \InvalidArgumentException('Numero issue non valido.');
+        }
+        return (int)$issueNumber;
+    }
+
+    /**
+     * Recupera pagine fino a esaurimento o al limite. `truncated` è true solo
+     * quando l'ultima pagina piena coincide con il limite configurato.
+     *
+     * @param callable(int):array $fetchPage
+     * @return array{items:array<int,mixed>,truncated:bool,pages:int}
+     */
+    private function collectPages(callable $fetchPage, int $perPage, int $maxPages): array
+    {
+        $perPage = min(100, max(1, $perPage));
+        $maxPages = max(1, min(100, $maxPages));
+        $items = [];
+        $pages = 0;
+        $truncated = false;
+        for ($page = 1; $page <= $maxPages; $page++) {
+            $batch = $fetchPage($page);
+            $batch = is_array($batch) ? array_values($batch) : [];
+            $pages++;
+            if ($batch === []) {
+                break;
+            }
+            array_push($items, ...$batch);
+            if (count($batch) < $perPage) {
+                break;
+            }
+            if ($page === $maxPages) {
+                $truncated = true;
+            }
+        }
+        return ['items' => $items, 'truncated' => $truncated, 'pages' => $pages];
     }
 
     /**

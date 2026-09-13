@@ -35,8 +35,13 @@ $require(str_contains($source, 'hop <= 5'), 'LOC senza loop multi-hop');
 $require(str_contains($source, 'hop === 0'), 'LOC non limita il token OAuth al primo hop');
 
 // Aruba può disabilitare shell_exec: in tal caso il calcolo interno deve
-// rimanere disponibile e il pulsante LOC deve avere un solo gestore.
-$require(substr_count($source, "document.querySelectorAll('.repo-loc-btn').forEach") === 1, 'LOC registrato da più gestori JavaScript');
+// rimanere disponibile. LOC è parte dei dettagli e non ha più un pulsante
+// separato nella riga.
+$require(!str_contains($source, 'repo-loc-btn'), 'il pulsante LOC separato è ancora presente');
+$showDetailsStart = strpos($source, "document.querySelectorAll('.show-details-btn')");
+$showDetailsHandler = $showDetailsStart === false ? '' : substr($source, $showDetailsStart, 5200);
+$require(str_contains($showDetailsHandler, 'await loadRepoLoc('), 'LOC non viene caricata all’apertura dei dettagli');
+$require(str_contains($showDetailsHandler, 'const locContainer'), 'contenitore LOC non gestito da Mostra dettagli');
 $require(str_contains($source, "function_exists('shell_exec')"), 'LOC chiama shell_exec senza verificare la disponibilità');
 $require(str_contains($source, 'catch (Throwable $e)'), 'handler LOC non intercetta errori PHP non-Exception');
 $require(str_contains($source, 'responseText') && str_contains($source, 'JSON.parse(responseText)'), 'client LOC non gestisce risposte vuote o non JSON');
