@@ -1426,21 +1426,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
 	    <style>
 	        table.github-grades-table { width: 100%; table-layout: fixed; }
-	        /* La metà sinistra resta libera quando il pannello rubrica è aperto. */
-	        table.github-grades-table col.col-gh { width: 7%; }
-	        table.github-grades-table col.col-repo { width: 32%; }
-	        table.github-grades-table col.col-vote { width: 11%; }
+	        /* A pannello rubrica chiuso, lo spazio prima destinato ai commenti
+	           viene restituito a repository e voto. */
+	        table.github-grades-table col.col-student-vote { width: 18%; }
+	        table.github-grades-table col.col-repo { width: 82%; }
+	        table.github-grades-table col.col-comment { width: 0; }
 	        table.github-grades-table td.repo-col a { word-break: break-all; }
-	        table.github-grades-table th.vote-col,
-	        table.github-grades-table td.vote-col { width: 11%; }
-	        table.github-grades-table td.vote-col .student-vote-cell { display: flex; flex-direction: column; gap: .45rem; }
-	        table.github-grades-table td.vote-col .student-info { line-height: 1.25; }
-	        table.github-grades-table td.vote-col .rubric-open-btn { width: 100%; }
+	        table.github-grades-table th.student-vote-col,
+	        table.github-grades-table td.student-vote-col { width: 18%; }
+	        table.github-grades-table td.student-vote-col .student-vote-cell { display: flex; flex-direction: column; gap: .45rem; }
+	        table.github-grades-table td.student-vote-col .student-info { line-height: 1.25; }
+	        table.github-grades-table td.student-vote-col .rubric-open-btn { width: 100%; }
 	        .github-review-page { width: 100%; max-width: none !important; margin-left: 0; margin-right: 0; }
-	        table.github-grades-table td.comment-col { vertical-align: top; }
-	        table.github-grades-table .comment-wrap { display: flex; align-items: stretch; width: 100%; height: 100%; }
-	        table.github-grades-table td.comment-col textarea { flex: 1; width: 100%; min-height: 120px; resize: vertical; }
-	        table.github-grades-table td.vote-col select { width: 100% !important; }
+	        table.github-grades-table th.comment-col,
+	        table.github-grades-table td.comment-col {
+	            width: 0;
+	            min-width: 0;
+	            max-width: 0;
+	            padding-left: 0;
+	            padding-right: 0;
+	            border-left: 0;
+	            border-right: 0;
+	            overflow: hidden;
+	            color: transparent;
+	        }
+	        /* Quando la rubrica flottante copre la metà destra, si ripristina
+	           solo lo spazio vuoto della colonna commento: nessun titolo o input
+	           viene mostrato e le colonne utili restano leggibili a sinistra. */
+	        body.rubric-panel-open table.github-grades-table col.col-student-vote { width: 18%; }
+	        body.rubric-panel-open table.github-grades-table col.col-repo { width: 32%; }
+	        body.rubric-panel-open table.github-grades-table col.col-comment { width: 50%; }
+	        body.rubric-panel-open table.github-grades-table th.comment-col,
+	        body.rubric-panel-open table.github-grades-table td.comment-col {
+	            width: 50%;
+	            max-width: none;
+	        }
+	        body.rubric-panel-open table.github-grades-table th.student-vote-col,
+	        body.rubric-panel-open table.github-grades-table td.student-vote-col { width: 18%; }
+	        table.github-grades-table td.student-vote-col select { width: 100% !important; }
 	        .commit-message-body { white-space: pre-wrap; }
 	        .rubric-modal-table th.weight-col,
 	        .rubric-modal-table td.weight-col { width: 40px; min-width: 40px; }
@@ -1642,19 +1665,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                    <small class="text-muted">Se disattivato, la revisione è "alla cieca": si vedono solo gli ID.</small>
 	                </div>
 	                <div class="table-responsive">
-	                    <table class="table table-striped align-top github-grades-table">
+	                        <table class="table table-striped align-top github-grades-table">
 	                        <colgroup>
-	                            <col class="col-gh">
+	                            <col class="col-student-vote">
 	                            <col class="col-repo">
-	                            <col class="col-vote">
 	                            <col class="col-comment">
 	                        </colgroup>
 	                        <thead>
 	                            <tr>
-	                                <th>GitHub</th>
+	                                <th class="student-vote-col">Studente/Voto</th>
 	                                <th>Repo</th>
-                                <th class="vote-col">Studente/Voto</th>
-                                <th class="comment-col">Commento</th>
+	                                <th class="comment-col" aria-hidden="true"></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1668,39 +1689,102 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                 $repoUrl = (string)($row['student_repository_url'] ?? '');
                                 $commitCountTotal = null;
                                 $defaultBranch = 'main';
+                                $repoFullRow = '';
+                                if ($repoUrl) {
+                                    $parsed = parse_url($repoUrl);
+                                    $path = $parsed['path'] ?? '';
+                                    $parts = array_values(array_filter(explode('/', $path)));
+                                    if (count($parts) >= 2) {
+                                        $repoFullRow = $parts[0] . '/' . $parts[1];
+                                    }
+                                }
+                                $locRef = $defaultBranch ?: 'main';
                                 $studentId = $row['id_studente'] ?? '';
                                 // Nome visualizzato dal resolver centrale del gruppo.
                                 $studentName = $runtimeNamesByStudent[(string)$studentId] ?? ($runtimeNamesByStudent[$lowerUser] ?? '');
                                 $lastCommit = $commitInfo[$lowerUser]['last_commit'] ?? null;
                                 $recentCount = $commitInfo[$lowerUser]['recent_count'] ?? null;
-                                $prefill = [];
-                                if ($repoUrl) {
-                                    $prefill[] = "Repo: {$repoUrl}";
-                                }
-                                if ($defaultBranch) {
-                                    $prefill[] = "Branch: {$defaultBranch}";
-                                }
-                                if ($commitCountTotal !== null && $commitCountTotal !== '') {
-                                    $prefill[] = "Commit totali (Classroom): {$commitCountTotal}";
-                                }
-                                if ($recentCount !== null) {
-                                    $prefill[] = "Ultimi commit caricati: {$recentCount}";
-                                }
-                                if ($lastCommit) {
-                                    $prefill[] = "Ultimo commit: " . date('d/m/Y H:i', strtotime($lastCommit));
-                                }
-                                $prefillText = implode("\n", $prefill);
-                                $prefillFull = $prefillText;
-                                $prefillBlind = ($repoUrl !== '') ? str_replace($repoUrl, 'nascosta', $prefillText) : $prefillText;
                                 // Identificativo anonimo stabile nella pagina: non espone username o repository.
                                 $githubIdDisplay = (string)($idx + 1);
                                 ?>
                                 <tr>
-                                    <td>
+                                    <td class="student-vote-col">
                                         <input type="hidden" name="github_username[<?= $idx ?>]" value="<?= htmlspecialchars($uname) ?>">
+                                        <input type="hidden" name="id_studente[<?= $idx ?>]" value="<?= htmlspecialchars($studentId) ?>">
                                         <div class="show-name"><i class="bi bi-github"></i> <?= htmlspecialchars($uname) ?></div>
                                         <div class="show-blind"><i class="bi bi-github"></i> <?= htmlspecialchars($githubIdDisplay) ?></div>
                                         <small class="text-muted show-name"><?= htmlspecialchars($row['roster_identifier'] ?? '') ?></small>
+	                                    <?php if ($studentId): ?>
+	                                        <?php
+	                                        $accepted = trim((string)($row['github_username'] ?? '')) !== '' || trim((string)($row['accepted_at'] ?? '')) !== '';
+	                                        $acceptanceCode = trim((string)($row['acceptance_code'] ?? ''));
+	                                        $savedGrade = $existingGradesByStudent[$studentId]
+	                                            ?? ($savedRubricGradesByStudent[$studentId] ?? 'skip');
+	                                        $defaultVoto = $_POST['voto'][$idx] ?? $savedGrade;
+	                                        ?>
+	                                        <div class="student-vote-cell mt-2">
+	                                            <div class="student-info">
+                                                <?php if ($accepted): ?>
+                                                    <span class="badge bg-success">Accettato</span>
+                                                <?php else: ?>
+                                                    <span class="badge bg-warning text-dark">Assignment non ancora accettato</span>
+                                                <?php endif; ?>
+                                                <?php if ($studentName !== ''): ?><strong class="d-block show-name"><?= htmlspecialchars($studentName) ?></strong><?php endif; ?>
+                                                <small class="text-muted d-block">ID: <?= htmlspecialchars($studentId) ?></small>
+                                                <?php if (!$accepted && $acceptanceCode !== ''): ?>
+                                                    <code class="small d-block text-break"><?= htmlspecialchars(app_url('public/accept_assignment.php') . '?code=' . urlencode($acceptanceCode)) ?></code>
+                                                    <form method="POST" class="d-inline" onsubmit="return confirm('Inviare il link di accettazione per email?');">
+                                                        <input type="hidden" name="action" value="send_student_email">
+                                                        <input type="hidden" name="student_id" value="<?= htmlspecialchars($studentId) ?>">
+                                                        <button type="submit" class="btn btn-sm btn-outline-primary mt-1"><i class="bi bi-envelope"></i> invia per email</button>
+                                                    </form>
+	                                                <?php endif; ?>
+	                                            </div>
+	                                            <div class="form-check save-vote-wrap">
+	                                                <input class="form-check-input save-vote-checkbox"
+	                                                       type="checkbox"
+	                                                       id="save-vote-<?= $idx ?>"
+	                                                       name="salva_voto[<?= $idx ?>]"
+	                                                       value="1"
+	                                                       data-index="<?= $idx ?>"
+	                                                       data-student-name="<?= htmlspecialchars($studentName !== '' ? $studentName : $studentId) ?>"
+	                                                       data-github-name="<?= htmlspecialchars($uname !== '' ? $uname : $studentId) ?>"
+	                                                       data-blind-student="Studente <?= htmlspecialchars($githubIdDisplay) ?>"
+	                                                       data-blind-github="<?= htmlspecialchars($githubIdDisplay) ?>">
+	                                                <label class="form-check-label small" for="save-vote-<?= $idx ?>">Seleziona per salvare</label>
+	                                            </div>
+	                                            <select name="voto[<?= $idx ?>]" class="form-select form-select-sm voto-select">
+                                                <?php foreach ($availableGrades as $g): ?>
+                                                    <?php
+                                                    $label = $g;
+                                                    if ($g === 'i') $label = 'i (impreparato)';
+                                                    elseif ($g === 'a') $label = 'a (assente)';
+                                                    elseif ($g === 'skip') $label = '- non importare voto -';
+                                                    ?>
+                                                    <option value="<?= htmlspecialchars($g) ?>" <?= ($g === $defaultVoto) ? 'selected' : '' ?>><?= htmlspecialchars($label) ?></option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                            <button type="button"
+                                                    class="btn btn-sm btn-outline-primary rubric-open-btn"
+                                                    title="Apri rubrica"
+                                                    aria-label="Apri rubrica"
+                                                    data-student-id="<?= htmlspecialchars($studentId) ?>"
+	                                                    data-student-name="<?= htmlspecialchars($studentName) ?>"
+	                                                    data-github-username="<?= htmlspecialchars($uname) ?>"
+	                                                    data-blind-github="<?= htmlspecialchars($githubIdDisplay) ?>"
+	                                                    data-index="<?= $idx ?>"
+                                                    data-repo-url="<?= htmlspecialchars($repoUrl) ?>"
+                                                    data-repo-full="<?= htmlspecialchars($repoFullRow) ?>"
+                                                    data-ref="<?= htmlspecialchars($locRef) ?>"
+                                                    data-commit-total="<?= htmlspecialchars((string)($commitCountTotal ?? '')) ?>"
+                                                    data-commit-loaded="<?= htmlspecialchars((string)($recentCount ?? '')) ?>"
+                                                    data-last-commit="<?= htmlspecialchars((string)($lastCommit ?? '')) ?>">
+                                                <i class="bi bi-clipboard-check"></i>
+                                            </button>
+                                        </div>
+	                                    <?php else: ?>
+	                                        <em class="text-muted d-block mt-2">Associa studente</em>
+	                                    <?php endif; ?>
                                     </td>
                                     <td class="repo-col">
                                         <input type="hidden" name="repo_url[<?= $idx ?>]" value="<?= htmlspecialchars($repoUrl) ?>">
@@ -1713,17 +1797,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                         <?php endif; ?>
                                         </span>
 
-                                        <?php
-                                        $repoFullRow = '';
-                                        if ($repoUrl) {
-                                            $parsed = parse_url($repoUrl);
-                                            $path = $parsed['path'] ?? '';
-                                            $parts = array_values(array_filter(explode('/', $path)));
-                                            if (count($parts) >= 2) {
-                                                $repoFullRow = $parts[0] . '/' . $parts[1];
-                                            }
-                                        }
-	                                        $locRef = $defaultBranch ?: 'main';
+	                                        <?php
 	                                        $locContainerId = 'loc-' . $idx;
 	                                        $commitsList = $commitInfo[$lowerUser]['commits'] ?? [];
 	                                        ?>
@@ -1809,92 +1883,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                             </div>
                                         <?php endif; ?>
                                     </td>
-                                    <td class="vote-col">
-                                        <input type="hidden" name="id_studente[<?= $idx ?>]" value="<?= htmlspecialchars($studentId) ?>">
-                                        <?php if ($studentId): ?>
-                                            <?php
-                                            $accepted = trim((string)($row['github_username'] ?? '')) !== '' || trim((string)($row['accepted_at'] ?? '')) !== '';
-                                            $acceptanceCode = trim((string)($row['acceptance_code'] ?? ''));
-                                            $savedGrade = $existingGradesByStudent[$studentId]
-                                                ?? ($savedRubricGradesByStudent[$studentId] ?? 'skip');
-                                            $defaultVoto = $_POST['voto'][$idx] ?? $savedGrade;
-                                            ?>
-	                                            <div class="student-vote-cell">
-	                                                <div class="student-info">
-                                                    <?php if ($accepted): ?>
-                                                        <span class="badge bg-success">Accettato</span>
-                                                    <?php else: ?>
-                                                        <span class="badge bg-warning text-dark">Assignment non ancora accettato</span>
-                                                    <?php endif; ?>
-                                                    <?php if ($studentName !== ''): ?><strong class="d-block show-name"><?= htmlspecialchars($studentName) ?></strong><?php endif; ?>
-                                                    <small class="text-muted d-block">ID: <?= htmlspecialchars($studentId) ?></small>
-                                                    <?php if (!$accepted && $acceptanceCode !== ''): ?>
-                                                        <code class="small d-block text-break"><?= htmlspecialchars(app_url('public/accept_assignment.php') . '?code=' . urlencode($acceptanceCode)) ?></code>
-                                                        <form method="POST" class="d-inline" onsubmit="return confirm('Inviare il link di accettazione per email?');">
-                                                            <input type="hidden" name="action" value="send_student_email">
-                                                            <input type="hidden" name="student_id" value="<?= htmlspecialchars($studentId) ?>">
-                                                            <button type="submit" class="btn btn-sm btn-outline-primary mt-1"><i class="bi bi-envelope"></i> invia per email</button>
-                                                        </form>
-	                                                    <?php endif; ?>
-	                                                </div>
-	                                                <div class="form-check save-vote-wrap">
-	                                                    <input class="form-check-input save-vote-checkbox"
-	                                                           type="checkbox"
-	                                                           id="save-vote-<?= $idx ?>"
-	                                                           name="salva_voto[<?= $idx ?>]"
-	                                                           value="1"
-	                                                           data-index="<?= $idx ?>"
-	                                                           data-student-name="<?= htmlspecialchars($studentName !== '' ? $studentName : $studentId) ?>"
-	                                                           data-github-name="<?= htmlspecialchars($uname !== '' ? $uname : $studentId) ?>"
-	                                                           data-blind-student="Studente <?= htmlspecialchars($githubIdDisplay) ?>"
-	                                                           data-blind-github="<?= htmlspecialchars($githubIdDisplay) ?>">
-	                                                    <label class="form-check-label small" for="save-vote-<?= $idx ?>">Seleziona per salvare</label>
-	                                                </div>
-	                                                <select name="voto[<?= $idx ?>]" class="form-select form-select-sm voto-select">
-                                                    <?php foreach ($availableGrades as $g): ?>
-                                                        <?php
-                                                        $label = $g;
-                                                        if ($g === 'i') $label = 'i (impreparato)';
-                                                        elseif ($g === 'a') $label = 'a (assente)';
-                                                        elseif ($g === 'skip') $label = '- non importare voto -';
-                                                        ?>
-                                                        <option value="<?= htmlspecialchars($g) ?>" <?= ($g === $defaultVoto) ? 'selected' : '' ?>><?= htmlspecialchars($label) ?></option>
-                                                    <?php endforeach; ?>
-                                                </select>
-                                                <button type="button"
-                                                        class="btn btn-sm btn-outline-primary rubric-open-btn"
-                                                        title="Apri rubrica"
-                                                        aria-label="Apri rubrica"
-                                                        data-student-id="<?= htmlspecialchars($studentId) ?>"
-	                                                        data-student-name="<?= htmlspecialchars($studentName) ?>"
-	                                                        data-github-username="<?= htmlspecialchars($uname) ?>"
-	                                                        data-blind-github="<?= htmlspecialchars($githubIdDisplay) ?>"
-	                                                        data-index="<?= $idx ?>"
-                                                        data-repo-url="<?= htmlspecialchars($repoUrl) ?>"
-                                                        data-repo-full="<?= htmlspecialchars($repoFullRow) ?>"
-                                                        data-ref="<?= htmlspecialchars($locRef) ?>"
-                                                        data-commit-total="<?= htmlspecialchars((string)($commitCountTotal ?? '')) ?>"
-                                                        data-commit-loaded="<?= htmlspecialchars((string)($recentCount ?? '')) ?>"
-                                                        data-last-commit="<?= htmlspecialchars((string)($lastCommit ?? '')) ?>">
-                                                    <i class="bi bi-clipboard-check"></i>
-                                                </button>
-                                            </div>
-                                        <?php else: ?>
-                                            <em class="text-muted">Associa studente</em>
-                                        <?php endif; ?>
-                                    </td>
-	                                    <td class="comment-col">
-	                                        <?php if ($studentId): ?>
-	                                            <div class="comment-wrap">
-	                                                <textarea name="commento[<?= $idx ?>]" class="form-control form-control-sm review-comment" rows="1"
-	                                                          data-blind="<?= htmlspecialchars(json_encode($prefillBlind, JSON_HEX_TAG), ENT_QUOTES) ?>"
-	                                                          data-full="<?= htmlspecialchars(json_encode($prefillFull, JSON_HEX_TAG), ENT_QUOTES) ?>"
-	                                                          placeholder="Commento docente (opzionale)"><?= htmlspecialchars($prefillBlind) ?></textarea>
-	                                            </div>
-	                                        <?php else: ?>
-	                                            <em class="text-muted">-</em>
-	                                        <?php endif; ?>
-	                                    </td>
+	                                    <td class="comment-col" aria-hidden="true"></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -2327,39 +2316,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            await Promise.all(workers);
 	        }
 
-	        function fitCommentTextareaToRow(row) {
-	            if (!row) return;
-	            const cell = row.querySelector('td.comment-col');
-	            const textarea = cell ? cell.querySelector('textarea') : null;
-	            if (!cell || !textarea) return;
-
-	            const rect = cell.getBoundingClientRect();
-	            const styles = window.getComputedStyle(cell);
-	            const paddingTop = parseFloat(styles.paddingTop || '0') || 0;
-	            const paddingBottom = parseFloat(styles.paddingBottom || '0') || 0;
-	            const target = Math.max(120, Math.floor(rect.height - paddingTop - paddingBottom));
-	            textarea.style.height = target + 'px';
-	        }
-
-	        function setCommentTextareaExpanded(row, expanded) {
-	            if (!row) return;
-	            const cell = row.querySelector('td.comment-col');
-	            const textarea = cell ? cell.querySelector('textarea') : null;
-	            if (!textarea) return;
-
-	            if (!expanded) {
-	                textarea.style.height = '';
-	                textarea.style.resize = 'vertical';
-	                return;
-	            }
-
-	            textarea.style.resize = 'none';
-	            fitCommentTextareaToRow(row);
-	            requestAnimationFrame(function () { fitCommentTextareaToRow(row); });
-	            setTimeout(function () { fitCommentTextareaToRow(row); }, 350);
-	            setTimeout(function () { fitCommentTextareaToRow(row); }, 900);
-	        }
-
 	        document.querySelectorAll('.show-details-btn').forEach(function (btn) {
 	            btn.addEventListener('click', async function () {
 	                const cell = btn.closest('td');
@@ -2373,7 +2329,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
 	                const isOpen = (commitsEl && commitsEl.classList.contains('show'));
 	                if (isOpen) {
-	                    setCommentTextareaExpanded(row, false);
                     if (commitsEl) {
                         try { bootstrap.Collapse.getOrCreateInstance(commitsEl, {toggle: false}).hide(); } catch (e) {}
                     }
@@ -2398,8 +2353,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                         await loadRepoLoc(locContainer, locContainer.dataset.repo || '', locContainer.dataset.ref || 'main', false);
                     }
                 }
-
-	                setCommentTextareaExpanded(row, true);
 
                 const metadataContainer = cell.querySelector('.github-review-metadata');
                 const metadataRepo = metadataContainer ? (metadataContainer.dataset.repo || '') : '';
@@ -2595,6 +2548,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	        function openRubricPanel() {
 	            if (!rubricPanelEl) return;
 	            rubricPanelEl.classList.add('open');
+	            document.body.classList.add('rubric-panel-open');
 	        }
 
 	        async function closeRubricPanel() {
@@ -2602,6 +2556,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            await flushRubricSave();
 	            setRubricLoadingStatus(false);
 	            rubricPanelEl.classList.remove('open');
+	            document.body.classList.remove('rubric-panel-open');
 		            clearRubricHighlightedRow();
 		        }
 
@@ -3217,18 +3172,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	        function apply(show) {
 	            document.body.classList.toggle("review-names", show);
 	            document.body.classList.toggle("review-blind", !show);
-	            document.querySelectorAll(".review-comment").forEach(function (ta) {
-	                if (ta.dataset.touched === "1") return;
-	                var raw = show ? ta.dataset.full : ta.dataset.blind;
-	                try { ta.value = JSON.parse(raw); } catch (e) {}
-	            });
 	        }
 	        if (toggle) {
 	            toggle.addEventListener("change", function () { apply(toggle.checked); });
 	        }
-	        document.querySelectorAll(".review-comment").forEach(function (ta) {
-	            ta.addEventListener("input", function () { ta.dataset.touched = "1"; });
-	        });
 	        apply(true);
 	        if (typeof renderSaveVotesSummary === 'function') renderSaveVotesSummary();
 	    })();

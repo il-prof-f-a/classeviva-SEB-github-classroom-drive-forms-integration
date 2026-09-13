@@ -29,6 +29,16 @@ $require(str_contains($review, 'github-issue-link'), 'link issue arancione assen
 $require(str_contains($review, 'github-branch-link'), 'link branch verde assente');
 $require(str_contains($review, '.repo-loc {'), 'pannello LOC colorato assente');
 $require(str_contains($review, '#fff1f3'), 'colore rosa LOC assente');
+$require(str_contains($review, 'col.col-comment { width: 0; }'), 'colonna commento non ridotta a zero');
+$require(str_contains($review, 'rubric-panel-open'), 'layout dinamico della colonna commento assente');
+$require(str_contains($review, 'comment-col" aria-hidden="true"'), 'colonna commento non mantenuta vuota');
+$require(!str_contains($review, 'name="commento['), 'input commento ancora presente nella Review');
+$require(str_contains($review, 'col-student-vote'), 'colonna accorpata Studente/Voto assente');
+$require(str_contains($review, '<th class="student-vote-col">Studente/Voto</th>'), 'intestazione Studente/Voto non rinominata');
+$require(!str_contains($review, '<td class="vote-col">'), 'vecchia colonna voto ancora presente');
+$require(substr_count($review, 'name="id_studente[') === 1, 'campo id studente duplicato dopo l’accorpamento');
+$require(str_contains($review, 'col.col-student-vote { width: 18%; }'), 'larghezza colonna Studente/Voto non impostata');
+$require(str_contains($review, 'col.col-repo { width: 82%; }'), 'spazio residuo non assegnato alla colonna Repo');
 $require(str_contains($review, 'Branch origine (PR)'), 'indicazione branch PR assente');
 $require(str_contains($review, 'Branch attuale (HEAD)'), 'indicazione branch HEAD assente');
 $require(str_contains($review, 'Origine non determinabile'), 'messaggio origine non determinabile assente');
