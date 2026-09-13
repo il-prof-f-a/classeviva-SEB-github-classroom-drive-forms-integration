@@ -18,6 +18,7 @@ final class SchemaIndexDefinitions
             ['name' => 'uq_gruppi_studenti_membership', 'table' => 'GRUPPI_STUDENTI', 'columns' => ['id_utente', 'id_gruppo', 'id_studente'], 'unique' => true],
             ['name' => 'uq_studenti_risorse_external', 'table' => 'STUDENTI_RISORSE_ESTERNE', 'columns' => ['id_utente', 'provider', 'external_context_id', 'external_resource_id'], 'unique' => true],
             ['name' => 'uq_github_assignment_student_link', 'table' => 'GITHUB_ASSIGNMENT_STUDENT_LINKS', 'columns' => ['id_utente', 'id_assignment', 'id_studente'], 'unique' => true],
+            ['name' => 'uq_test_gruppi_assignment', 'table' => 'TEST_GRUPPI', 'columns' => ['id_utente', 'id_test', 'id_gruppo'], 'unique' => true],
         ];
     }
 }

@@ -133,4 +133,46 @@ final class GitHubAssignmentService
         }
         return $result;
     }
+
+    /**
+     * Unisce gli studenti risolti da più gruppi senza creare repository duplicate.
+     *
+     * L'id interno dello studente è la chiave canonica: quando lo stesso studente
+     * compare in più gruppi si conserva la prima posizione e si completano solo i
+     * campi eventualmente mancanti con i dati delle occorrenze successive.
+     *
+     * @param list<list<array<string,mixed>>> $studentLists
+     * @return list<array<string,mixed>>
+     */
+    public function mergeResolvedStudents(array $studentLists): array
+    {
+        $merged = [];
+        foreach ($studentLists as $students) {
+            if (!is_array($students)) {
+                continue;
+            }
+            foreach ($students as $student) {
+                if (!is_array($student)) {
+                    continue;
+                }
+                $id = trim((string)($student['id_studente'] ?? ''));
+                if ($id === '') {
+                    continue;
+                }
+                if (!isset($merged[$id])) {
+                    $student['id_studente'] = $id;
+                    $merged[$id] = $student;
+                    continue;
+                }
+                foreach (['nome', 'email'] as $field) {
+                    $current = trim((string)($merged[$id][$field] ?? ''));
+                    $candidate = trim((string)($student[$field] ?? ''));
+                    if ($current === '' && $candidate !== '') {
+                        $merged[$id][$field] = $candidate;
+                    }
+                }
+            }
+        }
+        return array_values($merged);
+    }
 }

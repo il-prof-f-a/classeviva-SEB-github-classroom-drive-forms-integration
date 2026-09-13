@@ -450,6 +450,12 @@ class SchemaDefinitions
                     'classroom_assignment_id', 'classroom_url', 'data_pubblicazione', 'id_utente'
                 ],
                 'description' => 'Pubblicazioni dei test su Google Classroom per gruppo didattico'
+            ],
+            'TEST_GRUPPI' => [
+                'columns' => [
+                    'id_collegamento', 'id_test', 'id_gruppo', 'data_creazione', 'id_utente'
+                ],
+                'description' => 'Gruppi didattici collegati a un test GitHub'
             ]
         ];
         $columnsMap = self::loadSchemaColumnsMap();
@@ -458,7 +464,7 @@ class SchemaDefinitions
             'UDA_GRUPPI', 'UDA_PUBBLICAZIONI', 'STUDENTI',
             'STUDENTI_IDENTITA_ESTERNE', 'GRUPPI_STUDENTI',
             'STUDENTI_RISORSE_ESTERNE', 'GITHUB_ASSIGNMENT_STUDENT_LINKS',
-            'TEST_CLASSROOM_PUBBLICAZIONI',
+            'TEST_CLASSROOM_PUBBLICAZIONI', 'TEST_GRUPPI',
         ];
         if (!empty($columnsMap)) {
             foreach ($sheets as $sheetName => &$definition) {
