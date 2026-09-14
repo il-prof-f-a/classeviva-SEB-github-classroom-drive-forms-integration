@@ -2326,6 +2326,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            }
 	        }
 
+	        function hideCollapseElement(el) {
+	            if (!el) return;
+	            try {
+	                bootstrap.Collapse.getOrCreateInstance(el, {toggle: false}).hide();
+	            } catch (e) {
+	                // ignore
+	            }
+	        }
+
 	        async function runWithConcurrency(items, limit, fn) {
 	            const queue = items.slice();
 	            const workers = [];
@@ -2355,7 +2364,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                const isOpen = (commitsEl && commitsEl.classList.contains('show'));
 	                if (isOpen) {
                     if (commitsEl) {
-                        try { bootstrap.Collapse.getOrCreateInstance(commitsEl, {toggle: false}).hide(); } catch (e) {}
+                        hideCollapseElement(commitsEl);
+                    }
+                    const locContainer = cell.querySelector('.repo-loc');
+                    const locCollapse = locContainer ? locContainer.closest('.collapse') : null;
+                    if (locCollapse) {
+                        hideCollapseElement(locCollapse);
                     }
                     btn.innerHTML = '<i class="bi bi-eye"></i> Mostra dettagli';
                     return;

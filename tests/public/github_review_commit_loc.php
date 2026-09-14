@@ -42,6 +42,8 @@ $showDetailsStart = strpos($source, "document.querySelectorAll('.show-details-bt
 $showDetailsHandler = $showDetailsStart === false ? '' : substr($source, $showDetailsStart, 5200);
 $require(str_contains($showDetailsHandler, 'await loadRepoLoc('), 'LOC non viene caricata all’apertura dei dettagli');
 $require(str_contains($showDetailsHandler, 'const locContainer'), 'contenitore LOC non gestito da Mostra dettagli');
+$require(str_contains($source, 'function hideCollapseElement'), 'helper di chiusura dei pannelli collapse assente');
+$require(str_contains($showDetailsHandler, 'hideCollapseElement(locCollapse)'), 'chiusura dettagli non nasconde il pannello LOC');
 $require(str_contains($source, "function_exists('shell_exec')"), 'LOC chiama shell_exec senza verificare la disponibilità');
 $require(str_contains($source, 'catch (Throwable $e)'), 'handler LOC non intercetta errori PHP non-Exception');
 $require(str_contains($source, 'responseText') && str_contains($source, 'JSON.parse(responseText)'), 'client LOC non gestisce risposte vuote o non JSON');
