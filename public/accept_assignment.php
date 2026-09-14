@@ -41,6 +41,30 @@ function parse_repo(string $url): array {
     return ['', ''];
 }
 
+/**
+ * Cerca il link già associato a un account GitHub nello stesso assignment.
+ * È un'identificazione secondaria per il link generico: vale solo quando il
+ * docente ha già registrato lo username sulla riga dell'assignment e non
+ * sostituisce la verifica email del roster per gli studenti non ancora accettati.
+ */
+function find_assignment_link_by_github_username($db, string $testId, string $username): ?array {
+    $testId = trim($testId);
+    $username = strtolower(trim($username));
+    if ($testId === '' || $username === '') {
+        return null;
+    }
+    foreach ($db->findWhere('GITHUB_ASSIGNMENT_STUDENT_LINKS', ['id_assignment' => $testId]) as $candidate) {
+        if (!is_array($candidate)) {
+            continue;
+        }
+        $candidateUsername = strtolower(trim((string)($candidate['github_username'] ?? '')));
+        if ($candidateUsername !== '' && hash_equals($candidateUsername, $username)) {
+            return $candidate;
+        }
+    }
+    return null;
+}
+
 /** Risolve email/nome degli studenti del gruppo (Google Classroom primario, ClasseViva fallback). */
 function resolve_group_emails($db, array $config, string $groupId, string $ownerId): array {
     $profile = $config['user_profile'] ?? [];
@@ -207,12 +231,29 @@ if ($github->isAuthenticated() && $error === null) {
                 $e = strtolower(trim((string)($s['email'] ?? '')));
                 if ($e !== '' && in_array($e, $ghEmails, true)) { $matched = $s; break; }
             }
+            // Se lo studente ha già accettato l'assignment, il suo username è
+            // registrato sul link. Questo consente di usare il link generico
+            // anche quando il roster ClasseViva non è raggiungibile dalla
+            // pagina pubblica; gli studenti non ancora accettati continuano a
+            // richiedere la corrispondenza email del roster.
+            if ($matched === null) {
+                $storedLink = find_assignment_link_by_github_username($db, $testId, $username);
+                if ($storedLink !== null) {
+                    $matched = [
+                        'id_studente' => (string)($storedLink['id_studente'] ?? ''),
+                        'email' => '',
+                    ];
+                    $link = $storedLink;
+                }
+            }
             if ($matched === null) {
                 $error = "Non sei nell'elenco di questo assignment. Controlla di usare l'account GitHub con la tua email istituzionale (" . (empty($ghEmails) ? 'nessuna email letta' : implode(', ', $ghEmails)) . ").";
             } else {
                 $studentId = (string)($matched['id_studente'] ?? '');
-                $links = $db->findWhere('GITHUB_ASSIGNMENT_STUDENT_LINKS', ['id_assignment' => $testId, 'id_studente' => $studentId]);
-                $link = $links[0] ?? null;
+                if ($link === null) {
+                    $links = $db->findWhere('GITHUB_ASSIGNMENT_STUDENT_LINKS', ['id_assignment' => $testId, 'id_studente' => $studentId]);
+                    $link = $links[0] ?? null;
+                }
                 if (!$link) $error = 'Assignment non trovato per il tuo account.';
             }
         }

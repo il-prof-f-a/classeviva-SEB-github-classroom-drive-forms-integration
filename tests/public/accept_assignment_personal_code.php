@@ -9,6 +9,8 @@ $failures = [];
 foreach ([
     'Il codice personale identifica già' => 'il codice personale deve poter identificare lo studente quando il roster non è raggiungibile',
     'I link generici continuano invece a richiedere' => 'il fallback deve essere limitato al link personale',
+    'find_assignment_link_by_github_username' => 'il link generico deve poter riusare lo username GitHub già registrato',
+    'Se lo studente ha già accettato l\'assignment' => 'il fallback dello username deve essere limitato agli account già associati',
 ] as $needle => $message) {
     if (!str_contains($page, $needle)) {
         $failures[] = $message;
