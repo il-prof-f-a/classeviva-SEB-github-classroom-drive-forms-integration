@@ -188,7 +188,16 @@ if ($github->isAuthenticated() && $error === null) {
                 if ((string)($s['id_studente'] ?? '') === $studentId) { $expectedEmail = strtolower(trim((string)($s['email'] ?? ''))); break; }
             }
             if ($expectedEmail === '') {
-                $error = 'Email studente non risolta (verifica i roster Google Classroom/ClasseViva del gruppo).';
+                // Il codice personale identifica già una sola riga di
+                // GITHUB_ASSIGNMENT_STUDENT_LINKS. Per i gruppi ClasseViva il
+                // roster può non essere raggiungibile dalla pagina pubblica:
+                // il token del docente resta nella sua sessione e non viene
+                // persistito. In questo caso il codice è la credenziale
+                // personale e non dobbiamo bloccare l’accettazione.
+                // I link generici continuano invece a richiedere il roster.
+                if (!($code !== '' && $studentId !== '' && $resolved === [])) {
+                    $error = 'Email studente non risolta (verifica i roster Google Classroom/ClasseViva del gruppo).';
+                }
             } elseif (!in_array($expectedEmail, $ghEmails, true)) {
                 $error = "La tua email GitHub non corrisponde a quella dell'assignment. Attesa: " . $expectedEmail . " | Nel tuo account GitHub: " . (empty($ghEmails) ? '(nessuna)' : implode(', ', $ghEmails)) . ".";
             }

@@ -538,6 +538,7 @@ $architectureTests = [
     'github assignment repository creation' => __DIR__ . '/public/github_assignment_repo_creation.php',
     'github assignment ClasseViva gate' => __DIR__ . '/public/github_assignment_create_classeviva_gate.php',
     'github repository template validation' => __DIR__ . '/public/github_repo_templates_validation.php',
+    'accept assignment personal code' => __DIR__ . '/public/accept_assignment_personal_code.php',
     'github review provider-neutral' => __DIR__ . '/public/github_review_provider_neutral.php',
     'github review commit loc' => __DIR__ . '/public/github_review_commit_loc.php',
     'github review metadata' => __DIR__ . '/public/github_review_metadata.php',
