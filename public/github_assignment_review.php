@@ -1428,12 +1428,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	        table.github-grades-table { width: 100%; table-layout: fixed; }
 	        /* A pannello rubrica chiuso, lo spazio prima destinato ai commenti
 	           viene restituito a repository e voto. */
-	        table.github-grades-table col.col-student-vote { width: 18%; }
-	        table.github-grades-table col.col-repo { width: 82%; }
+	        table.github-grades-table col.col-student-vote { width: 14%; }
+	        table.github-grades-table col.col-repo { width: 86%; }
 	        table.github-grades-table col.col-comment { width: 0; }
 	        table.github-grades-table td.repo-col a { word-break: break-all; }
 	        table.github-grades-table th.student-vote-col,
-	        table.github-grades-table td.student-vote-col { width: 18%; }
+	        table.github-grades-table td.student-vote-col { width: 14%; }
 	        table.github-grades-table td.student-vote-col .student-vote-cell { display: flex; flex-direction: column; gap: .45rem; }
 	        table.github-grades-table td.student-vote-col .student-info { line-height: 1.25; }
 	        table.github-grades-table td.student-vote-col .rubric-open-btn { width: 100%; }
@@ -1453,8 +1453,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	        /* Quando la rubrica flottante copre la metà destra, si ripristina
 	           solo lo spazio vuoto della colonna commento: nessun titolo o input
 	           viene mostrato e le colonne utili restano leggibili a sinistra. */
-	        body.rubric-panel-open table.github-grades-table col.col-student-vote { width: 18%; }
-	        body.rubric-panel-open table.github-grades-table col.col-repo { width: 32%; }
+	        body.rubric-panel-open table.github-grades-table col.col-student-vote { width: 14%; }
+	        body.rubric-panel-open table.github-grades-table col.col-repo { width: 36%; }
 	        body.rubric-panel-open table.github-grades-table col.col-comment { width: 50%; }
 	        body.rubric-panel-open table.github-grades-table th.comment-col,
 	        body.rubric-panel-open table.github-grades-table td.comment-col {
@@ -1462,7 +1462,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            max-width: none;
 	        }
 	        body.rubric-panel-open table.github-grades-table th.student-vote-col,
-	        body.rubric-panel-open table.github-grades-table td.student-vote-col { width: 18%; }
+	        body.rubric-panel-open table.github-grades-table td.student-vote-col { width: 14%; }
 	        table.github-grades-table td.student-vote-col select { width: 100% !important; }
 	        .commit-message-body { white-space: pre-wrap; }
 	        .rubric-modal-table th.weight-col,

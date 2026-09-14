@@ -37,8 +37,9 @@ $require(str_contains($review, 'col-student-vote'), 'colonna accorpata Studente/
 $require(str_contains($review, '<th class="student-vote-col">Studente/Voto</th>'), 'intestazione Studente/Voto non rinominata');
 $require(!str_contains($review, '<td class="vote-col">'), 'vecchia colonna voto ancora presente');
 $require(substr_count($review, 'name="id_studente[') === 1, 'campo id studente duplicato dopo l’accorpamento');
-$require(str_contains($review, 'col.col-student-vote { width: 18%; }'), 'larghezza colonna Studente/Voto non impostata');
-$require(str_contains($review, 'col.col-repo { width: 82%; }'), 'spazio residuo non assegnato alla colonna Repo');
+$require(str_contains($review, 'col.col-student-vote { width: 14%; }'), 'larghezza colonna Studente/Voto non impostata');
+$require(str_contains($review, 'col.col-repo { width: 86%; }'), 'spazio residuo non assegnato alla colonna Repo');
+$require(str_contains($review, 'body.rubric-panel-open table.github-grades-table col.col-repo { width: 36%; }'), 'larghezza Repo a pannello aperto non impostata');
 $require(str_contains($review, 'Branch origine (PR)'), 'indicazione branch PR assente');
 $require(str_contains($review, 'Branch attuale (HEAD)'), 'indicazione branch HEAD assente');
 $require(str_contains($review, 'Origine non determinabile'), 'messaggio origine non determinabile assente');
