@@ -325,7 +325,37 @@ if (php_sapi_name() !== 'cli'
         // Un token assente e un token non valido hanno lo stesso effetto:
         // l'utente deve riautenticarsi. Il popup viene comunque renderizzato
         // esclusivamente dal bootstrap (mai dall'API ClasseViva).
-        $requiresClasseViva = \App\Core\ClasseVivaCapability::requested();
+        // Alcune pagine usano ClasseViva solo quando l'UDA contiene almeno un
+        // gruppo collegato al provider. Il loro id UDA arriva tramite una
+        // costante definita prima del bootstrap, così il popup può essere
+        // preparato nello stesso flusso delle pagine CV-only senza imporre
+        // l'autenticazione alle UDA prive di mapping.
+        $conditionalUdaId = defined('REQUIRES_CLASSEVIVA_FOR_UDA')
+            ? trim((string)constant('REQUIRES_CLASSEVIVA_FOR_UDA'))
+            : '';
+        $conditionalClasseViva = false;
+        if ($conditionalUdaId !== '' && $hasAuthenticatedUser && isset($dbAdapter)) {
+            try {
+                $conditionalClasseViva = \App\Core\ClasseVivaCapability::hasMappedUda(
+                    $dbAdapter,
+                    $userId,
+                    $conditionalUdaId
+                );
+            } catch (\Throwable $e) {
+                // Un errore di lettura non deve trasformare una pagina GitHub
+                // in un errore fatale né attivare il gate in modo incerto.
+                $conditionalClasseViva = false;
+            }
+        }
+        $requiresClasseViva = \App\Core\ClasseVivaCapability::requested()
+            || $conditionalClasseViva;
+        if ($conditionalClasseViva && !$classeVivaEnabled) {
+            // Un collegamento attivo è una richiesta esplicita di usare
+            // ClasseViva per quell'UDA: abilitiamo la capability solo per la
+            // richiesta corrente, senza modificare la configurazione salvata.
+            $config['classeviva']['enabled'] = true;
+            $classeVivaEnabled = true;
+        }
         if (!$skipClasseVivaTokenValidation && $hasAuthenticatedUser) {
             if ($classeVivaEnabled && $classeVivaToken === '') {
                 $config['classeviva']['token_error'] = 'Token ClasseViva mancante';

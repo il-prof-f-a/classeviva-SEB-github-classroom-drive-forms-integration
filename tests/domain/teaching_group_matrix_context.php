@@ -79,6 +79,53 @@ try {
             $failures[] = "identity provider {$expected} mancante nel matrix (trovati: " . implode(',', array_keys($providers)) . ')';
         }
     }
+
+    // Se il corso Classroom è stato rimappato, una vecchia identità Google può
+    // avere ancora il contesto precedente. La membership del gruppo resta però
+    // valida: il roster runtime deve poterla risolvere sul contesto corrente.
+    $staleGoogle = $resolver->resolveOrCreate('google_classroom', 'gc-stale');
+    $identities->updateContext('google_classroom', 'gc-stale', 'old-gc-ctx');
+    $memberships->add('GRP_1', (string)$staleGoogle['id_studente'], [
+        'provider_origine' => 'classeviva',
+        'external_context_id' => 'cv-ctx',
+    ]);
+    $matrixWithStaleContext = $service->matrix('GRP_1');
+    $staleRow = null;
+    foreach ($matrixWithStaleContext as $row) {
+        if ((string)($row['id_studente'] ?? '') === (string)$staleGoogle['id_studente']) {
+            $staleRow = $row;
+            break;
+        }
+    }
+    $hasStaleIdentity = false;
+    foreach (($staleRow['identities'] ?? []) as $identity) {
+        if (($identity['provider'] ?? '') === 'google_classroom'
+            && ($identity['external_user_id'] ?? '') === 'gc-stale') {
+            $hasStaleIdentity = true;
+            break;
+        }
+    }
+    if (!$hasStaleIdentity) {
+        $failures[] = 'identity Google con contesto precedente esclusa dal roster del gruppo';
+    }
+    require_once $root . '/src/Core/GitHubAssignmentService.php';
+    require_once $root . '/src/Core/StudentEmailResolver.php';
+    $assignmentService = new \App\Core\GitHubAssignmentService('{cognome}.{nome}@{domain}', 'studenti.example');
+    $resolvedStale = $assignmentService->resolveStudents(
+        $matrixWithStaleContext,
+        ['google_classroom' => [['id' => 'gc-stale', 'name' => 'Studente Rimappato', 'email' => 'email@email.it']]],
+        'google_classroom'
+    );
+    $resolvedStaleName = '';
+    foreach ($resolvedStale as $student) {
+        if ((string)($student['id_studente'] ?? '') === (string)$staleGoogle['id_studente']) {
+            $resolvedStaleName = (string)($student['nome'] ?? '');
+            break;
+        }
+    }
+    if ($resolvedStaleName !== 'Studente Rimappato') {
+        $failures[] = 'il roster Classroom corrente non risolve il nome dell’identità rimappata';
+    }
 } catch (Throwable $exception) {
     $failures[] = 'errore inatteso: ' . $exception->getMessage();
 } finally {

@@ -13,6 +13,8 @@ foreach ([
     'resolve_students_for_groups' => 'la risoluzione deve aggregare gli studenti di tutti i gruppi',
     'TEST_CLASSROOM_PUBBLICAZIONI' => 'la pubblicazione Classroom deve conservare una riga per corso/gruppo',
     'mergeResolvedStudents' => 'gli studenti duplicati devono essere uniti prima di creare le repository',
+    'REQUIRES_CLASSEVIVA_FOR_UDA' => 'la pagina deve poter attivare il gate ClasseViva in base all’UDA',
+    'ClasseVivaCapability::hasMappedUda' => 'il gate deve verificare i mapping ClasseViva attivi dei gruppi dell’UDA',
 ] as $needle => $message) {
     if (!str_contains($source, $needle)) {
         $failures[] = $message;

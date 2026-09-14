@@ -116,6 +116,7 @@ final class TeachingGroupStudentService
         // LegacyGithubStudentMapGateway) la membership registra un solo provider e
         // gli altri contesti vanno recuperati dalle integrazioni collegate al gruppo.
         $allowedContexts = [];
+        $activeIntegrationProviders = [];
         foreach ($memberships as $membership) {
             $provider = trim((string)($membership['provider_origine'] ?? ''));
             if ($provider === '') {
@@ -132,6 +133,7 @@ final class TeachingGroupStudentService
             if ($provider === '' || ($integration['stato'] ?? 'attivo') === 'disattivo') {
                 continue;
             }
+            $activeIntegrationProviders[$provider] = true;
             $contextId = trim((string)($integration['external_context_id'] ?? ''));
             $allowedContexts[$provider] ??= [];
             if ($contextId !== '') {
@@ -167,7 +169,9 @@ final class TeachingGroupStudentService
                 }
                 $identityContext = trim((string)($identity['external_context_id'] ?? ''));
                 if (!isset($allowedContexts[$provider])
-                    || ($identityContext !== '' && !isset($allowedContexts[$provider][$identityContext]))) {
+                    || ($identityContext !== ''
+                        && !isset($allowedContexts[$provider][$identityContext])
+                        && !isset($activeIntegrationProviders[$provider]))) {
                     continue;
                 }
                 $identityKey = $provider . ':' . $externalId;

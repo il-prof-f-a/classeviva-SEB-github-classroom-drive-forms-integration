@@ -93,6 +93,19 @@ class GitHubIntegration
     }
 
     /**
+     * Metadati di un repository, inclusa l'opzione GitHub "Template repository".
+     *
+     * L'endpoint /generate accetta esclusivamente repository marcati come
+     * template: il controllo viene esposto al flusso di creazione assignment
+     * per evitare di salvare link studenti senza repository.
+     */
+    public function getRepository($owner, $repo): array
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        return (array)$this->apiRequest('GET', "/repos/{$owner}/{$repo}");
+    }
+
+    /**
      * Profilo pubblico GitHub di un utente (login -> nome reale).
      * Usato per mostrare il nome degli studenti senza persistirlo.
      */

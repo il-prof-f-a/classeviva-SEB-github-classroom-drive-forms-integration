@@ -9,13 +9,13 @@
  *          con link generico), quindi creazione repo + TEST + link studente.
  */
 
-require_once '../bootstrap.php';
-
 use App\Core\Database\DatabaseFactory;
 use App\Core\GitHubAssignmentGroupRepository;
 use App\Core\GitHubAssignmentService;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupStudentService;
+use App\Core\ClasseVivaCapability;
+use App\Core\ClasseVivaTokenGuard;
 use App\Core\Security\Authorization;
 use App\Core\Security\Csrf;
 use App\Integration\GitHubIntegration;
@@ -23,6 +23,13 @@ use App\Integration\GoogleClassroomAPI;
 use App\Integration\ClasseVivaAPI;
 use App\Core\NotificationManager;
 use App\Utils\EncryptionHelper;
+
+$idUda = trim((string)($_GET['id_uda'] ?? ''));
+if ($idUda !== '' && !defined('REQUIRES_CLASSEVIVA_FOR_UDA')) {
+    define('REQUIRES_CLASSEVIVA_FOR_UDA', $idUda);
+}
+
+require_once '../bootstrap.php';
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -51,7 +58,6 @@ if (!$ghAuthed && !empty($config['github']['client_id'] ?? '')) {
     $githubAuthUrl = $github->getAuthorizationUrl(null, (string)($_SERVER['REQUEST_URI'] ?? 'github_assignment_create.php'));
 }
 
-$idUda = trim((string)($_GET['id_uda'] ?? ''));
 if ($idUda === '') {
     header('Location: index.php');
     exit;
@@ -72,6 +78,7 @@ foreach ($db->findWhere('UDA_GRUPPI', ['id_uda' => $idUda, 'id_utente' => $userI
     }
 }
 $groups = array_values($groupsById);
+$requiresClasseVivaForGroups = ClasseVivaCapability::hasMappedUda($db, $userId, $idUda);
 
 // Template repo attivi
 $templates = array_values(array_filter($db->findAll('GITHUB_REPO_TEMPLATES'), static fn($t) => ($t['attivo'] ?? '') === 'si'));
@@ -163,6 +170,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $org = trim((string)($_POST['org'] ?? ''));
             $name = trim((string)($_POST['name'] ?? ''));
             assert_groups_belong_to_uda($groupIds, $groups);
+            if ($requiresClasseVivaForGroups) {
+                ClasseVivaTokenGuard::requireToken($config);
+            }
             if ($templateId === '' || $org === '') {
                 throw new Exception('Gruppo, template e org sono obbligatori.');
             }
@@ -196,6 +206,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'create') {
             if (empty($formData)) throw new Exception('Dati mancanti. Ricomincia dalla selezione.');
             if (!$ghAuthed) throw new Exception('Autorizza GitHub prima di creare gli assignment.');
+            if ($requiresClasseVivaForGroups) {
+                ClasseVivaTokenGuard::requireToken($config);
+            }
 
             $org = (string)$formData['org'];
             $name = (string)$formData['name'];
@@ -218,6 +231,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             })((string)($template['url_repository'] ?? ''));
             if ($tOwner === '' || $tRepo === '') throw new Exception('URL template non valido.');
 
+            // GitHub consente POST /generate solo per repository marcati
+            // esplicitamente come "Template repository". Verifichiamo prima
+            // del batch per non creare assignment con link studenti vuoti.
+            $sourceRepository = $github->getRepository($tOwner, $tRepo);
+            if (empty($sourceRepository['is_template'])) {
+                throw new Exception(
+                    'Il repository sorgente non è configurato come template GitHub. '
+                    . 'Apri https://github.com/' . $tOwner . '/' . $tRepo
+                    . '/settings e abilita "Template repository", quindi riprova.'
+                );
+            }
+
             $students = resolve_students_for_groups($config, $db, $userId, $groupIds, $emailTemplate, $emailDomain);
             if (empty($students)) throw new Exception('Nessuno studente risolto nel gruppo.');
 
@@ -228,28 +253,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $usedCodes = [];
             $links = [];
+            $createdRepos = [];
+            $repoCreationErrors = [];
             foreach ($students as $s) {
                 $repoName = GitHubAssignmentService::repoName($name, $usedCodes);
                 $acceptanceCode = GitHubAssignmentService::generateAcceptanceCode();
-                $repoUrl = '';
                 try {
                     $created = $github->createRepositoryFromTemplate($tOwner, $tRepo, $repoName, $org, $name, true);
+                    // Registriamo subito il nome per poter tentare la pulizia
+                    // anche se la risposta non contiene html_url.
+                    $createdRepos[] = ['owner' => $org, 'repo' => $repoName];
                     $repoUrl = (string)($created['html_url'] ?? '');
+                    if ($repoUrl === '') {
+                        throw new Exception('GitHub non ha restituito il collegamento alla repository.');
+                    }
                 } catch (Throwable $e) {
+                    $repoCreationErrors[] = $repoName . ': ' . $e->getMessage();
+                    break;
                 }
+                $links[] = ['student' => $s, 'repo_url' => $repoUrl, 'code' => $acceptanceCode];
+            }
+
+            if ($repoCreationErrors !== []) {
+                // Il batch non deve lasciare repository orfane se una delle
+                // creazioni fallisce prima del salvataggio nel database.
+                foreach ($createdRepos as $createdRepo) {
+                    try {
+                        $github->deleteRepository($createdRepo['owner'], $createdRepo['repo']);
+                    } catch (Throwable $ignored) {
+                        // La causa originale è più utile all'utente; la pulizia
+                        // viene comunque tentata per ogni repository riuscita.
+                    }
+                }
+                throw new Exception('Creazione repository studenti fallita: ' . implode('; ', $repoCreationErrors));
+            }
+
+            foreach ($links as $link) {
                 $db->insertRow('GITHUB_ASSIGNMENT_STUDENT_LINKS', [
                     'id_map' => 'GHMAP_' . bin2hex(random_bytes(10)),
                     'id_assignment' => $idTest,
-                    'id_studente' => (string)$s['id_studente'],
-                    'student_repository_url' => $repoUrl,
-                    'acceptance_code' => $acceptanceCode,
+                    'id_studente' => (string)$link['student']['id_studente'],
+                    'student_repository_url' => (string)$link['repo_url'],
+                    'acceptance_code' => (string)$link['code'],
                     'github_username' => '',
                     'accepted_at' => null,
                     'note' => '',
                     'data_creazione' => date('Y-m-d H:i:s'),
                     'id_utente' => $userId,
                 ]);
-                $links[] = ['student' => $s, 'repo_url' => $repoUrl, 'code' => $acceptanceCode];
             }
 
             $teacherReposUrl = ($org !== '' && $prefix !== '')

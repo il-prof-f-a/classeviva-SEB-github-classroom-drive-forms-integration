@@ -76,6 +76,45 @@ final class GitHubAssignmentService
      */
     public function resolveStudents(array $matrix, array $rosterByProvider, string $listaPreferita = 'classeviva'): array
     {
+        // Un gruppo collegato a un solo provider può non avere ancora righe in
+        // GRUPPI_STUDENTI (ad esempio dopo un collegamento Classroom salvato
+        // prima della sincronizzazione). In quel caso il roster è comunque una
+        // fonte valida: usiamo l'identificativo esterno come chiave runtime e
+        // lasciamo invariata la struttura restituita ai chiamanti.
+        $order = ['classeviva', 'google_classroom'];
+        if ($listaPreferita !== '' && in_array($listaPreferita, $order, true)) {
+            $order = array_values(array_unique(array_merge([$listaPreferita], $order)));
+        }
+        foreach (array_keys($rosterByProvider) as $provider) {
+            $provider = (string)$provider;
+            if ($provider !== '' && !in_array($provider, $order, true)) {
+                $order[] = $provider;
+            }
+        }
+        if ($matrix === []) {
+            foreach ($order as $provider) {
+                foreach (($rosterByProvider[$provider] ?? []) as $entry) {
+                    if (!is_array($entry)) {
+                        continue;
+                    }
+                    $externalId = trim((string)($entry['id'] ?? $entry['external_user_id'] ?? ''));
+                    if ($externalId === '') {
+                        continue;
+                    }
+                    $matrix[] = [
+                        'id_studente' => $externalId,
+                        'identities' => [[
+                            'provider' => $provider,
+                            'external_user_id' => $externalId,
+                        ]],
+                    ];
+                }
+                if ($matrix !== []) {
+                    break;
+                }
+            }
+        }
+
         $result = [];
         foreach ($matrix as $row) {
             $idStudente = trim((string)($row['id_studente'] ?? ''));
@@ -86,10 +125,6 @@ final class GitHubAssignmentService
             $nome = '';
             // Ordine di priorità: prima $listaPreferita, poi gli altri provider.
             // Di default parte da ClasseViva; per usare l'email Google reale passa 'google_classroom'.
-            $order = ['classeviva', 'google_classroom'];
-            if ($listaPreferita !== '' && in_array($listaPreferita, $order, true)) {
-                $order = array_values(array_unique(array_merge([$listaPreferita], $order)));
-            }
             foreach ($order as $preferredProvider) {
                 foreach (($row['identities'] ?? []) as $identity) {
                     if ((string)($identity['provider'] ?? '') !== $preferredProvider) {

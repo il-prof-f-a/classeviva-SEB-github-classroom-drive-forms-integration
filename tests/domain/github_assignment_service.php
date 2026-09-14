@@ -82,6 +82,21 @@ if (($byIdGoogle['STD_4']['email'] ?? '') !== 'email@email.it') {
     $failures[] = 'lista_preferita google_classroom errata: ' . ($byIdGoogle['STD_4']['email'] ?? '(vuota)');
 }
 
+// Un gruppo collegato solo a Google Classroom può non avere ancora righe in
+// GRUPPI_STUDENTI: il roster deve comunque essere utilizzabile per creare
+// l'assignment, usando l'identificativo esterno come chiave runtime.
+$resolvedRosterOnly = $svc->resolveStudents([], [
+    'google_classroom' => [
+        ['id' => 'G_ONLY_1', 'name' => 'Studente Classroom', 'email' => 'email@email.it'],
+    ],
+], 'google_classroom');
+if (count($resolvedRosterOnly) !== 1
+    || ($resolvedRosterOnly[0]['id_studente'] ?? '') !== 'G_ONLY_1'
+    || ($resolvedRosterOnly[0]['nome'] ?? '') !== 'Studente Classroom'
+    || ($resolvedRosterOnly[0]['email'] ?? '') !== 'email@email.it') {
+    $failures[] = 'gruppo solo Google Classroom senza membership non risolto dal roster';
+}
+
 if ($failures !== []) {
     foreach ($failures as $f) {
         fwrite(STDERR, "FAIL: {$f}\n");
