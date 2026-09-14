@@ -8,11 +8,14 @@ require_once '../bootstrap.php';
 
 use App\Core\Database\DatabaseFactory;
 use App\Core\Security\Csrf;
+use App\Integration\GitHubIntegration;
 
 $pageTitle = "Gestione Repository Template";
 
 // Inizializza servizi
 $dbAdapter = DatabaseFactory::createWithInitialization($config, true);
+$github = new GitHubIntegration($config);
+$github->loadTokenFromSession();
 
 $successMessage = null;
 $errorMessage = null;
@@ -35,9 +38,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             throw new Exception("Nome e URL repository sono obbligatori");
         }
 
-        // Valida URL GitHub
-        if (!preg_match('#^https://github\.com/[^/]+/[^/]+/?$#', $urlRepository)) {
+        // Valida URL GitHub e ricava owner/repository per la chiamata API.
+        $repositoryParts = [];
+        if (preg_match('#^https://github\.com/([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.-]{1,100})/?$#i', $urlRepository, $repositoryParts) !== 1) {
             throw new Exception("URL repository non valido. Formato atteso: https://github.com/username/repo");
+        }
+        $repoOwner = $repositoryParts[1];
+        $repoName = $repositoryParts[2];
+
+        if (!$github->isAuthenticated()) {
+            throw new Exception('Autorizza GitHub prima di aggiungere un repository template.');
+        }
+
+        // GitHub espone il flag `is_template` solo sui metadati del repository:
+        // non salviamo URL che poi non possono essere usati dall’endpoint
+        // /generate per creare gli assignment degli studenti.
+        $repository = $github->getRepository($repoOwner, $repoName);
+        if (empty($repository['is_template'])) {
+            throw new Exception('Il repository GitHub non è configurato come template. Abilita "Template repository" nelle impostazioni GitHub e riprova.');
         }
 
         // Verifica se template esiste già
