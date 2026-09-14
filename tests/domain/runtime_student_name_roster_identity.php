@@ -87,6 +87,9 @@ try {
         if (($row['nome_completo'] ?? '') !== 'Alice Rossi') {
             $failures[] = 'nome runtime non risolto: ' . ($row['nome_completo'] ?? '');
         }
+        if (($row['external_ids']['github_classroom'][0] ?? '') !== 'alice-dev') {
+            $failures[] = 'alias esterno GitHub non esposto per il matching runtime';
+        }
     }
 } catch (Throwable $exception) {
     $failures[] = 'errore inatteso: ' . $exception->getMessage();

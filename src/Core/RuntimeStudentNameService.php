@@ -38,7 +38,7 @@ final class RuntimeStudentNameService
     }
 
     /**
-     * @return list<array{id_studente:string,id_studente_internal:string,nome:string,cognome:string,nome_completo:string,provider:string}>
+     * @return list<array{id_studente:string,id_studente_internal:string,nome:string,cognome:string,nome_completo:string,provider:string,external_ids:array<string,list<string>>}>
      */
     public function resolveGroupStudents(string $groupId): array
     {
@@ -113,6 +113,13 @@ final class RuntimeStudentNameService
                         'cognome' => '',
                         'nome_completo' => $name,
                         'provider' => $provider,
+                        // Un assignment può essere stato creato prima della
+                        // sincronizzazione del gruppo e conservare l'ID
+                        // esterno nel proprio link. Manteniamo quindi anche
+                        // l'alias provider per consentire ai chiamanti di
+                        // associare il nome alla stessa persona senza
+                        // persistere dati anagrafici.
+                        'external_ids' => [$provider => [$externalId]],
                     ];
                 }
                 return $result;
@@ -144,6 +151,18 @@ final class RuntimeStudentNameService
             $detail = $details[$studentId] ?? null;
             $name = is_array($detail) ? trim((string)($detail['name'] ?? '')) : '';
             $provider = is_array($detail) ? trim((string)($detail['provider'] ?? '')) : '';
+            $externalIds = [];
+            foreach ($identitiesByStudent[$studentId] ?? [] as $identity) {
+                $identityProvider = trim((string)($identity['provider'] ?? ''));
+                $externalId = trim((string)($identity['external_user_id'] ?? ''));
+                if ($identityProvider === '' || $externalId === '') {
+                    continue;
+                }
+                $externalIds[$identityProvider] ??= [];
+                if (!in_array($externalId, $externalIds[$identityProvider], true)) {
+                    $externalIds[$identityProvider][] = $externalId;
+                }
+            }
             $result[] = [
                 'id_studente' => $studentId,
                 'id_studente_internal' => $studentId,
@@ -151,6 +170,7 @@ final class RuntimeStudentNameService
                 'cognome' => '',
                 'nome_completo' => $name,
                 'provider' => $provider,
+                'external_ids' => $externalIds,
             ];
         }
         return $result;

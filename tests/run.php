@@ -72,6 +72,16 @@ if ($rubricaGroupOnlyExitCode === 0) {
     echo "FAIL: rubrica orale gruppo senza materia\n";
 }
 
+$githubReviewClasseVivaGateCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/public/github_assignment_review_classeviva_gate.php');
+exec($githubReviewClasseVivaGateCommand . ' 2>&1', $githubReviewClasseVivaGateOutput, $githubReviewClasseVivaGateExitCode);
+if ($githubReviewClasseVivaGateExitCode === 0) {
+    $passes++;
+    echo "PASS: gate ClasseViva condizionale nella review GitHub\n";
+} else {
+    $failures[] = 'Gate ClasseViva review GitHub: ' . implode(' | ', $githubReviewClasseVivaGateOutput);
+    echo "FAIL: gate ClasseViva condizionale nella review GitHub\n";
+}
+
 $excelImportStudentNamesCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/public/excel_import_student_names.php');
 exec($excelImportStudentNamesCommand . ' 2>&1', $excelImportStudentNamesOutput, $excelImportStudentNamesExitCode);
 if ($excelImportStudentNamesExitCode === 0) {

@@ -3,6 +3,11 @@
  * Riepilogo assignment GitHub Classroom e assegnazione voti manuali
  */
 
+$reviewTestId = trim((string)($_GET['test_id'] ?? ''));
+if ($reviewTestId !== '' && !defined('REQUIRES_CLASSEVIVA_FOR_TEST')) {
+    define('REQUIRES_CLASSEVIVA_FOR_TEST', $reviewTestId);
+}
+
 require_once '../bootstrap.php';
 
 // La review contiene voti e attribuzioni per-studente: anche la pagina HTML
@@ -1133,7 +1138,27 @@ if ($groupId !== '') {
     foreach ((new RuntimeStudentNameService($dbAdapter, $userId, $config))->resolveGroupStudents($groupId) as $runtimeStudent) {
         $studentKey = (string)$runtimeStudent['id_studente'];
         $runtimeName = trim((string)$runtimeStudent['nome_completo']);
+        if ($runtimeName === '') {
+            continue;
+        }
         $runtimeNamesByStudent[$studentKey] = $runtimeName;
+        $internalKey = trim((string)($runtimeStudent['id_studente_internal'] ?? ''));
+        if ($internalKey !== '') {
+            $runtimeNamesByStudent[$internalKey] = $runtimeName;
+        }
+        // I link dell'assignment possono contenere ancora l'ID esterno del
+        // provider (per esempio l'ID ClasseViva) quando sono stati creati
+        // prima della sincronizzazione delle membership. Il servizio centrale
+        // espone gli alias provider solo per l'associazione runtime del nome.
+        foreach (($runtimeStudent['external_ids'] ?? []) as $externalIds) {
+            foreach ((array)$externalIds as $externalId) {
+                $externalKey = trim((string)$externalId);
+                if ($externalKey !== '') {
+                    $runtimeNamesByStudent[$externalKey] = $runtimeName;
+                    $runtimeNamesByStudent[strtolower($externalKey)] = $runtimeName;
+                }
+            }
+        }
         // Chiave secondaria per il matching col login GitHub (gruppi senza membership interne).
         if (($runtimeStudent['provider'] ?? '') === 'github_classroom' && $studentKey !== '') {
             $runtimeNamesByStudent[strtolower($studentKey)] = $runtimeName;

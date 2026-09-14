@@ -333,6 +333,24 @@ if (php_sapi_name() !== 'cli'
         $conditionalUdaId = defined('REQUIRES_CLASSEVIVA_FOR_UDA')
             ? trim((string)constant('REQUIRES_CLASSEVIVA_FOR_UDA'))
             : '';
+        // Alcune pagine lavorano direttamente su un test (per esempio la
+        // review di un assignment GitHub) e non ricevono l'id UDA nella URL.
+        // Risaliamo quindi al test prima di valutare la capability ClasseViva,
+        // così il roster necessario alla risoluzione dei nomi viene caricato
+        // anche in questa modalità.
+        $conditionalTestId = defined('REQUIRES_CLASSEVIVA_FOR_TEST')
+            ? trim((string)constant('REQUIRES_CLASSEVIVA_FOR_TEST'))
+            : '';
+        if ($conditionalUdaId === '' && $conditionalTestId !== '' && isset($dbAdapter)) {
+            try {
+                $conditionalTest = $dbAdapter->findOne('TEST', 'id_test', $conditionalTestId);
+                $conditionalUdaId = trim((string)($conditionalTest['id_uda'] ?? ''));
+            } catch (\Throwable $e) {
+                // Un test non trovato non deve rendere indisponibile la pagina
+                // né attivare il gate in modo incerto.
+                $conditionalUdaId = '';
+            }
+        }
         $conditionalClasseViva = false;
         if ($conditionalUdaId !== '' && $hasAuthenticatedUser && isset($dbAdapter)) {
             try {
