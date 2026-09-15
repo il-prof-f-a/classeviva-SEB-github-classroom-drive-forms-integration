@@ -37,6 +37,11 @@ foreach ($names as $n) {
         $failures[] = 'repoName formato errato: ' . $n;
     }
 }
+$teamUsed = [];
+$teamName = GitHubAssignmentService::teamRepoName('Esempio', 2, $teamUsed);
+if (!str_starts_with($teamName, 'esempio-team-2-') || strlen($teamName) > 100) {
+    $failures[] = 'teamRepoName formato errato: ' . $teamName;
+}
 
 // --- resolveStudents ---
 $svc = new GitHubAssignmentService('{cognome}.{nome}@{domain}', 'istituto.it');

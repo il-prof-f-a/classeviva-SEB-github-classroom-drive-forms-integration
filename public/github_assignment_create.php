@@ -12,6 +12,7 @@
 use App\Core\Database\DatabaseFactory;
 use App\Core\GitHubAssignmentGroupRepository;
 use App\Core\GitHubAssignmentService;
+use App\Core\GitHubAssignmentTeamService;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupStudentService;
 use App\Core\ClasseVivaCapability;
@@ -87,6 +88,7 @@ $templates = array_values(array_filter($db->findAll('GITHUB_REPO_TEMPLATES'), st
 $profile = $config['user_profile'] ?? [];
 $emailDomain = (string)($profile['school_email_domain'] ?? '');
 $emailTemplate = (string)($profile['school_student_email_template'] ?? '');
+$teamService = new GitHubAssignmentTeamService();
 
 $orgs = [];
 if ($ghAuthed) {
@@ -197,6 +199,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'tipo_test' => trim((string)($_POST['tipo_test'] ?? 'altro')),
                 'deadline' => trim((string)($_POST['deadline'] ?? '')),
                 'note' => trim((string)($_POST['note'] ?? '')),
+                'assignment_mode' => 'single',
             ];
             $formData = $_SESSION['github_assignment_form'];
             $students = resolve_students_for_groups($config, $db, $userId, $groupIds, $emailTemplate, $emailDomain);
@@ -219,6 +222,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $modes = (array)($_POST['modes'] ?? []);
             $modeEmail = in_array('email', $modes, true);
             $modeClassroom = in_array('classroom', $modes, true);
+            $assignmentMode = $teamService->normalizeMode(
+                $_POST['assignment_mode'] ?? ($formData['assignment_mode'] ?? 'single')
+            );
+            $students = resolve_students_for_groups($config, $db, $userId, $groupIds, $emailTemplate, $emailDomain);
+            if (empty($students)) throw new Exception('Nessuno studente risolto nel gruppo.');
+            $teamGroups = [];
+            if ($assignmentMode === 'group') {
+                $rawTeamGroups = json_decode((string)($_POST['team_groups_json'] ?? ''), true);
+                if (!is_array($rawTeamGroups)) {
+                    throw new Exception('Composizione dei gruppi di lavoro mancante o non valida.');
+                }
+                $teamGroups = $teamService->normalizeGroups($rawTeamGroups, $students);
+            }
 
             $template = null;
             foreach ($templates as $t) { if ((string)$t['id_template'] === $templateId) { $template = $t; break; } }
@@ -243,9 +259,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 );
             }
 
-            $students = resolve_students_for_groups($config, $db, $userId, $groupIds, $emailTemplate, $emailDomain);
-            if (empty($students)) throw new Exception('Nessuno studente risolto nel gruppo.');
-
             $slug = GitHubAssignmentService::assignmentSlug($name);
             $prefix = GitHubAssignmentService::repoPrefix($name);
             $idTest = 'TEST_' . uniqid();
@@ -255,23 +268,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $links = [];
             $createdRepos = [];
             $repoCreationErrors = [];
-            foreach ($students as $s) {
-                $repoName = GitHubAssignmentService::repoName($name, $usedCodes);
-                $acceptanceCode = GitHubAssignmentService::generateAcceptanceCode();
-                try {
-                    $created = $github->createRepositoryFromTemplate($tOwner, $tRepo, $repoName, $org, $name, true);
-                    // Registriamo subito il nome per poter tentare la pulizia
-                    // anche se la risposta non contiene html_url.
-                    $createdRepos[] = ['owner' => $org, 'repo' => $repoName];
-                    $repoUrl = (string)($created['html_url'] ?? '');
-                    if ($repoUrl === '') {
-                        throw new Exception('GitHub non ha restituito il collegamento alla repository.');
-                    }
-                } catch (Throwable $e) {
-                    $repoCreationErrors[] = $repoName . ': ' . $e->getMessage();
-                    break;
+            $studentsById = [];
+            foreach ($students as $student) {
+                $studentId = trim((string)($student['id_studente'] ?? ''));
+                if ($studentId !== '') {
+                    $studentsById[$studentId] = $student;
                 }
-                $links[] = ['student' => $s, 'repo_url' => $repoUrl, 'code' => $acceptanceCode];
+            }
+            if ($assignmentMode === 'group') {
+                foreach ($teamGroups as $teamIndex => $team) {
+                    $repoName = GitHubAssignmentService::teamRepoName($name, $teamIndex + 1, $usedCodes);
+                    try {
+                        $created = $github->createRepositoryFromTemplate($tOwner, $tRepo, $repoName, $org, $name, true);
+                        // Registriamo subito il nome per poter tentare la pulizia
+                        // anche se la risposta non contiene html_url.
+                        $createdRepos[] = ['owner' => $org, 'repo' => $repoName];
+                        $repoUrl = (string)($created['html_url'] ?? '');
+                        if ($repoUrl === '') {
+                            throw new Exception('GitHub non ha restituito il collegamento alla repository.');
+                        }
+                    } catch (Throwable $e) {
+                        $repoCreationErrors[] = $repoName . ': ' . $e->getMessage();
+                        break;
+                    }
+                    if ($repoCreationErrors !== []) {
+                        break;
+                    }
+                    foreach ($team['student_ids'] as $studentId) {
+                        $student = $studentsById[$studentId] ?? null;
+                        if (!is_array($student)) {
+                            throw new Exception('Studente non presente nel roster durante la creazione del gruppo.');
+                        }
+                        $links[] = [
+                            'student' => $student,
+                            'repo_url' => $repoUrl,
+                            'code' => GitHubAssignmentService::generateAcceptanceCode(),
+                        ];
+                    }
+                }
+            } else {
+                foreach ($students as $s) {
+                    $repoName = GitHubAssignmentService::repoName($name, $usedCodes);
+                    $acceptanceCode = GitHubAssignmentService::generateAcceptanceCode();
+                    try {
+                        $created = $github->createRepositoryFromTemplate($tOwner, $tRepo, $repoName, $org, $name, true);
+                        // Registriamo subito il nome per poter tentare la pulizia
+                        // anche se la risposta non contiene html_url.
+                        $createdRepos[] = ['owner' => $org, 'repo' => $repoName];
+                        $repoUrl = (string)($created['html_url'] ?? '');
+                        if ($repoUrl === '') {
+                            throw new Exception('GitHub non ha restituito il collegamento alla repository.');
+                        }
+                    } catch (Throwable $e) {
+                        $repoCreationErrors[] = $repoName . ': ' . $e->getMessage();
+                        break;
+                    }
+                    $links[] = ['student' => $s, 'repo_url' => $repoUrl, 'code' => $acceptanceCode];
+                }
             }
 
             if ($repoCreationErrors !== []) {
@@ -330,6 +383,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'slug' => $slug,
                     'repo_prefix' => $prefix,
                     'template_id' => $templateId,
+                    'assignment_mode' => $assignmentMode,
+                    'team_groups' => $teamGroups,
                     'modalita_invito' => $modes,
                     'teacher_token' => EncryptionHelper::encrypt((string)($_SESSION['github_access_token'] ?? '')),
                 ], JSON_THROW_ON_ERROR),
@@ -478,6 +533,8 @@ include __DIR__ . '/partials/app_header.php';
                 <form method="post" class="row g-3">
                     <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
                     <input type="hidden" name="action" value="create">
+                    <input type="hidden" name="assignment_mode" id="assignment-mode" value="single">
+                    <input type="hidden" name="team_groups_json" id="team-groups-json" value="">
                     <div class="col-12">
                         <div class="alert alert-info mb-0">
                             <i class="bi bi-people"></i>
@@ -497,6 +554,26 @@ include __DIR__ . '/partials/app_header.php';
                         </div>
                     </div>
                     <div class="col-12">
+                        <label for="assignment-mode-select" class="form-label fw-semibold">Assegnazione singola/di gruppo</label>
+                        <select class="form-select" id="assignment-mode-select">
+                            <option value="single" selected>Assegnazione singola</option>
+                            <option value="group">Assegnazione di gruppo</option>
+                        </select>
+                        <div class="form-text">In modalità gruppo ogni gruppo riceverà una repository condivisa.</div>
+                    </div>
+                    <div class="col-12 d-none" id="team-groups-panel">
+                        <div class="card border-primary-subtle">
+                            <div class="card-header bg-primary-subtle d-flex justify-content-between align-items-center">
+                                <strong><i class="bi bi-people-fill"></i> Gruppi di lavoro</strong>
+                                <button type="button" class="btn btn-sm btn-primary" id="add-team-group"><i class="bi bi-plus-circle"></i> Aggiungi gruppo</button>
+                            </div>
+                            <div class="card-body">
+                                <div id="team-groups" class="d-flex flex-wrap gap-2"></div>
+                                <div class="form-text mt-2">Seleziona un gruppo e poi clicca sul nome di uno studente per assegnarlo. Ogni studente deve rimanere in un gruppo.</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-12">
                         <table class="table table-sm table-striped">
                             <thead><tr><th>#</th><th>Studente</th><th>Email</th></tr></thead>
                             <tbody>
@@ -504,7 +581,7 @@ include __DIR__ . '/partials/app_header.php';
                                 <?php else: foreach ($students as $i => $s): ?>
                                     <tr>
                                         <td><?= (int)$i + 1 ?></td>
-                                        <td><?= h((string)($s['nome'] ?? $s['id_studente'])) ?></td>
+                                        <td><span class="team-student-name" data-student-id="<?= h((string)($s['id_studente'] ?? '')) ?>"><?= h((string)($s['nome'] ?? $s['id_studente'])) ?></span></td>
                                         <td><code><?= h((string)($s['email'] ?? '(non risolta)')) ?></code></td>
                                     </tr>
                                 <?php endforeach; endif; ?>
@@ -661,6 +738,135 @@ include __DIR__ . '/partials/app_header.php';
         });
     }
     syncSelectors();
+})();
+
+// Gestione client-side dei gruppi di lavoro dell'assignment. Il payload viene
+// sempre ricontrollato dal server prima di creare le repository.
+(() => {
+    const modeSelect = document.getElementById('assignment-mode-select');
+    const modeInput = document.getElementById('assignment-mode');
+    const payloadInput = document.getElementById('team-groups-json');
+    const panel = document.getElementById('team-groups-panel');
+    const groupsContainer = document.getElementById('team-groups');
+    const addButton = document.getElementById('add-team-group');
+    if (!modeSelect || !modeInput || !payloadInput || !panel || !groupsContainer || !addButton) return;
+
+    const students = <?= \App\Core\Security\OutputEncoder::json(array_values(array_map(static function (array $student): array {
+        return [
+            'id' => (string)($student['id_studente'] ?? ''),
+        ];
+    }, $students))) ?>;
+    const initialGroups = <?= \App\Core\Security\OutputEncoder::json($teamService->defaultGroups($students)) ?>;
+    const palette = ['#dbeafe', '#dcfce7', '#fef3c7', '#fce7f3', '#ede9fe', '#cffafe', '#ffedd5', '#e0e7ff'];
+    let groups = initialGroups.map((group) => ({
+        id: String(group.id),
+        name: String(group.name),
+        color: String(group.color),
+        student_ids: [...group.student_ids],
+    }));
+    let activeGroupId = groups[0]?.id || '';
+    let nextGroupNumber = groups.length + 1;
+
+    const colorForNewGroup = () => {
+        const used = new Set(groups.map((group) => group.color.toLowerCase()));
+        const available = palette.filter((color) => !used.has(color));
+        return available[Math.floor(Math.random() * Math.max(1, available.length))] || palette[groups.length % palette.length];
+    };
+
+    const groupForStudent = (studentId) => groups.find((group) => group.student_ids.includes(studentId));
+
+    const syncPayload = () => {
+        payloadInput.value = JSON.stringify(groups);
+    };
+
+    const renderStudentColors = () => {
+        document.querySelectorAll('.team-student-name').forEach((node) => {
+            const group = modeSelect.value === 'group' ? groupForStudent(node.dataset.studentId || '') : null;
+            node.style.backgroundColor = group ? group.color : '';
+            node.style.borderRadius = group ? '0.25rem' : '';
+            node.style.padding = group ? '0.1rem 0.35rem' : '';
+            node.style.display = group ? 'inline-block' : '';
+        });
+    };
+
+    const renderGroups = () => {
+        const isGroupMode = modeSelect.value === 'group';
+        modeInput.value = isGroupMode ? 'group' : 'single';
+        panel.classList.toggle('d-none', !isGroupMode);
+        groupsContainer.replaceChildren();
+        if (!isGroupMode) {
+            renderStudentColors();
+            return;
+        }
+        groups.forEach((group) => {
+            const card = document.createElement('div');
+            card.className = 'border rounded p-2 d-flex align-items-center gap-2';
+            card.style.borderLeft = '0.5rem solid ' + group.color;
+            card.style.backgroundColor = group.color;
+            card.style.cursor = 'pointer';
+            card.style.outline = group.id === activeGroupId ? '2px solid #0d6efd' : '';
+            card.title = 'Seleziona questo gruppo per assegnare studenti';
+            card.addEventListener('click', () => {
+                activeGroupId = group.id;
+                renderGroups();
+            });
+
+            const label = document.createElement('span');
+            label.className = 'fw-semibold';
+            label.textContent = group.name + ' (' + group.student_ids.length + ')';
+            card.appendChild(label);
+
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'btn btn-sm btn-outline-danger';
+            remove.innerHTML = '<i class="bi bi-trash"></i>';
+            remove.title = group.student_ids.length > 0 ? 'Sposta prima gli studenti per cancellare il gruppo' : 'Cancella gruppo vuoto';
+            remove.disabled = group.student_ids.length > 0 || groups.length === 1;
+            remove.addEventListener('click', (event) => {
+                event.stopPropagation();
+                if (remove.disabled) return;
+                groups = groups.filter((candidate) => candidate.id !== group.id);
+                activeGroupId = groups[0]?.id || '';
+                syncPayload();
+                renderGroups();
+            });
+            card.appendChild(remove);
+            groupsContainer.appendChild(card);
+        });
+        syncPayload();
+        renderStudentColors();
+    };
+
+    const moveStudentToActiveGroup = (studentId) => {
+        if (modeSelect.value !== 'group' || !activeGroupId || !studentId) return;
+        const target = groups.find((group) => group.id === activeGroupId);
+        if (!target) return;
+        groups.forEach((group) => {
+            group.student_ids = group.student_ids.filter((id) => id !== studentId);
+        });
+        target.student_ids.push(studentId);
+        syncPayload();
+        renderGroups();
+    };
+
+    document.querySelectorAll('.team-student-name').forEach((node) => {
+        node.style.cursor = 'pointer';
+        node.addEventListener('click', () => moveStudentToActiveGroup(node.dataset.studentId || ''));
+    });
+    modeSelect.addEventListener('change', renderGroups);
+    addButton.addEventListener('click', () => {
+        const id = 'team-' + nextGroupNumber;
+        groups.push({
+            id,
+            name: 'Gruppo ' + nextGroupNumber,
+            color: colorForNewGroup(),
+            student_ids: [],
+        });
+        nextGroupNumber += 1;
+        activeGroupId = id;
+        renderGroups();
+    });
+    renderGroups();
 })();
 </script>
 </body>

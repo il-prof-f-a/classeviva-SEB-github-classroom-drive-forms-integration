@@ -48,6 +48,17 @@ final class GitHubAssignmentService
         return $base . '-stud-' . $code;
     }
 
+    /** Nome repository condivisa per un gruppo di lavoro. */
+    public static function teamRepoName(string $name, int $teamNumber, array &$usedCodes): string
+    {
+        $base = self::repoPrefix($name) . '-team-' . max(1, $teamNumber);
+        do {
+            $code = (string) random_int(100000, 999999);
+        } while (isset($usedCodes[$code]));
+        $usedCodes[$code] = true;
+        return substr($base . '-' . $code, 0, 100);
+    }
+
     public static function slugify(string $s): string
     {
         $s = mb_strtolower(trim($s), 'UTF-8');
