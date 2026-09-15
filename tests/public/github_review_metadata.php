@@ -63,6 +63,13 @@ $require(str_contains($integration, '/branches-where-head'), 'endpoint branch HE
 $require(str_contains($review, "listRepoIssuesAll(\$owner, \$repo, 'all'"), 'issue non richieste con stato all');
 $require(str_contains($normalizer, 'extractIssueReferences'), 'parser riferimenti issue assente');
 $require(str_contains($normalizer, 'mapTagsBySha'), 'mapping tag SHA assente');
+$require(str_contains($review, 'formatContributionMetric'), 'formatter n di m assente');
+$require(str_contains($review, 'data-student-owned'), 'attributo ownership assente');
+$require(str_contains($review, 'commit-other'), 'stile commit altri autori assente');
+$require(str_contains($review, "action: 'repo_contributions'"), 'client contributi assente');
+$require(str_contains($review, 'student_additions'), 'metriche studente assenti');
+$require(str_contains($review, 'githubMetadataCache'), 'cache globale repository assente');
+$require(str_contains($review, 'compareCommits'), 'origine branch non analizzata');
 
 // Il JSON incorporato deve passare dall'encoder centrale, non da json_encode
 // grezzo nel markup della pagina.

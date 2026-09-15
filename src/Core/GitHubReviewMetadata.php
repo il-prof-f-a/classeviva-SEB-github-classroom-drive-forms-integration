@@ -137,6 +137,8 @@ final class GitHubReviewMetadata
             $normalised[] = [
                 'number' => $number,
                 'title' => trim((string)($issue['title'] ?? '')),
+                'author_login' => trim((string)($issue['user']['login'] ?? '')) ?: null,
+                'author_email' => trim((string)($issue['user']['email'] ?? '')) ?: null,
                 'state' => strtolower(trim((string)($issue['state'] ?? ''))) === 'closed' ? 'closed' : 'open',
                 'created_at' => trim((string)($issue['created_at'] ?? '')),
                 'closed_at' => trim((string)($issue['closed_at'] ?? '')) ?: null,

@@ -20,8 +20,10 @@ use App\Core\Database\DatabaseFactory;
 use App\Core\GitHubAssignmentService;
 use App\Core\GitHubReviewMetadata;
 use App\Core\NotificationManager;
+use App\Core\GitHubContributionAttribution;
 use App\Core\RuntimeStudentNameService;
 use App\Core\Security\Csrf;
+use App\Core\StudentIdentityRepository;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupStudentService;
 use App\Integration\ClasseVivaAPI;
@@ -183,6 +185,90 @@ if (!$test) {
 }
 if (strtolower($test['piattaforma'] ?? '') !== 'github') {
     die("Questo test non è un assignment GitHub");
+}
+
+/** @return array<string,mixed>|null */
+function gh_review_assignment_student(string $assignmentId, string $studentId): ?array
+{
+    global $dbAdapter;
+    $studentId = trim($studentId);
+    if ($assignmentId === '' || $studentId === '') {
+        return null;
+    }
+    $rows = $dbAdapter->findWhere('GITHUB_ASSIGNMENT_STUDENT_LINKS', [
+        'id_assignment' => $assignmentId,
+        'id_studente' => $studentId,
+    ]);
+    return is_array($rows[0] ?? null) ? $rows[0] : null;
+}
+
+function gh_review_repo_from_url(string $url): string
+{
+    $parsed = parse_url(trim($url));
+    $host = strtolower((string)($parsed['host'] ?? ''));
+    if (!in_array($host, ['github.com', 'www.github.com'], true)) {
+        return '';
+    }
+    $parts = array_values(array_filter(explode('/', trim((string)($parsed['path'] ?? ''), '/'))));
+    if (count($parts) < 2) {
+        return '';
+    }
+    $owner = trim((string)$parts[0]);
+    $repo = preg_replace('/\.git$/i', '', trim((string)$parts[1]));
+    if ($repo === '' || !preg_match('/^[A-Za-z0-9_.-]{1,100}$/', $owner) || !preg_match('/^[A-Za-z0-9_.-]{1,100}$/', $repo)) {
+        return '';
+    }
+    return $owner . '/' . $repo;
+}
+
+function gh_review_assert_assignment_repo(string $assignmentId, string $studentId, string $repoFull): array
+{
+    $link = gh_review_assignment_student($assignmentId, $studentId);
+    if ($link === null) {
+        throw new Exception('Studente non associato a questo assignment');
+    }
+    $expectedRepo = gh_review_repo_from_url((string)($link['student_repository_url'] ?? ''));
+    if ($expectedRepo === '' || strcasecmp($expectedRepo, $repoFull) !== 0) {
+        throw new Exception('Repository non associata allo studente');
+    }
+    return $link;
+}
+
+/** @return array{logins:array<int,string>,emails:array<int,string>} */
+function gh_review_student_identities(string $studentId, ?array $assignmentLink = null): array
+{
+    global $dbAdapter, $userId;
+    $logins = [];
+    $emails = [];
+    if ($assignmentLink !== null) {
+        $login = trim((string)($assignmentLink['github_username'] ?? ''));
+        if ($login !== '') {
+            $logins[] = $login;
+        }
+    }
+    foreach ((new StudentIdentityRepository($dbAdapter, (string)$userId))->listForStudent($studentId) as $identity) {
+        if (($identity['provider'] ?? '') !== 'github_classroom') {
+            continue;
+        }
+        $externalId = trim((string)($identity['external_user_id'] ?? ''));
+        if ($externalId !== '') {
+            $logins[] = $externalId;
+        }
+        $metadata = json_decode((string)($identity['metadata_json'] ?? ''), true);
+        if (is_array($metadata)) {
+            foreach ([(string)($metadata['email'] ?? ''), (string)($metadata['email_studente'] ?? '')] as $email) {
+                if (trim($email) !== '') {
+                    $emails[] = trim($email);
+                }
+            }
+            foreach ((array)($metadata['emails'] ?? []) as $email) {
+                if (is_scalar($email) && trim((string)$email) !== '') {
+                    $emails[] = trim((string)$email);
+                }
+            }
+        }
+    }
+    return GitHubContributionAttribution::normalizeIdentities($logins, $emails);
 }
 
 // Le rubriche GitHub vengono caricate esclusivamente da RUBRICA. La pagina
@@ -416,9 +502,14 @@ if ($postAction === 'repo_metadata') {
         Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? $jsonRequest['csrf_token'] ?? null);
 
         $repoFull = trim((string)($_POST['repo'] ?? $jsonRequest['repo'] ?? ''));
+        $metadataStudentId = trim((string)($_POST['student_id'] ?? $jsonRequest['student_id'] ?? ''));
         if (!preg_match('~^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$~', $repoFull)) {
             throw new Exception('Repository non valida');
         }
+        if ($metadataStudentId === '') {
+            throw new Exception('student_id mancante');
+        }
+        gh_review_assert_assignment_repo((string)$testId, $metadataStudentId, $repoFull);
         [$owner, $repo] = explode('/', $repoFull, 2);
 
         $limiter = new \App\Core\Security\RateLimiter(ROOT_PATH . '/storage/rate_limits');
@@ -473,6 +564,10 @@ if ($postAction === 'repo_metadata') {
                 'title' => $title,
                 'body' => $body,
                 'date' => (string)($commit['commit']['author']['date'] ?? ''),
+                'author_login' => trim((string)($commit['author']['login'] ?? '')) ?: null,
+                'author_email' => trim((string)($commit['commit']['author']['email'] ?? '')) ?: null,
+                'committer_login' => trim((string)($commit['committer']['login'] ?? '')) ?: null,
+                'committer_email' => trim((string)($commit['commit']['committer']['email'] ?? '')) ?: null,
                 'url' => GitHubReviewMetadata::commitUrl($owner, $repo, $sha),
                 'issue_refs' => GitHubReviewMetadata::extractIssueReferences($message, $owner, $repo),
                 'branch_origin' => $origin,
@@ -492,9 +587,46 @@ if ($postAction === 'repo_metadata') {
         unset($commitRow);
 
         $branches = [];
+        $defaultBranch = '';
         try {
+            $repository = $github->getRepository($owner, $repo);
+            $defaultBranch = trim((string)($repository['default_branch'] ?? ''));
             $branchResult = $github->listRepoBranchesAll($owner, $repo, 100, 10);
-            $branches = GitHubReviewMetadata::normalizeBranches($branchResult['items'] ?? []);
+            $branchItems = $branchResult['items'] ?? [];
+            $branchOriginLimit = 50;
+            foreach (array_values($branchItems) as $branchIndex => $branchItem) {
+                $branchName = is_array($branchItem)
+                    ? trim((string)($branchItem['name'] ?? ''))
+                    : trim((string)$branchItem);
+                if ($branchName === '') {
+                    continue;
+                }
+                $branchPayload = [
+                    'name' => $branchName,
+                    'origin_source' => $branchName !== '' && $branchName === $defaultBranch ? 'default_branch' : 'unknown',
+                    'first_unique_commit_sha' => null,
+                    'first_unique_commit_author_login' => null,
+                    'first_unique_commit_author_email' => null,
+                ];
+                if ($branchName !== $defaultBranch && $branchIndex < $branchOriginLimit && $defaultBranch !== '') {
+                    try {
+                        $comparison = $github->compareCommits($owner, $repo, $defaultBranch, $branchName);
+                        $comparisonCommits = is_array($comparison['commits'] ?? null) ? $comparison['commits'] : [];
+                        $firstUnique = $comparisonCommits[0] ?? null;
+                        if (is_array($firstUnique)) {
+                            $branchPayload['origin_source'] = 'first_unique_commit';
+                            $branchPayload['first_unique_commit_sha'] = trim((string)($firstUnique['sha'] ?? '')) ?: null;
+                            $branchPayload['first_unique_commit_author_login'] = trim((string)($firstUnique['author']['login'] ?? '')) ?: null;
+                            $branchPayload['first_unique_commit_author_email'] = trim((string)($firstUnique['commit']['author']['email'] ?? '')) ?: null;
+                        }
+                    } catch (Throwable $branchOriginError) {
+                        $warnings[] = 'Origine branch non disponibile per ' . $branchName . '.';
+                    }
+                } elseif ($branchName !== $defaultBranch && $branchIndex >= $branchOriginLimit) {
+                    $warnings[] = 'Origine branch parziale: raggiunto il limite di analisi.';
+                }
+                $branches[] = $branchPayload;
+            }
         } catch (Throwable $branchError) {
             $warnings[] = 'Branch non disponibili.';
         }
@@ -548,6 +680,124 @@ if ($postAction === 'repo_metadata') {
         jsonResponse([
             'ok' => false,
             'error' => \App\Core\Security\PublicError::message($e, 'github_repo_metadata')
+        ], 400, true);
+    }
+}
+
+// Attribuzione per-studente: legge i metadati già ottenuti dalla stessa
+// sessione, verifica nuovamente identità e assignment lato server e recupera
+// da GitHub le statistiche dei soli commit potenzialmente attribuibili.
+if ($postAction === 'repo_contributions') {
+    try {
+        if (!$isAuthenticated) {
+            throw new Exception('Non autenticato su GitHub');
+        }
+        Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? $jsonRequest['csrf_token'] ?? null);
+
+        $repoFull = trim((string)($_POST['repo'] ?? $jsonRequest['repo'] ?? ''));
+        $studentId = trim((string)($_POST['student_id'] ?? $jsonRequest['student_id'] ?? ''));
+        $metadataJson = (string)($_POST['metadata'] ?? $jsonRequest['metadata'] ?? '');
+        if (!preg_match('~^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$~', $repoFull)) {
+            throw new Exception('Repository non valida');
+        }
+        if ($studentId === '') {
+            throw new Exception('student_id mancante');
+        }
+        if ($metadataJson === '' || strlen($metadataJson) > 2_000_000) {
+            throw new Exception('Metadati repository non validi');
+        }
+        $metadata = json_decode($metadataJson, true);
+        if (!is_array($metadata)) {
+            throw new Exception('Metadati repository non decodificabili');
+        }
+        $assignmentLink = gh_review_assert_assignment_repo((string)$testId, $studentId, $repoFull);
+        $identities = gh_review_student_identities($studentId, $assignmentLink);
+
+        $limiter = new \App\Core\Security\RateLimiter(ROOT_PATH . '/storage/rate_limits');
+        if (!$limiter->allow('github_repo_contributions:' . $userId, 30, 600)) {
+            header('Retry-After: 600');
+            jsonResponse(['ok' => false, 'error' => 'Troppe richieste di attribuzione. Riprova tra alcuni minuti.'], 429, true);
+        }
+
+        [$owner, $repo] = explode('/', $repoFull, 2);
+        $partial = (bool)($metadata['truncated'] ?? false);
+        $warnings = [];
+        $rawCommitRows = is_array($metadata['commits'] ?? null) ? array_values($metadata['commits']) : [];
+        $maxCommitDetails = 250;
+        if (count($rawCommitRows) > $maxCommitDetails) {
+            $rawCommitRows = array_slice($rawCommitRows, 0, $maxCommitDetails);
+            $partial = true;
+            $warnings[] = 'Attribuzione commit parziale: raggiunto il limite di analisi.';
+        }
+
+        $commitRows = [];
+        foreach ($rawCommitRows as $commitRow) {
+            if (!is_array($commitRow)) {
+                continue;
+            }
+            $sha = strtolower(trim((string)($commitRow['sha'] ?? '')));
+            if (!preg_match('~^[0-9a-f]{7,64}$~', $sha)) {
+                continue;
+            }
+            $normalised = [
+                'sha' => $sha,
+                'author_login' => trim((string)($commitRow['author_login'] ?? '')) ?: null,
+                'author_email' => trim((string)($commitRow['author_email'] ?? '')) ?: null,
+                'committer_login' => trim((string)($commitRow['committer_login'] ?? '')) ?: null,
+                'committer_email' => trim((string)($commitRow['committer_email'] ?? '')) ?: null,
+                'additions' => 0,
+            ];
+            $candidateOwner = GitHubContributionAttribution::commitOwner($normalised, $identities);
+            if ($candidateOwner !== 'other') {
+                try {
+                    $detail = $github->getCommit($owner, $repo, $sha);
+                    $normalised['author_login'] = trim((string)($detail['author']['login'] ?? '')) ?: null;
+                    $normalised['author_email'] = trim((string)($detail['commit']['author']['email'] ?? '')) ?: null;
+                    $normalised['committer_login'] = trim((string)($detail['committer']['login'] ?? '')) ?: null;
+                    $normalised['committer_email'] = trim((string)($detail['commit']['committer']['email'] ?? '')) ?: null;
+                    $normalised['additions'] = max(0, (int)($detail['stats']['additions'] ?? 0));
+                } catch (Throwable $commitError) {
+                    $partial = true;
+                    $warnings[] = 'Statistiche non disponibili per il commit ' . substr($sha, 0, 7) . '.';
+                }
+            }
+            $normalised['url'] = GitHubReviewMetadata::commitUrl($owner, $repo, $sha);
+            $commitRows[] = $normalised;
+        }
+
+        $globalLoc = is_array($metadata['global_loc'] ?? null) ? $metadata['global_loc'] : [];
+        $commitAttribution = GitHubContributionAttribution::attributeCommits(
+            $commitRows,
+            $identities,
+            $globalLoc,
+            $partial
+        );
+        $warnings = array_values(array_unique(array_merge($warnings, $commitAttribution['warnings'] ?? [])));
+
+        $branchRows = is_array($metadata['branches'] ?? null) ? array_values($metadata['branches']) : [];
+        $issueRows = is_array($metadata['issues'] ?? null) ? array_values($metadata['issues']) : [];
+        $branches = GitHubContributionAttribution::attributeBranches($branchRows, $identities);
+        $issues = GitHubContributionAttribution::attributeIssues($issueRows, $identities);
+
+        $studentAdditions = (int)($commitAttribution['student_additions'] ?? 0);
+        jsonResponse([
+            'ok' => true,
+            'repo' => $repoFull,
+            'student_id' => $studentId,
+            'commits' => $commitAttribution['commits'],
+            'branches' => $branches,
+            'issues' => $issues,
+            'loc' => [
+                'student_additions' => $studentAdditions,
+                'partial' => $partial,
+            ],
+            'partial' => $partial,
+            'warnings' => $warnings,
+        ], 200, true);
+    } catch (Throwable $e) {
+        jsonResponse([
+            'ok' => false,
+            'error' => \App\Core\Security\PublicError::message($e, 'github_repo_contributions')
         ], 400, true);
     }
 }
@@ -1535,6 +1785,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            background-color: transparent;
 	            border-color: #f0c27b;
 	        }
+	        .github-issues .list-group-item.github-attribution-other,
+	        .github-issues .list-group-item.github-attribution-unknown {
+	            background-color: #f1f3f5 !important;
+	            border-color: #ced4da !important;
+	        }
+	        .github-branches .github-branch-link.github-attribution-other,
+	        .github-branches .github-branch-link.github-attribution-unknown {
+	            background-color: #e9ecef !important;
+	            border-color: #ced4da !important;
+	            color: #6c757d !important;
+	            box-shadow: none;
+	        }
 	        .github-issue-link,
 	        .issue-reference {
 	            color: #a45100 !important;
@@ -1559,6 +1821,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            color: #216e2b;
 	            font-weight: 600;
 	            text-shadow: 0 2px 4px rgba(33, 110, 43, .24);
+	        }
+	        .github-attribution-other,
+	        .github-attribution-unknown,
+	        .commit-other {
+	            color: #6c757d !important;
+	            background-color: #f1f3f5 !important;
+	            border-color: #ced4da !important;
+	            text-shadow: none !important;
+	        }
+	        .commit-other .github-branch-reference {
+	            color: #6c757d !important;
+
+	        }
+	        .commit-student {
+	            color: #212529;
+
 	        }
 
 	        table.github-grades-table tr.rubric-row-active {
@@ -1827,18 +2105,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                                        $commitsList = $commitInfo[$lowerUser]['commits'] ?? [];
 	                                        ?>
 
-	                                        <?php if ($repoFullRow): ?>
-	                                            <button class="btn btn-sm btn-outline-dark mt-2 show-details-btn" type="button">
+                                        <?php if ($repoFullRow): ?>
+                                            <button class="btn btn-sm btn-outline-dark mt-2 show-details-btn" type="button"
+                                                    data-student-id="<?= htmlspecialchars((string)$studentId) ?>">
 	                                                <i class="bi bi-eye"></i> Mostra dettagli
 	                                            </button>
 	                                        <?php endif; ?>
 
 	                                        <?php if ($repoFullRow): ?>
 	                                            <div class="collapse mt-2" id="<?= htmlspecialchars($locContainerId) ?>">
-	                                                <div class="border rounded p-2 bg-light repo-loc"
+                                                <div class="border rounded p-2 bg-light repo-loc"
                                                      data-loaded="0"
                                                      data-repo="<?= htmlspecialchars($repoFullRow) ?>"
-                                                     data-ref="<?= htmlspecialchars($locRef) ?>">
+                                                     data-ref="<?= htmlspecialchars($locRef) ?>"
+                                                     data-student-id="<?= htmlspecialchars((string)$studentId) ?>">
 	                                                    <div class="text-muted">La sezione LOC viene calcolata all’apertura dei dettagli.</div>
 	                                                </div>
 	                                            </div>
@@ -1848,7 +2128,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                                                <i class="bi bi-list"></i> Dettaglio commit
 	                                            </button>
                                             <div class="collapse mt-2" id="commits-<?= $idx ?>">
-                                                <div class="github-review-metadata border rounded p-2 mb-2" data-repo="<?= htmlspecialchars($repoFullRow) ?>" data-loaded="0">
+                                                <div class="github-review-metadata border rounded p-2 mb-2"
+                                                     data-repo="<?= htmlspecialchars($repoFullRow) ?>"
+                                                     data-student-id="<?= htmlspecialchars((string)$studentId) ?>"
+                                                     data-loaded="0">
                                                     <div class="text-muted"><i class="bi bi-hourglass-split"></i> Metadati GitHub non ancora caricati.</div>
                                                 </div>
                                                 <ul class="list-group list-group-flush small github-commits-list">
@@ -2052,6 +2335,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             const itemId = 'github-meta-commit-' + (++githubMetadataCounter) + '-' + sha.slice(0, 12);
             const title = escapeHtml(commit?.title || '(messaggio vuoto)');
             const body = String(commit?.body || '').trim();
+            const attributionState = String(commit?.attribution_state || 'unknown');
+            const studentOwned = commit?.student_owned === true || commit?.student_owned === 1 || commit?.student_owned === '1';
+            const attributionClass = studentOwned ? 'commit-student' : 'commit-other';
             const tags = Array.isArray(commit?.tags) ? commit.tags : [];
             const tagHtml = tags.map(function (tag) {
                 return '<span class="badge github-tag-badge me-1"><i class="bi bi-tag"></i> ' + escapeHtml(tag) + '</span>';
@@ -2065,11 +2351,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             }
             const detailsButton = sha ? '<button class="btn btn-sm btn-outline-primary ms-2 commit-details-btn" type="button"' +
                 ' data-repo="' + escapeHtml(repoFull) + '" data-sha="' + escapeHtml(sha) + '"' +
+                ' data-student-owned="' + (studentOwned ? '1' : '0') + '" data-attribution-state="' + escapeHtml(attributionState) + '"' +
                 ' data-target="#' + escapeHtml(itemId) + '" data-bs-toggle="collapse" data-bs-target="#' + escapeHtml(itemId) + '">Dettagli</button>' : '';
             const details = sha ? '<div class="collapse mt-2" id="' + escapeHtml(itemId) + '">' +
                 '<div class="border rounded p-2 bg-light commit-details" data-loaded="0"><div class="text-muted">Clicca “Dettagli” per caricare stats/files.</div></div>' +
                 '</div>' : '';
-            return '<li class="list-group-item px-0">' +
+            return '<li class="list-group-item px-0 ' + attributionClass + '" data-student-owned="' + (studentOwned ? '1' : '0') + '" data-attribution-state="' + escapeHtml(attributionState) + '">' +
                 '<div class="fw-bold">' + title + renderIssueReferences(commit?.issue_refs) + '</div>' +
                 (body ? '<div class="commit-message-body">' + escapeHtml(body) + renderIssueReferences(commit?.issue_refs) + '</div>' : '') +
                 '<div class="text-muted">' + escapeHtml(commit?.short_sha || sha.slice(0, 7)) + ' • ' + formatGithubDate(commit?.date) +
@@ -2089,8 +2376,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
             html += '<div class="github-branches mb-2"><strong><i class="bi bi-diagram-3"></i> Branch (' + escapeHtml(branches.length) + ')</strong>: ';
             html += branches.length ? branches.map(function (branch) {
-                const url = 'https://github.com/' + repoFull + '/tree/' + encodeURIComponent(branch);
-                return safeGithubAnchor(url, '<i class="bi bi-diagram-3"></i> ' + escapeHtml(branch), 'badge github-branch-link me-1');
+                const branchName = typeof branch === 'string' ? branch : String(branch?.name || '');
+                const branchState = String(branch?.attribution_state || 'unknown');
+                const branchOwned = branch?.student_owned === true || branch?.student_owned === 1 || branch?.student_owned === '1';
+                const branchClass = branchOwned ? 'github-branch-link' : 'github-branch-link github-attribution-' + (branchState === 'other' ? 'other' : 'unknown');
+                const url = 'https://github.com/' + repoFull + '/tree/' + encodeURIComponent(branchName);
+                return safeGithubAnchor(url, '<i class="bi bi-diagram-3"></i> ' + escapeHtml(branchName), 'badge ' + branchClass + ' me-1') +
+                    (branchState === 'unknown' ? '<span class="visually-hidden"> origine non determinabile</span>' : '');
             }).join('') : '<span class="text-muted">nessun branch disponibile</span>';
             html += '</div>';
 
@@ -2101,7 +2393,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 html += '<div class="list-group list-group-flush mt-1">';
                 issues.forEach(function (issue) {
                     const stateClass = issue.state === 'closed' ? 'text-bg-secondary' : 'text-bg-success';
-                    html += '<div class="list-group-item px-0 py-2">' +
+                    const issueState = String(issue?.attribution_state || 'unknown');
+                    const issueOwned = issue?.student_owned === true || issue?.student_owned === 1 || issue?.student_owned === '1';
+                    const issueClass = issueOwned ? '' : ' github-attribution-' + (issueState === 'other' ? 'other' : 'unknown');
+                    html += '<div class="list-group-item px-0 py-2' + issueClass + '" data-student-owned="' + (issueOwned ? '1' : '0') + '" data-attribution-state="' + escapeHtml(issueState) + '">' +
                         safeGithubAnchor(issue.url, '<i class="bi bi-exclamation-circle"></i> #' + escapeHtml(issue.number) + ' ' + escapeHtml(issue.title || '(senza titolo)'), 'github-issue-link fw-semibold') +
                         ' <span class="badge ' + stateClass + ' ms-1">' + escapeHtml(issue.state || 'open') + '</span>' +
                         '<div class="small text-muted">Aperta: ' + formatGithubDate(issue.created_at) +
@@ -2123,6 +2418,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             }
             container.innerHTML = html;
             container.dataset.loaded = '1';
+            container._metadataData = data;
 
             const list = container.parentElement ? container.parentElement.querySelector('.github-commits-list') : null;
             if (list) {
@@ -2133,21 +2429,90 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             }
         }
 
-        async function loadRepoMetadata(container, repoFull) {
+        const githubMetadataCache = new Map();
+
+        async function loadRepoMetadata(container, repoFull, studentId) {
             if (!container || !repoFull || container.dataset.loaded === '1' || container.dataset.loading === '1') return;
+            container.dataset.studentId = studentId || container.dataset.studentId || '';
+            if (githubMetadataCache.has(repoFull)) {
+                renderRepoMetadata(container, githubMetadataCache.get(repoFull), repoFull);
+                return;
+            }
             container.dataset.loading = '1';
             container.innerHTML = '<div class="text-muted"><i class="bi bi-hourglass-split"></i> Caricamento issue, branch, tag e commit…</div>';
             try {
-                const body = new URLSearchParams({action: 'repo_metadata', repo: repoFull, csrf_token: REVIEW_CSRF_TOKEN});
+                const body = new URLSearchParams({action: 'repo_metadata', repo: repoFull, student_id: studentId || '', csrf_token: REVIEW_CSRF_TOKEN});
                 const response = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body});
                 const data = await response.json();
                 if (!data.ok) throw new Error(data.error || 'Metadati non disponibili');
+                githubMetadataCache.set(repoFull, data);
                 renderRepoMetadata(container, data, repoFull);
             } catch (error) {
                 container.innerHTML = '<div class="text-danger"><i class="bi bi-exclamation-triangle"></i> ' + escapeHtml(error.message || 'Errore nel caricamento dei metadati') + '</div>';
                 container.dataset.loaded = '0';
             } finally {
                 delete container.dataset.loading;
+            }
+        }
+
+        async function loadRepoContributions(container, repoFull, studentId, locContainer) {
+            if (!container || !repoFull || !studentId || container.dataset.contributionsLoading === '1') return null;
+            const metadata = container._metadataData;
+            if (!metadata) return null;
+            container.dataset.contributionsLoading = '1';
+            const globalLoc = locContainer && locContainer._locData && locContainer._locData.totals
+                ? locContainer._locData.totals
+                : {};
+            const requestMetadata = {
+                truncated: Boolean(metadata.truncated),
+                commits: Array.isArray(metadata.commits) ? metadata.commits : [],
+                branches: Array.isArray(metadata.branches) ? metadata.branches : [],
+                issues: Array.isArray(metadata.issues) ? metadata.issues : [],
+                global_loc: globalLoc
+            };
+            try {
+                const body = new URLSearchParams({
+                    action: 'repo_contributions',
+                    repo: repoFull,
+                    student_id: studentId,
+                    metadata: JSON.stringify(requestMetadata),
+                    csrf_token: REVIEW_CSRF_TOKEN
+                });
+                const response = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body});
+                const data = await response.json();
+                if (!data.ok) throw new Error(data.error || 'Attribuzioni non disponibili');
+
+                const commitBySha = new Map((Array.isArray(data.commits) ? data.commits : []).map(function (commit) {
+                    return [String(commit.sha || '').toLowerCase(), commit];
+                }));
+                const merged = Object.assign({}, metadata, {
+                    commits: (Array.isArray(metadata.commits) ? metadata.commits : []).map(function (commit) {
+                        const attributed = commitBySha.get(String(commit.sha || '').toLowerCase());
+                        return attributed ? Object.assign({}, commit, attributed) : Object.assign({}, commit, {
+                            student_owned: false,
+                            attribution_state: 'unknown'
+                        });
+                    }),
+                    branches: Array.isArray(data.branches) ? data.branches : metadata.branches,
+                    issues: Array.isArray(data.issues) ? data.issues : metadata.issues,
+                    warnings: (Array.isArray(metadata.warnings) ? metadata.warnings : []).concat(Array.isArray(data.warnings) ? data.warnings : [])
+                });
+                renderRepoMetadata(container, merged, repoFull);
+                container._contributionData = data;
+                if (locContainer && data.loc) {
+                    locContainer.dataset.studentAdditions = String(data.loc.student_additions ?? 0);
+                    locContainer.dataset.contributionPartial = data.partial ? '1' : '0';
+                    if (locContainer._locData) {
+                        renderRepoLoc(locContainer, locContainer._locData);
+                    }
+                }
+                return data;
+            } catch (error) {
+                const warning = '<div class="alert alert-warning py-1 px-2 small mt-2 mb-0">Attribuzioni non disponibili: ' + escapeHtml(error.message || 'errore') + '</div>';
+                container.insertAdjacentHTML('beforeend', warning);
+                return null;
+            } finally {
+                delete container.dataset.contributionsLoading;
             }
         }
 
@@ -2216,6 +2581,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
             container.innerHTML = html;
             container.dataset.loaded = '1';
+            const forceBtn = container.querySelector('.repo-loc-force');
+            if (forceBtn) {
+                forceBtn.addEventListener('click', function () {
+                    loadRepoLoc(container, container.dataset.repo || '', container.dataset.ref || 'main', true);
+                });
+            }
             container.dataset.repo = repoFull;
             container.dataset.sha = sha;
             container.dataset.withComments = withComments ? '1' : '0';
@@ -2250,6 +2621,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
         bindCommitDetailsButtons(document);
 
+        function formatContributionMetric(studentValue, globalValue) {
+            const own = Number.isFinite(Number(studentValue)) ? Number(studentValue) : 0;
+            const total = Number.isFinite(Number(globalValue)) ? Number(globalValue) : 0;
+            return '<strong>' + escapeHtml(own) + '</strong> di ' + escapeHtml(total);
+        }
+
+        function renderRepoLoc(container, data) {
+            if (!container || !data) return;
+            const totals = data.totals || {};
+            const byLang = data.by_language || {};
+            const source = data.source || '';
+            const when = data.data_creazione || '';
+            const cached = data.cached ? ' (cache)' : '';
+            const hasContribution = Object.prototype.hasOwnProperty.call(container.dataset, 'studentAdditions');
+            const studentAdditions = hasContribution ? Number(container.dataset.studentAdditions || 0) : null;
+            const metric = function (key) {
+                return hasContribution
+                    ? formatContributionMetric(studentAdditions, totals[key])
+                    : escapeHtml(totals[key] ?? '-');
+            };
+
+            let html = '';
+            html += '<div class="mb-2"><strong>LOC</strong> ' + cached + ' <span class="text-muted">[' + escapeHtml(source) + ' ' + escapeHtml(when) + ']</span></div>';
+            html += '<div class="mb-2">File: ' + escapeHtml(totals.files ?? '-') + ' • Tot: ' + metric('total') +
+                ' • Code: ' + metric('code') + ' • Comment: ' + metric('comment') + ' • Blank: ' + metric('blank') + '</div>';
+            if (hasContribution && (data.partial || container.dataset.contributionPartial === '1')) {
+                html += '<div class="alert alert-warning py-1 px-2 small">Attribuzione LOC parziale: alcuni commit non sono stati analizzati.</div>';
+            }
+
+            const entries = Object.entries(byLang || {});
+            if (entries.length) {
+                html += '<div class="table-responsive"><table class="table table-sm mb-2 loc-table"><thead><tr>' +
+                    '<th>Linguaggio</th><th class="text-end">File</th><th class="text-end">Tot</th><th class="text-end">Code</th><th class="text-end">Comm</th><th class="text-end">Blank</th>' +
+                    '</tr></thead><tbody>';
+                entries.forEach(function ([lang, row]) {
+                    html += '<tr>' +
+                        '<td>' + escapeHtml(lang) + '</td>' +
+                        '<td class="text-end">' + escapeHtml(row.files ?? '-') + '</td>' +
+                        '<td class="text-end">' + (hasContribution ? formatContributionMetric(studentAdditions, row.total) : escapeHtml(row.total ?? '-')) + '</td>' +
+                        '<td class="text-end">' + (hasContribution ? formatContributionMetric(studentAdditions, row.code) : escapeHtml(row.code ?? '-')) + '</td>' +
+                        '<td class="text-end">' + (hasContribution ? formatContributionMetric(studentAdditions, row.comment) : escapeHtml(row.comment ?? '-')) + '</td>' +
+                        '<td class="text-end">' + (hasContribution ? formatContributionMetric(studentAdditions, row.blank) : escapeHtml(row.blank ?? '-')) + '</td>' +
+                        '</tr>';
+                });
+                html += '</tbody></table></div>';
+            }
+
+            html += '<button type="button" class="btn btn-sm btn-outline-secondary repo-loc-force">Ricalcola</button>';
+
+            container.innerHTML = html;
+            container.dataset.loaded = '1';
+        }
+
         async function loadRepoLoc(container, repoFull, ref, force) {
             if (!container) return;
 
@@ -2273,48 +2697,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 return;
             }
 
-            const totals = data.totals || {};
-            const byLang = data.by_language || {};
-            const source = data.source || '';
-            const when = data.data_creazione || '';
-            const cached = data.cached ? ' (cache)' : '';
-
-            let html = '';
-            html += '<div class="mb-2"><strong>LOC</strong> ' + cached + ' <span class="text-muted">[' + escapeHtml(source) + ' ' + escapeHtml(when) + ']</span></div>';
-            html += '<div class="mb-2">File: ' + escapeHtml(totals.files ?? '-') + ' • Tot: ' + escapeHtml(totals.total ?? '-') +
-                ' • Code: ' + escapeHtml(totals.code ?? '-') + ' • Comment: ' + escapeHtml(totals.comment ?? '-') + ' • Blank: ' + escapeHtml(totals.blank ?? '-') + '</div>';
-
-            const entries = Object.entries(byLang || {});
-            if (entries.length) {
-                html += '<div class="table-responsive"><table class="table table-sm mb-2 loc-table"><thead><tr>' +
-                    '<th>Linguaggio</th><th class="text-end">File</th><th class="text-end">Tot</th><th class="text-end">Code</th><th class="text-end">Comm</th><th class="text-end">Blank</th>' +
-                    '</tr></thead><tbody>';
-                entries.forEach(function ([lang, row]) {
-                    html += '<tr>' +
-                        '<td>' + escapeHtml(lang) + '</td>' +
-                        '<td class="text-end">' + escapeHtml(row.files ?? '-') + '</td>' +
-                        '<td class="text-end">' + escapeHtml(row.total ?? '-') + '</td>' +
-                        '<td class="text-end">' + escapeHtml(row.code ?? '-') + '</td>' +
-                        '<td class="text-end">' + escapeHtml(row.comment ?? '-') + '</td>' +
-                        '<td class="text-end">' + escapeHtml(row.blank ?? '-') + '</td>' +
-                        '</tr>';
-                });
-                html += '</tbody></table></div>';
-            }
-
-            html += '<button type="button" class="btn btn-sm btn-outline-secondary repo-loc-force">Ricalcola</button>';
-
-            container.innerHTML = html;
-            container.dataset.loaded = '1';
+            container._locData = data;
             container.dataset.repo = repoFull;
             container.dataset.ref = ref;
-
-            const forceBtn = container.querySelector('.repo-loc-force');
-            if (forceBtn) {
-                forceBtn.addEventListener('click', function () {
-                    loadRepoLoc(container, repoFull, ref, true);
-                });
-            }
+            renderRepoLoc(container, data);
         }
 
 	        function showCollapseElement(el) {
@@ -2395,14 +2781,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
                 const metadataContainer = cell.querySelector('.github-review-metadata');
                 const metadataRepo = metadataContainer ? (metadataContainer.dataset.repo || '') : '';
+                const studentId = btn.dataset.studentId || (metadataContainer ? metadataContainer.dataset.studentId : '') || '';
                 if (metadataContainer && metadataRepo) {
-                    await loadRepoMetadata(metadataContainer, metadataRepo);
+                    await loadRepoMetadata(metadataContainer, metadataRepo, studentId);
+                    await loadRepoContributions(metadataContainer, metadataRepo, studentId, locContainer);
                 }
 
-	                // I file/stats restano caricati automaticamente solo per i
-                // primi 20 commit; gli altri hanno il pulsante "Dettagli" per
-                // evitare centinaia di richieste API in una sola apertura.
-	                const detailButtons = Array.from(cell.querySelectorAll('.commit-details-btn')).slice(0, 20);
+	                // Solo i commit attribuiti allo studente vengono espansi e
+	                // caricati automaticamente; gli altri restano compressi.
+	                const detailButtons = Array.from(cell.querySelectorAll('.commit-details-btn[data-student-owned="1"]')).slice(0, 20);
 	                for (const detailBtn of detailButtons) {
                         const targetSelector = detailBtn.dataset.target || '';
                         const collapseSelector = detailBtn.getAttribute('data-bs-target') || detailBtn.dataset.bsTarget || targetSelector;

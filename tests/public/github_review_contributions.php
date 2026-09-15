@@ -1,0 +1,39 @@
+<?php
+
+declare(strict_types=1);
+
+$root = dirname(__DIR__, 2);
+$review = file_get_contents($root . '/public/github_assignment_review.php');
+$attribution = file_get_contents($root . '/src/Core/GitHubContributionAttribution.php');
+if ($review === false || $attribution === false) {
+    fwrite(STDERR, "FAIL: impossibile leggere i file della review contributi\n");
+    exit(1);
+}
+
+$failures = [];
+$require = static function (bool $condition, string $message) use (&$failures): void {
+    if (!$condition) {
+        $failures[] = $message;
+    }
+};
+
+$require(str_contains($review, "postAction === 'repo_contributions'"), 'endpoint contributi assente');
+$require(str_contains($review, "action: 'repo_contributions'"), 'client contributi assente');
+$require(str_contains($review, 'Cache-Control: no-store'), 'contributi cachabili');
+$require(str_contains($review, 'student_id'), 'student_id non validato');
+$require(str_contains($review, 'GitHubContributionAttribution'), 'classificatore non usato');
+$require(str_contains($review, 'student_owned'), 'stato ownership non restituito');
+$require(str_contains($review, 'assignment_student'), 'controllo ownership assignment assente');
+
+$require(str_contains($attribution, 'attributeCommits'), 'classificatore commit assente');
+$require(str_contains($attribution, 'attributeBranches'), 'classificatore branch assente');
+$require(str_contains($attribution, 'attributeIssues'), 'classificatore issue assente');
+
+if ($failures !== []) {
+    foreach ($failures as $failure) {
+        fwrite(STDERR, "FAIL: {$failure}\n");
+    }
+    exit(1);
+}
+
+fwrite(STDOUT, "PASS: endpoint contributi GitHub Review.\n");

@@ -42,7 +42,7 @@ $tags = GitHubReviewMetadata::mapTagsBySha([
 $require($tags === ['aaa1111' => ['v1.0', 'release'], 'bbb2222' => ['v2.0']], 'tag per SHA non normalizzati/deduplicati');
 
 $issues = GitHubReviewMetadata::normalizeIssues([
-    ['number' => 12, 'title' => 'Bug', 'state' => 'open', 'created_at' => '2026-09-01T10:00:00Z', 'closed_at' => null, 'body' => 'Descrizione'],
+    ['number' => 12, 'title' => 'Bug', 'state' => 'open', 'created_at' => '2026-09-01T10:00:00Z', 'closed_at' => null, 'body' => 'Descrizione', 'user' => ['login' => 'student']],
     ['number' => 12, 'title' => 'Bug duplicato', 'state' => 'open'],
     ['number' => 14, 'title' => 'PR masquerade', 'pull_request' => ['url' => 'https://api.github.com/pulls/14']],
 ], [
@@ -54,6 +54,7 @@ $issues = GitHubReviewMetadata::normalizeIssues([
 ], 'octo', 'demo');
 $require(count($issues) === 1, 'le pull request non devono essere trattate come issue');
 $require(($issues[0]['number'] ?? 0) === 12, 'numero issue non conservato');
+$require(($issues[0]['author_login'] ?? '') === 'student', 'autore issue non conservato');
 $require(count($issues[0]['commits'] ?? []) === 1, 'commit issue non deduplicati');
 $require(($issues[0]['commits'][0]['url'] ?? '') === 'https://github.com/octo/demo/commit/aaa1111', 'URL commit issue non normalizzato');
 

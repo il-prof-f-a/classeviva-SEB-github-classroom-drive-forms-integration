@@ -223,6 +223,29 @@ class GitHubIntegration
         );
     }
 
+    /** Dettagli di un branch, incluso il commit HEAD. */
+    public function getBranch(string $owner, string $repo, string $branch): array
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        $branch = $this->validatedBranch($branch);
+        return (array)$this->apiRequest('GET', "/repos/{$owner}/{$repo}/branches/{$branch}");
+    }
+
+    /**
+     * Confronta due ref GitHub. L'endpoint restituisce i commit presenti in
+     * head ma non nella base, utili per individuare l'origine di un branch.
+     */
+    public function compareCommits(string $owner, string $repo, string $base, string $head): array
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        $base = $this->validatedBranch($base);
+        $head = $this->validatedBranch($head);
+        return (array)$this->apiRequest(
+            'GET',
+            "/repos/{$owner}/{$repo}/compare/{$base}...{$head}"
+        );
+    }
+
     /** Tag della repository con lo SHA del commit puntato. */
     public function listRepoTags($owner, $repo, $perPage = 100, $page = 1): array
     {
@@ -429,6 +452,15 @@ class GitHubIntegration
             throw new \InvalidArgumentException('SHA commit non valido.');
         }
         return rawurlencode($sha);
+    }
+
+    private function validatedBranch($branch): string
+    {
+        $branch = trim((string)$branch);
+        if ($branch === '' || preg_match('/^[A-Za-z0-9_.\/-]{1,200}$/', $branch) !== 1) {
+            throw new \InvalidArgumentException('Branch GitHub non valido.');
+        }
+        return rawurlencode($branch);
     }
 
     private function validatedIssueNumber($issueNumber): int

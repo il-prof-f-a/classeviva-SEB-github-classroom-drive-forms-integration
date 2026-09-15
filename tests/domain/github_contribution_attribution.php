@@ -1,0 +1,86 @@
+<?php
+
+declare(strict_types=1);
+
+$root = dirname(__DIR__, 2);
+spl_autoload_register(static function (string $class) use ($root): void {
+    $prefix = 'App\\';
+    if (!str_starts_with($class, $prefix)) {
+        return;
+    }
+    $path = $root . '/src/' . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php';
+    if (is_file($path)) {
+        require $path;
+    }
+});
+
+use App\Core\GitHubContributionAttribution;
+
+$failures = [];
+$require = static function (bool $condition, string $message) use (&$failures): void {
+    if (!$condition) {
+        $failures[] = $message;
+    }
+};
+
+$identities = GitHubContributionAttribution::normalizeIdentities(
+    ['Student'],
+    ['email@email.it']
+);
+$globalLoc = [
+    'total' => 20,
+    'blank' => 2,
+    'comment' => 4,
+    'code' => 14,
+    'files' => 3,
+];
+
+$result = GitHubContributionAttribution::attributeCommits([
+    ['sha' => 'aaaaaaaa', 'author_login' => 'student', 'author_email' => 'email@email.it', 'additions' => 7],
+    ['sha' => 'bbbbbbbb', 'author_login' => 'other', 'author_email' => 'email@email.it', 'additions' => 9],
+    ['sha' => 'cccccccc', 'author_login' => null, 'author_email' => null, 'additions' => 4],
+], $identities, $globalLoc);
+
+$require($result['student_additions'] === 7, 'solo le additions dello studente devono essere sommate');
+$require($result['owned_shas'] === ['aaaaaaaa'], 'solo il commit attribuibile deve risultare owned');
+$require($result['global']['total'] === 20, 'le LOC globali devono restare separate');
+$require($result['partial'] === false, 'il risultato completo non deve essere parziale');
+$require($result['commits'][0]['student_owned'] === true, 'commit dello studente non classificato');
+$require($result['commits'][1]['student_owned'] === false, 'commit di altro autore classificato come studente');
+$require($result['commits'][2]['attribution_state'] === 'unknown', 'autore assente non marcato unknown');
+
+$partial = GitHubContributionAttribution::attributeCommits(
+    [['sha' => 'dddddddd', 'author_login' => 'student', 'additions' => 2]],
+    $identities,
+    $globalLoc,
+    true
+);
+$require($partial['partial'] === true, 'cronologia parziale non dichiarata');
+$require($partial['warnings'] !== [], 'cronologia parziale senza warning');
+
+$branches = GitHubContributionAttribution::attributeBranches([
+    ['name' => 'feature/student', 'first_unique_commit_author_login' => 'student'],
+    ['name' => 'feature/other', 'first_unique_commit_author_login' => 'other'],
+    ['name' => 'feature/unknown', 'first_unique_commit_author_login' => null],
+], $identities);
+$require($branches[0]['student_owned'] === true, 'branch dello studente non attribuito');
+$require($branches[1]['student_owned'] === false, 'branch di altro autore attribuito allo studente');
+$require($branches[2]['attribution_state'] === 'unknown', 'branch senza autore non marcato unknown');
+
+$issues = GitHubContributionAttribution::attributeIssues([
+    ['number' => 1, 'author_login' => 'student'],
+    ['number' => 2, 'author_login' => 'other'],
+    ['number' => 3, 'author_login' => null],
+], $identities);
+$require($issues[0]['student_owned'] === true, 'issue dello studente non attribuita');
+$require($issues[1]['student_owned'] === false, 'issue di altro autore attribuita allo studente');
+$require($issues[2]['attribution_state'] === 'unknown', 'issue senza autore non marcata unknown');
+
+if ($failures !== []) {
+    foreach ($failures as $failure) {
+        fwrite(STDERR, "FAIL: {$failure}\n");
+    }
+    exit(1);
+}
+
+fwrite(STDOUT, "PASS: attribuzione contributi GitHub.\n");
