@@ -85,6 +85,27 @@ final class GitHubAssignmentNameService
         return 'public';
     }
 
+    /**
+     * Restituisce i token validi ma incompatibili con la modalità scelta.
+     * I token sconosciuti vengono lasciati alla validazione generale.
+     *
+     * @return list<string>
+     */
+    public function incompatiblePlaceholders(string $pattern, string $mode): array
+    {
+        preg_match_all('/\{([a-z0-9_]+)\}/i', $pattern, $matches);
+        $incompatible = [];
+        $normalizedMode = strtolower(trim($mode)) === 'group' ? 'group' : 'single';
+        foreach ($matches[0] as $index => $literal) {
+            $key = strtolower((string)($matches[1][$index] ?? ''));
+            if (($normalizedMode === 'group' && $key === 'studente')
+                || ($normalizedMode === 'single' && $key === 'team')) {
+                $incompatible[] = (string)$literal;
+            }
+        }
+        return array_values(array_unique($incompatible));
+    }
+
     /** @return array<string,string> */
     public function supportedTokens(): array
     {

@@ -9,7 +9,8 @@ $failures = [];
 foreach ([
     'assignment_mode' => 'la pagina deve inviare la modalità singola o di gruppo',
     'team_groups_json' => 'la pagina deve inviare il payload dei gruppi team',
-    'Assegnazione singola/di gruppo' => 'deve essere presente il selettore della modalità',
+    'Assegnazione singola/in team' => 'deve essere presente il selettore della modalità',
+    'Assegnazione in team' => 'la modalità team deve usare la nuova dicitura',
     'team-groups' => 'deve essere presente il pannello dinamico dei gruppi',
     'student_ids' => 'ogni gruppo deve conservare gli id degli studenti',
     'GitHubAssignmentTeamService' => 'la validazione server-side deve usare il servizio dei gruppi team',

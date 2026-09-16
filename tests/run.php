@@ -552,6 +552,7 @@ $architectureTests = [
     'github assignment create team groups' => __DIR__ . '/public/github_assignment_create_team_groups.php',
     'github assignment name placeholders' => __DIR__ . '/public/github_assignment_create_name_placeholders.php',
     'github assignment team rename' => __DIR__ . '/public/github_assignment_create_team_rename.php',
+    'github assignment single page roster' => __DIR__ . '/public/github_assignment_create_single_page.php',
     'github assignment repository creation' => __DIR__ . '/public/github_assignment_repo_creation.php',
     'github assignment ClasseViva gate' => __DIR__ . '/public/github_assignment_create_classeviva_gate.php',
     'github repository template validation' => __DIR__ . '/public/github_repo_templates_validation.php',

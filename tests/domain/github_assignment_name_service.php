@@ -40,6 +40,15 @@ if ($service->effectiveVisibility('public', true) !== 'private'
     || $service->effectiveVisibility('private', false) !== 'private') {
     $failures[] = 'vincolo visibilità privacy errato';
 }
+if ($service->incompatiblePlaceholders('{studente}-{team}', 'group') !== ['{studente}']) {
+    $failures[] = 'placeholder studente non bloccato in modalità gruppo';
+}
+if ($service->incompatiblePlaceholders('{team}', 'single') !== ['{team}']) {
+    $failures[] = 'placeholder team non bloccato in modalità singola';
+}
+if ($service->incompatiblePlaceholders('{gruppo}-{template}', 'group') !== []) {
+    $failures[] = 'placeholder comuni marcati incompatibili';
+}
 
 if ($failures !== []) {
     foreach ($failures as $failure) {

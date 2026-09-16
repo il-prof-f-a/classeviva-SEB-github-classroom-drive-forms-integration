@@ -20,6 +20,7 @@ use App\Core\ClasseVivaCapability;
 use App\Core\ClasseVivaTokenGuard;
 use App\Core\Security\Authorization;
 use App\Core\Security\Csrf;
+use App\Core\Security\PublicError;
 use App\Integration\GitHubIntegration;
 use App\Integration\GoogleClassroomAPI;
 use App\Integration\ClasseVivaAPI;
@@ -96,11 +97,44 @@ $orgs = [];
 if ($ghAuthed) {
     try { $orgs = $github->listOrganizations(); } catch (Throwable $e) {}
 }
+$formData = $_SESSION['github_assignment_form'] ?? [];
+
+// Valori iniziali ergonomici: quando non esiste una configurazione precedente
+// preseleziona la prima voce effettivamente disponibile in ogni catalogo.
+$availableGroupIds = array_values(array_filter(array_map(
+    static fn(array $group): string => (string)($group['id_gruppo'] ?? ''),
+    $groups
+), static fn(string $id): bool => $id !== ''));
+$selectedGroupIds = normalize_group_selection($formData['group_ids'] ?? ($formData['group_id'] ?? []));
+$selectedGroupIds = array_values(array_filter(
+    $selectedGroupIds,
+    static fn(string $id): bool => in_array($id, $availableGroupIds, true)
+));
+if ($selectedGroupIds === [] && $availableGroupIds !== []) {
+    $selectedGroupIds = [$availableGroupIds[0]];
+}
+
+$selectedTemplateId = trim((string)($formData['template_id'] ?? ''));
+$availableTemplateIds = array_values(array_filter(array_map(
+    static fn(array $template): string => (string)($template['id_template'] ?? ''),
+    $templates
+), static fn(string $id): bool => $id !== ''));
+if (!in_array($selectedTemplateId, $availableTemplateIds, true)) {
+    $selectedTemplateId = $availableTemplateIds[0] ?? '';
+}
+
+$selectedOrg = trim((string)($formData['org'] ?? ''));
+$availableOrgLogins = array_values(array_filter(array_map(
+    static fn(array $org): string => trim((string)($org['login'] ?? '')),
+    $orgs
+), static fn(string $login): bool => $login !== ''));
+if (!in_array($selectedOrg, $availableOrgLogins, true)) {
+    $selectedOrg = $availableOrgLogins[0] ?? '';
+}
 
 $error = null;
 $students = [];
 $step = 'form';
-$formData = $_SESSION['github_assignment_form'] ?? [];
 
 function h(string $v): string { return htmlspecialchars($v, ENT_QUOTES, 'UTF-8'); }
 
@@ -164,11 +198,12 @@ function resolve_students_for_groups(array $config, $db, string $userId, array $
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = (string)($_POST['action'] ?? '');
+    $isJsonAction = $action === 'load_roster';
     try {
         Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? null);
-        $action = $_POST['action'] ?? '';
 
-        if ($action === 'prepare') {
+        if ($action === 'prepare' || $action === 'load_roster') {
             $groupIds = normalize_group_selection($_POST['group_ids'] ?? ($_POST['group_id'] ?? []));
             $templateId = trim((string)($_POST['template_id'] ?? ''));
             $org = trim((string)($_POST['org'] ?? ''));
@@ -215,6 +250,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ];
             $formData = $_SESSION['github_assignment_form'];
             $students = resolve_students_for_groups($config, $db, $userId, $groupIds, $emailTemplate, $emailDomain);
+            if ($action === 'load_roster') {
+                $firstGroup = $teamService->defaultGroups($students)[0] ?? ['name' => 'Gruppo 1'];
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode([
+                    'ok' => true,
+                    'students' => array_values($students),
+                    'firstStudent' => trim((string)($students[0]['nome'] ?? $students[0]['name'] ?? '')),
+                    'firstTeam' => (string)($firstGroup['name'] ?? 'Gruppo 1'),
+                    'firstGroup' => $gname,
+                    'template' => $tname,
+                    'date' => date('Y-m-d'),
+                    'org' => $org,
+                    'visibility' => $nameService->effectiveVisibility($visibility, $nameService->containsStudentPlaceholder($name)),
+                    'privacy_visibility_forced' => $nameService->containsStudentPlaceholder($name),
+                    'team_groups' => $teamService->defaultGroups($students),
+                ], JSON_THROW_ON_ERROR);
+                exit;
+            }
             $step = 'confirm';
         }
 
@@ -225,18 +278,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ClasseVivaTokenGuard::requireToken($config);
             }
 
-            $org = (string)$formData['org'];
-            $name = (string)($formData['name_template'] ?? $formData['name'] ?? '');
+            $org = trim((string)($_POST['org'] ?? $formData['org'] ?? ''));
+            $namePosted = trim((string)($_POST['name'] ?? ''));
+            $name = $namePosted !== '' ? $namePosted : (string)($formData['name_template'] ?? $formData['name'] ?? '');
             $groupIds = normalize_group_selection($formData['group_ids'] ?? ($formData['group_id'] ?? []));
             assert_groups_belong_to_uda($groupIds, $groups);
             $groupId = $groupIds[0];
-            $templateId = (string)$formData['template_id'];
+            $templateId = trim((string)($_POST['template_id'] ?? $formData['template_id'] ?? ''));
+            if ($templateId === '' || $org === '') {
+                throw new Exception('Template e org sono obbligatori.');
+            }
+            $formData['name'] = $name;
+            $formData['name_template'] = $name;
+            $formData['org'] = $org;
+            $formData['template_id'] = $templateId;
+            $formData['visibility'] = strtolower(trim((string)($_POST['visibility'] ?? $formData['visibility'] ?? 'private')));
+            $formData['tipo_test'] = trim((string)($_POST['tipo_test'] ?? $formData['tipo_test'] ?? 'altro'));
+            $formData['deadline'] = trim((string)($_POST['deadline'] ?? $formData['deadline'] ?? ''));
+            $formData['note'] = trim((string)($_POST['note'] ?? $formData['note'] ?? ''));
             $modes = (array)($_POST['modes'] ?? []);
             $modeEmail = in_array('email', $modes, true);
             $modeClassroom = in_array('classroom', $modes, true);
             $assignmentMode = $teamService->normalizeMode(
                 $_POST['assignment_mode'] ?? ($formData['assignment_mode'] ?? 'single')
             );
+            $incompatiblePlaceholders = $nameService->incompatiblePlaceholders($name, $assignmentMode);
+            if ($incompatiblePlaceholders !== []) {
+                throw new Exception(
+                    'I placeholder ' . implode(', ', $incompatiblePlaceholders)
+                    . ' non sono disponibili per una assegnazione ' . ($assignmentMode === 'group' ? 'di gruppo' : 'singola') . '.'
+                );
+            }
             $students = resolve_students_for_groups($config, $db, $userId, $groupIds, $emailTemplate, $emailDomain);
             if (empty($students)) throw new Exception('Nessuno studente risolto nel gruppo.');
             $teamGroups = [];
@@ -554,10 +626,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
     } catch (Throwable $e) {
+        if ($isJsonAction) {
+            http_response_code(422);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['ok' => false, 'error' => PublicError::message($e, 'github assignment roster')], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
         $error = $e->getMessage();
     }
 }
-$selectedGroupIds = normalize_group_selection($formData['group_ids'] ?? ($formData['group_id'] ?? []));
+if ($step === 'confirm') {
+    $selectedGroupIds = normalize_group_selection($formData['group_ids'] ?? ($formData['group_id'] ?? []));
+}
 $confirmNameTemplate = (string)($formData['name_template'] ?? $formData['name'] ?? '');
 $confirmStudentName = $nameService->containsStudentPlaceholder($confirmNameTemplate);
 $confirmVisibility = $nameService->effectiveVisibility((string)($formData['visibility'] ?? 'private'), $confirmStudentName);
@@ -596,7 +676,7 @@ include __DIR__ . '/partials/app_header.php';
     <?php if (!empty($_SESSION['github_assignment_success'])): ?><div class="alert alert-success"><?= h((string)$_SESSION['github_assignment_success']) ?></div><?php unset($_SESSION['github_assignment_success']); endif; ?>
 
     <div class="card shadow-sm">
-        <div class="card-header bg-white fw-semibold"><?= $step === 'confirm' ? 'Conferma e modalità invito' : 'Configurazione assignment' ?></div>
+        <div class="card-header bg-white fw-semibold"><?= $step === 'confirm' ? 'Conferma e modalità invito' : 'Configurazione assignment e roster' ?></div>
         <div class="card-body">
             <?php if ($step === 'confirm'): ?>
                 <form method="post" class="row g-3">
@@ -633,10 +713,10 @@ include __DIR__ . '/partials/app_header.php';
                         </div>
                     </div>
                     <div class="col-12">
-                        <label for="assignment-mode-select" class="form-label fw-semibold">Assegnazione singola/di gruppo</label>
+                        <label for="assignment-mode-select" class="form-label fw-semibold">Assegnazione singola/in team</label>
                         <select class="form-select" id="assignment-mode-select">
                             <option value="single" selected>Assegnazione singola</option>
-                            <option value="group">Assegnazione di gruppo</option>
+                            <option value="group">Assegnazione in team</option>
                         </select>
                         <div class="form-text">In modalità gruppo ogni gruppo riceverà una repository condivisa.</div>
                     </div>
@@ -683,9 +763,9 @@ include __DIR__ . '/partials/app_header.php';
                     </div>
                 </form>
             <?php else: ?>
-                <form method="post" class="row g-3">
+                <form method="post" id="assignment-config-form" class="row g-3">
                     <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
-                    <input type="hidden" name="action" value="prepare">
+                    <input type="hidden" name="action" value="load_roster">
                     <div class="col-md-6">
                         <label class="form-label">Gruppi didattici di destinazione</label>
                         <div id="group-selectors" class="vstack gap-2">
@@ -709,10 +789,10 @@ include __DIR__ . '/partials/app_header.php';
                     </div>
                     <div class="col-md-6">
                         <label class="form-label">Template repo</label>
-                        <select name="template_id" class="form-select" required>
+                        <select name="template_id" id="template-id" class="form-select" required>
                             <option value="">— seleziona —</option>
                             <?php foreach ($templates as $t): ?>
-                                <option value="<?= h((string)$t['id_template']) ?>"><?= h((string)($t['nome'] ?? $t['id_template'])) ?><?= ($t['categoria'] ?? '') !== '' ? ' — ' . h((string)$t['categoria']) : '' ?></option>
+                                <option value="<?= h((string)$t['id_template']) ?>"<?= $selectedTemplateId === (string)$t['id_template'] ? ' selected' : '' ?>><?= h((string)($t['nome'] ?? $t['id_template'])) ?><?= ($t['categoria'] ?? '') !== '' ? ' — ' . h((string)$t['categoria']) : '' ?></option>
                             <?php endforeach; ?>
                         </select>
                         <a href="github_repo_templates.php" target="_blank" class="btn btn-sm btn-outline-secondary mt-1">
@@ -721,10 +801,10 @@ include __DIR__ . '/partials/app_header.php';
                     </div>
                     <div class="col-md-6">
                         <label class="form-label">Org GitHub</label>
-                        <select name="org" class="form-select" required>
+                        <select name="org" id="github-org" class="form-select" required>
                             <option value="">— seleziona —</option>
                             <?php foreach ($orgs as $o): ?>
-                                <option value="<?= h((string)($o['login'] ?? '')) ?>"><?= h((string)($o['login'] ?? '')) ?></option>
+                                <option value="<?= h((string)($o['login'] ?? '')) ?>"<?= $selectedOrg === (string)($o['login'] ?? '') ? ' selected' : '' ?>><?= h((string)($o['login'] ?? '')) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
@@ -734,22 +814,28 @@ include __DIR__ . '/partials/app_header.php';
                         <div class="mt-2 d-flex flex-wrap gap-1 align-items-center">
                             <span class="small text-muted me-1">Inserisci placeholder:</span>
                             <?php foreach ([
-                                '{gruppo}' => 'gruppo didattico',
-                                '{template}' => 'template',
-                                '{studente}' => 'studente',
-                                '{team}' => 'gruppo di lavoro',
-                                '{data}' => 'data',
-                                '{anno}' => 'anno',
-                                '{org}' => 'organizzazione GitHub',
-                            ] as $token => $description): ?>
-                                <button type="button" class="btn btn-sm btn-outline-secondary placeholder-token" data-placeholder="<?= h($token) ?>" title="<?= h($description) ?>"><?= h($token) ?></button>
+                                '{gruppo}' => ['gruppo didattico', 'common'],
+                                '{template}' => ['template scelto', 'common'],
+                                '{studente}' => ['primo studente del roster', 'single'],
+                                '{team}' => ['primo team', 'group'],
+                                '{data}' => ['data di creazione', 'common'],
+                                '{anno}' => ['anno di creazione', 'common'],
+                                '{org}' => ['organizzazione GitHub', 'common'],
+                            ] as $token => [$description, $placeholderMode]): ?>
+                                <button type="button" class="btn btn-sm btn-outline-secondary placeholder-token" data-placeholder="<?= h($token) ?>" data-placeholder-mode="<?= h($placeholderMode) ?>" title="<?= h($description) ?>"><?= h($token) ?></button>
                             <?php endforeach; ?>
                         </div>
-                        <div class="form-text">
-                            <strong>Legenda:</strong> {gruppo} = primo gruppo didattico selezionato; {template} = template scelto;
-                            {studente} = primo studente del roster (o lo studente corrente in assegnazione singola);
-                            {team} = primo gruppo di lavoro; {data}/{anno} = data/anno di creazione; {org} = organizzazione GitHub.
+                        <div class="form-text" id="name-token-legend">
+                            <strong>Legenda:</strong> {gruppo} = <span id="first-group-example">{gruppo}</span>;
+                            {template} = <span id="template-example">{template}</span>;
+                            {studente} = <span id="first-student-example">{studente}</span>;
+                            {team} = <span id="first-team-example">{team}</span>;
+                            {data}/{anno} = data/anno di creazione; {org} = <span id="org-example">{org}</span>.
                         </div>
+                        <div id="name-preview-row" class="alert alert-light border py-2 mt-2 mb-0">
+                            <strong>Esempio nome repository:</strong> <code id="name-preview">{gruppo}-{template}</code>
+                        </div>
+                        <div id="name-placeholder-error" class="alert alert-danger py-2 mt-2 mb-0 d-none" role="alert"></div>
                         <div id="student-name-privacy-warning" class="alert alert-warning py-2 mt-2 mb-0 d-none">
                             <i class="bi bi-shield-lock"></i>
                             Il placeholder <code>{studente}</code> contiene dati personali: la visibilità verrà vincolata a <strong>Privata</strong>.
@@ -766,7 +852,7 @@ include __DIR__ . '/partials/app_header.php';
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Tipo</label>
-                        <select name="tipo_test" class="form-select">
+                        <select name="tipo_test" id="tipo-test" class="form-select">
                             <option value="prerequisiti">Prerequisiti</option>
                             <option value="intermedio">Intermedio</option>
                             <option value="finale">Finale</option>
@@ -775,16 +861,72 @@ include __DIR__ . '/partials/app_header.php';
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Deadline</label>
-                        <input type="datetime-local" name="deadline" class="form-control">
+                        <input type="datetime-local" name="deadline" id="deadline" class="form-control">
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Note</label>
-                        <input type="text" name="note" class="form-control">
+                        <input type="text" name="note" id="note" class="form-control">
                     </div>
                     <div class="col-12">
-                        <button type="submit" class="btn btn-outline-primary"><i class="bi bi-people"></i> Carica studenti e continua</button>
+                        <button type="submit" class="btn btn-outline-primary" id="load-roster-button"><i class="bi bi-people"></i> Carica studenti e continua</button>
                     </div>
                 </form>
+                <section id="roster-panel" class="mt-4 d-none" aria-live="polite">
+                    <div id="roster-load-status" class="alert alert-info py-2">Configura l&#39;assignment e carica il roster.</div>
+                    <div class="mb-3">
+                        <label for="assignment-mode-select" class="form-label fw-semibold">Assegnazione singola/in team</label>
+                        <select class="form-select" id="assignment-mode-select">
+                            <option value="single" selected>Assegnazione singola</option>
+                            <option value="group">Assegnazione in team</option>
+                        </select>
+                        <div class="form-text">In modalità gruppo ogni team riceverà una repository condivisa. I placeholder incompatibili vengono disabilitati.</div>
+                    </div>
+                    <div class="d-none" id="team-groups-panel">
+                        <div class="card border-primary-subtle mb-3">
+                            <div class="card-header bg-primary-subtle d-flex justify-content-between align-items-center">
+                                <strong><i class="bi bi-people-fill"></i> Team di lavoro</strong>
+                                <button type="button" class="btn btn-sm btn-primary" id="add-team-group"><i class="bi bi-plus-circle"></i> Aggiungi team</button>
+                            </div>
+                            <div class="card-body">
+                                <div id="team-groups" class="d-flex flex-wrap gap-2"></div>
+                                <div class="form-text mt-2">Seleziona un team e poi clicca sul nome di uno studente per assegnarlo. Ogni studente deve rimanere in un team.</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped align-middle">
+                            <thead><tr><th>#</th><th>Studente</th><th>Email</th></tr></thead>
+                            <tbody id="roster-students"><tr><td colspan="3" class="text-muted">Nessun roster caricato.</td></tr></tbody>
+                        </table>
+                    </div>
+                    <form method="post" id="assignment-create-form" class="row g-3 mt-2">
+                        <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                        <input type="hidden" name="action" value="create">
+                        <input type="hidden" name="assignment_mode" id="assignment-mode" value="single">
+                        <input type="hidden" name="team_groups_json" id="team-groups-json" value="">
+                        <input type="hidden" name="name" id="create-name" value="">
+                        <input type="hidden" name="template_id" id="create-template-id" value="">
+                        <input type="hidden" name="org" id="create-org" value="">
+                        <input type="hidden" name="visibility" id="create-visibility" value="private">
+                        <input type="hidden" name="tipo_test" id="create-tipo-test" value="altro">
+                        <input type="hidden" name="deadline" id="create-deadline" value="">
+                        <input type="hidden" name="note" id="create-note" value="">
+                        <div class="col-12">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="modes[]" value="email" id="modeEmail">
+                                <label class="form-check-label" for="modeEmail">Invito via email (link personale per studente)</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="modes[]" value="classroom" id="modeClassroom" checked>
+                                <label class="form-check-label" for="modeClassroom">Pubblica come bozza su Google Classroom (link generico di classe)</label>
+                            </div>
+                        </div>
+                        <div class="col-12 d-flex gap-2">
+                            <button type="submit" class="btn btn-primary d-none" id="create-assignment-button" disabled><i class="bi bi-git"></i> Crea assignment</button>
+                            <a href="github_assignment_create.php?id_uda=<?= h($idUda) ?>" class="btn btn-outline-secondary">Annulla</a>
+                        </div>
+                    </form>
+                </section>
             <?php endif; ?>
             <div class="modal fade" id="team-rename-modal" tabindex="-1" aria-labelledby="team-rename-title" aria-hidden="true">
                 <div class="modal-dialog modal-dialog-centered">
@@ -882,12 +1024,12 @@ include __DIR__ . '/partials/app_header.php';
     const addButton = document.getElementById('add-team-group');
     if (!modeSelect || !modeInput || !payloadInput || !panel || !groupsContainer || !addButton) return;
 
-    const students = <?= \App\Core\Security\OutputEncoder::json(array_values(array_map(static function (array $student): array {
-        return [
-            'id' => (string)($student['id_studente'] ?? ''),
-        ];
+    const serverStudents = <?= \App\Core\Security\OutputEncoder::json(array_values(array_map(static function (array $student): array {
+        return ['id' => (string)($student['id_studente'] ?? '')];
     }, $students))) ?>;
-    const initialGroups = <?= \App\Core\Security\OutputEncoder::json($teamService->defaultGroups($students)) ?>;
+    const serverGroups = <?= \App\Core\Security\OutputEncoder::json($teamService->defaultGroups($students)) ?>;
+    let students = serverStudents;
+    let initialGroups = serverGroups;
     const palette = ['#dbeafe', '#dcfce7', '#fef3c7', '#fce7f3', '#ede9fe', '#cffafe', '#ffedd5', '#e0e7ff'];
     let groups = initialGroups.map((group) => ({
         id: String(group.id),
@@ -1006,6 +1148,7 @@ include __DIR__ . '/partials/app_header.php';
                 if (remove.disabled) return;
                 groups = groups.filter((candidate) => candidate.id !== group.id);
                 activeGroupId = groups[0]?.id || '';
+                if (window.githubRosterContext) window.githubRosterContext.team = groups[0]?.name || '{team}';
                 syncPayload();
                 renderGroups();
             });
@@ -1028,10 +1171,25 @@ include __DIR__ . '/partials/app_header.php';
         renderGroups();
     };
 
-    document.querySelectorAll('.team-student-name').forEach((node) => {
-        node.style.cursor = 'pointer';
-        node.addEventListener('click', () => moveStudentToActiveGroup(node.dataset.studentId || ''));
+    const rosterContainer = document.getElementById('roster-students');
+    rosterContainer?.addEventListener('click', (event) => {
+        const node = event.target.closest('.team-student-name');
+        if (!node) return;
+        moveStudentToActiveGroup(node.dataset.studentId || '');
     });
+    window.initializeGithubTeamGroups = (rosterStudents, rosterGroups) => {
+        students = Array.isArray(rosterStudents) ? rosterStudents : [];
+        initialGroups = Array.isArray(rosterGroups) ? rosterGroups : [];
+        groups = initialGroups.map((group) => ({
+            id: String(group.id || ''),
+            name: String(group.name || 'Gruppo'),
+            color: String(group.color || '#dbeafe'),
+            student_ids: Array.isArray(group.student_ids) ? group.student_ids.map(String) : [],
+        }));
+        activeGroupId = groups[0]?.id || '';
+        nextGroupNumber = groups.length + 1;
+        renderGroups();
+    };
     modeSelect.addEventListener('change', renderGroups);
     addButton.addEventListener('click', () => {
         const id = 'team-' + nextGroupNumber;
@@ -1054,30 +1212,98 @@ include __DIR__ . '/partials/app_header.php';
             return;
         }
         target.name = newName.slice(0, 120);
+        if (groups[0]?.id === target.id && window.githubRosterContext) {
+            window.githubRosterContext.team = target.name;
+        }
         syncPayload();
         renderGroups();
+        window.githubAssignmentNamePreview?.();
         renameModal?.hide();
     });
     renderGroups();
 })();
 
-// Inserimento assistito dei placeholder nel pattern del nome repository.
+// Placeholder, anteprima concreta e vincoli tra modalità di assegnazione.
 (() => {
     const nameInput = document.getElementById('assignment-name');
+    if (!nameInput) return;
+    const modeSelect = document.getElementById('assignment-mode-select');
     const visibilitySelect = document.getElementById('repository-visibility');
     const warning = document.getElementById('student-name-privacy-warning');
-    if (!nameInput) return;
+    const errorBox = document.getElementById('name-placeholder-error');
+    const createButton = document.getElementById('create-assignment-button');
+    const context = {
+        gruppo: '{gruppo}', template: '{template}', studente: '{studente}', team: '{team}',
+        data: new Date().toISOString().slice(0, 10), anno: new Date().getFullYear().toString(), org: '{org}',
+    };
+    window.githubRosterContext = context;
 
-    const updateVisibilityHint = () => {
+    const mode = () => modeSelect?.value === 'group' ? 'group' : 'single';
+    const selectedGroupName = () => {
+        const selected = document.querySelector('#group-selectors select.group-select:not(:last-child), #group-selectors select.group-select');
+        return selected?.value ? (selected.selectedOptions?.[0]?.textContent?.trim() || '{gruppo}') : '{gruppo}';
+    };
+    const selectedTemplateName = () => {
+        const option = document.getElementById('template-id')?.selectedOptions?.[0];
+        return option?.value ? (option.dataset?.templateName || option.textContent?.split(' — ')[0]?.trim() || '{template}') : '{template}';
+    };
+    const currentContext = () => ({
+        ...(window.githubRosterContext || context),
+        gruppo: selectedGroupName(),
+        template: selectedTemplateName(),
+        org: document.getElementById('github-org')?.value?.trim() || '{org}',
+    });
+    const incompatible = () => {
+        const tokens = [];
+        const pattern = nameInput.value || '';
+        if (mode() === 'group' && /\{studente\}/i.test(pattern)) tokens.push('{studente}');
+        if (mode() === 'single' && /\{team\}/i.test(pattern)) tokens.push('{team}');
+        return tokens;
+    };
+    const updatePreview = () => {
+        const values = currentContext();
+        const pattern = nameInput.value.trim() || '{gruppo}-{template}';
+        const preview = pattern.replace(/\{([a-z0-9_]+)\}/gi, (literal, key) =>
+            Object.prototype.hasOwnProperty.call(values, key.toLowerCase()) ? values[key.toLowerCase()] : literal
+        );
+        const previewNode = document.getElementById('name-preview');
+        if (previewNode) previewNode.textContent = preview;
+        [['first-group-example', values.gruppo], ['template-example', values.template],
+            ['first-student-example', values.studente], ['first-team-example', values.team],
+            ['org-example', values.org]].forEach(([id, value]) => {
+            const node = document.getElementById(id);
+            if (node) node.textContent = value;
+        });
+        return preview;
+    };
+    const updateValidation = () => {
+        const bad = incompatible();
+        if (errorBox) {
+            errorBox.textContent = bad.length
+                ? bad.join(', ') + ' non è disponibile per una assegnazione ' + (mode() === 'group' ? 'di gruppo.' : 'singola.')
+                : '';
+            errorBox.classList.toggle('d-none', bad.length === 0);
+        }
+        document.querySelectorAll('.placeholder-token').forEach((button) => {
+            const tokenMode = button.dataset.placeholderMode || 'common';
+            button.disabled = tokenMode !== 'common' && tokenMode !== mode();
+            button.classList.toggle('disabled', button.disabled);
+        });
         const hasStudent = /\{studente\}/i.test(nameInput.value || '');
         const publicOption = visibilitySelect?.querySelector('option[value="public"]');
         if (publicOption) publicOption.disabled = hasStudent;
         if (hasStudent && visibilitySelect) visibilitySelect.value = 'private';
         warning?.classList.toggle('d-none', !hasStudent);
+        if (createButton && !createButton.classList.contains('d-none')) createButton.disabled = bad.length > 0;
+        updatePreview();
+        return bad.length === 0;
     };
+    window.validateGithubAssignmentName = updateValidation;
+    window.githubAssignmentNamePreview = updatePreview;
 
     document.querySelectorAll('.placeholder-token').forEach((button) => {
         button.addEventListener('click', () => {
+            if (button.disabled) return;
             const token = button.dataset.placeholder || '';
             if (!token) return;
             const start = nameInput.selectionStart ?? nameInput.value.length;
@@ -1086,11 +1312,150 @@ include __DIR__ . '/partials/app_header.php';
             nameInput.focus();
             const caret = start + token.length;
             nameInput.setSelectionRange(caret, caret);
-            updateVisibilityHint();
+            updateValidation();
         });
     });
-    nameInput.addEventListener('input', updateVisibilityHint);
-    updateVisibilityHint();
+    nameInput.addEventListener('input', updateValidation);
+    modeSelect?.addEventListener('change', updateValidation);
+    document.getElementById('template-id')?.addEventListener('change', updateValidation);
+    document.getElementById('github-org')?.addEventListener('change', updateValidation);
+    document.getElementById('group-selectors')?.addEventListener('change', updateValidation);
+    updateValidation();
+})();
+
+// Caricamento asincrono del roster: la configurazione resta sulla stessa pagina
+// e il form di creazione viene abilitato solo dopo una risposta valida.
+(() => {
+    const configForm = document.getElementById('assignment-config-form');
+    const rosterPanel = document.getElementById('roster-panel');
+    const rosterBody = document.getElementById('roster-students');
+    const status = document.getElementById('roster-load-status');
+    const loadButton = document.getElementById('load-roster-button');
+    const createForm = document.getElementById('assignment-create-form');
+    const createButton = document.getElementById('create-assignment-button');
+    const modeSelect = document.getElementById('assignment-mode-select');
+    if (!configForm || !rosterPanel || !rosterBody || !status || !loadButton || !createForm || !createButton) return;
+
+    let rosterLoaded = false;
+    const invalidateRoster = () => {
+        if (!rosterLoaded) return;
+        rosterLoaded = false;
+        createButton.classList.add('d-none');
+        createButton.disabled = true;
+        setStatus('I gruppi didattici sono cambiati: ricarica il roster prima di creare l\'assignment.', 'warning');
+    };
+    const setStatus = (message, type = 'info') => {
+        status.className = 'alert alert-' + type + ' py-2';
+        status.textContent = message;
+    };
+    const syncCreateConfig = () => {
+        const fields = [
+            ['assignment-name', 'create-name'], ['template-id', 'create-template-id'],
+            ['github-org', 'create-org'], ['repository-visibility', 'create-visibility'],
+            ['tipo-test', 'create-tipo-test'], ['deadline', 'create-deadline'], ['note', 'create-note'],
+        ];
+        fields.forEach(([sourceId, targetId]) => {
+            const source = document.getElementById(sourceId);
+            const target = document.getElementById(targetId);
+            if (source && target) target.value = source.value || '';
+        });
+    };
+    const renderRoster = (students) => {
+        rosterBody.replaceChildren();
+        if (!students.length) {
+            const row = document.createElement('tr');
+            const cell = document.createElement('td');
+            cell.colSpan = 3;
+            cell.className = 'text-muted';
+            cell.textContent = 'Nessuno studente risolto (verifica le mappature del gruppo).';
+            row.appendChild(cell);
+            rosterBody.appendChild(row);
+            return;
+        }
+        students.forEach((student, index) => {
+            const row = document.createElement('tr');
+            const number = document.createElement('td');
+            number.textContent = String(index + 1);
+            const nameCell = document.createElement('td');
+            const name = document.createElement('span');
+            name.className = 'team-student-name';
+            name.dataset.studentId = String(student.id_studente || student.id || '');
+            name.textContent = String(student.nome || student.name || student.id_studente || student.id || 'Studente');
+            name.style.cursor = 'pointer';
+            nameCell.appendChild(name);
+            const emailCell = document.createElement('td');
+            const email = document.createElement('code');
+            email.textContent = String(student.email || '(non risolta)');
+            emailCell.appendChild(email);
+            row.append(number, nameCell, emailCell);
+            rosterBody.appendChild(row);
+        });
+    };
+    configForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!configForm.reportValidity()) return;
+        loadButton.disabled = true;
+        loadButton.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Caricamento roster...';
+        setStatus('Caricamento roster in corso...', 'info');
+        try {
+            const data = new FormData(configForm);
+            data.set('action', 'load_roster');
+            const response = await fetch(configForm.getAttribute('action') || window.location.href, {
+                method: 'POST', body: data, credentials: 'same-origin',
+                headers: {'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+            });
+            const rawResponse = await response.text();
+            let payload;
+            try {
+                payload = JSON.parse(rawResponse);
+            } catch (parseError) {
+                if (response.redirected || /^\s*<!doctype\s+html/i.test(rawResponse)) {
+                    throw new Error('La sessione docente non è più valida. Ricarica la pagina ed effettua nuovamente l\'accesso.');
+                }
+                throw new Error('Il server ha restituito una risposta non valida durante il caricamento del roster.');
+            }
+            if (!response.ok || !payload.ok) throw new Error(payload.error || 'Impossibile caricare il roster.');
+            const students = Array.isArray(payload.students) ? payload.students : [];
+            renderRoster(students);
+            rosterLoaded = students.length > 0;
+            rosterPanel.classList.remove('d-none');
+            setStatus(rosterLoaded ? 'Roster caricato: ' + students.length + ' studenti.' : 'Roster vuoto: verifica le mappature del gruppo.', rosterLoaded ? 'success' : 'warning');
+            window.githubRosterContext = {
+                ...(window.githubRosterContext || {}),
+                gruppo: payload.firstGroup || '{gruppo}',
+                template: payload.template || '{template}',
+                studente: payload.firstStudent || '{studente}',
+                team: payload.firstTeam || '{team}',
+                data: payload.date || (window.githubRosterContext?.data || '{data}'),
+                org: payload.org || '{org}',
+            };
+            window.initializeGithubTeamGroups?.(students, payload.team_groups || []);
+            syncCreateConfig();
+            createButton.classList.toggle('d-none', !rosterLoaded);
+            createButton.disabled = !rosterLoaded || !(window.validateGithubAssignmentName?.() ?? true);
+            window.githubAssignmentNamePreview?.();
+            rosterPanel.scrollIntoView({behavior: 'smooth', block: 'start'});
+        } catch (error) {
+            rosterPanel.classList.remove('d-none');
+            setStatus(error instanceof Error ? error.message : 'Errore inatteso durante il caricamento del roster.', 'danger');
+            createButton.classList.add('d-none');
+        } finally {
+            loadButton.disabled = false;
+            loadButton.innerHTML = '<i class="bi bi-people"></i> Carica studenti e continua';
+        }
+    });
+    createForm.addEventListener('submit', (event) => {
+        if (!rosterLoaded || !(window.validateGithubAssignmentName?.() ?? true)) {
+            event.preventDefault();
+            return;
+        }
+        syncCreateConfig();
+        if (modeSelect?.value === 'single') {
+            const payload = document.getElementById('team-groups-json');
+            if (payload) payload.value = '';
+        }
+    });
+    document.getElementById('group-selectors')?.addEventListener('change', invalidateRoster);
 })();
 </script>
 </body>
