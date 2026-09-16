@@ -13,6 +13,7 @@ use App\Core\Database\DatabaseFactory;
 use App\Core\GitHubAssignmentGroupRepository;
 use App\Core\GitHubAssignmentService;
 use App\Core\GitHubAssignmentTeamService;
+use App\Core\GitHubAssignmentNameService;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupStudentService;
 use App\Core\ClasseVivaCapability;
@@ -89,6 +90,7 @@ $profile = $config['user_profile'] ?? [];
 $emailDomain = (string)($profile['school_email_domain'] ?? '');
 $emailTemplate = (string)($profile['school_student_email_template'] ?? '');
 $teamService = new GitHubAssignmentTeamService();
+$nameService = new GitHubAssignmentNameService();
 
 $orgs = [];
 if ($ghAuthed) {
@@ -171,6 +173,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $templateId = trim((string)($_POST['template_id'] ?? ''));
             $org = trim((string)($_POST['org'] ?? ''));
             $name = trim((string)($_POST['name'] ?? ''));
+            $visibility = strtolower(trim((string)($_POST['visibility'] ?? 'private')));
             assert_groups_belong_to_uda($groupIds, $groups);
             if ($requiresClasseVivaForGroups) {
                 ClasseVivaTokenGuard::requireToken($config);
@@ -188,6 +191,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
             if ($name === '') $name = GitHubAssignmentService::repoPrefix($gname . '-' . $tname);
+            $unknownPlaceholders = $nameService->unknownPlaceholders($name);
+            if ($unknownPlaceholders !== []) {
+                throw new Exception('Placeholder non supportati nel nome assignment: ' . implode(', ', $unknownPlaceholders) . '.');
+            }
+            if (!in_array($visibility, ['private', 'public'], true)) {
+                $visibility = 'private';
+            }
 
             $_SESSION['github_assignment_form'] = [
                 'group_ids' => $groupIds,
@@ -196,6 +206,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'template_id' => $templateId,
                 'org' => $org,
                 'name' => $name,
+                'name_template' => $name,
+                'visibility' => $visibility,
                 'tipo_test' => trim((string)($_POST['tipo_test'] ?? 'altro')),
                 'deadline' => trim((string)($_POST['deadline'] ?? '')),
                 'note' => trim((string)($_POST['note'] ?? '')),
@@ -214,7 +226,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $org = (string)$formData['org'];
-            $name = (string)$formData['name'];
+            $name = (string)($formData['name_template'] ?? $formData['name'] ?? '');
             $groupIds = normalize_group_selection($formData['group_ids'] ?? ($formData['group_id'] ?? []));
             assert_groups_belong_to_uda($groupIds, $groups);
             $groupId = $groupIds[0];
@@ -247,6 +259,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             })((string)($template['url_repository'] ?? ''));
             if ($tOwner === '' || $tRepo === '') throw new Exception('URL template non valido.');
 
+            $groupName = '';
+            foreach ($groups as $group) {
+                if ((string)($group['id_gruppo'] ?? '') === $groupId) {
+                    $groupName = trim((string)($group['nome_gruppo'] ?? $groupId));
+                    break;
+                }
+            }
+            $templateName = trim((string)($template['nome'] ?? $templateId));
+            $nameUnknownPlaceholders = $nameService->unknownPlaceholders($name);
+            if ($nameUnknownPlaceholders !== []) {
+                throw new Exception('Placeholder non supportati nel nome assignment: ' . implode(', ', $nameUnknownPlaceholders) . '.');
+            }
+            $privacyVisibilityForced = $nameService->containsStudentPlaceholder($name);
+            $repositoryVisibility = $nameService->effectiveVisibility(
+                (string)($formData['visibility'] ?? 'private'),
+                $privacyVisibilityForced
+            );
+            $private = $repositoryVisibility === 'private';
+            $creationDate = date('Y-m-d');
+            $baseNameContext = [
+                'gruppo' => $groupName,
+                'template' => $templateName,
+                'data' => $creationDate,
+                'anno' => substr($creationDate, 0, 4),
+                'org' => $org,
+            ];
+
             // GitHub consente POST /generate solo per repository marcati
             // esplicitamente come "Template repository". Verifichiamo prima
             // del batch per non creare assignment con link studenti vuoti.
@@ -277,9 +316,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if ($assignmentMode === 'group') {
                 foreach ($teamGroups as $teamIndex => $team) {
-                    $repoName = GitHubAssignmentService::teamRepoName($name, $teamIndex + 1, $usedCodes);
+                    $firstStudentName = '';
+                    foreach (($team['student_ids'] ?? []) as $teamStudentId) {
+                        $candidateStudent = $studentsById[(string)$teamStudentId] ?? null;
+                        if (is_array($candidateStudent)) {
+                            $firstStudentName = trim((string)($candidateStudent['nome'] ?? ''));
+                            if ($firstStudentName !== '') break;
+                        }
+                    }
+                    $expandedName = $nameService->expand($name, array_merge($baseNameContext, [
+                        'team' => trim((string)($team['name'] ?? ('Gruppo ' . ($teamIndex + 1)))),
+                        'studente' => $firstStudentName,
+                    ]));
+                    if (trim($expandedName) === '') {
+                        $repoCreationErrors[] = 'Gruppo ' . ($teamIndex + 1) . ': il pattern del nome repository produce un nome vuoto.';
+                        break;
+                    }
+                    $repoName = GitHubAssignmentService::teamRepoName($expandedName, $teamIndex + 1, $usedCodes);
                     try {
-                        $created = $github->createRepositoryFromTemplate($tOwner, $tRepo, $repoName, $org, $name, true);
+                        $created = $github->createRepositoryFromTemplate($tOwner, $tRepo, $repoName, $org, $expandedName, $private);
                         // Registriamo subito il nome per poter tentare la pulizia
                         // anche se la risposta non contiene html_url.
                         $createdRepos[] = ['owner' => $org, 'repo' => $repoName];
@@ -308,10 +363,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             } else {
                 foreach ($students as $s) {
-                    $repoName = GitHubAssignmentService::repoName($name, $usedCodes);
+                    $expandedName = $nameService->expand($name, array_merge($baseNameContext, [
+                        'team' => '',
+                        'studente' => trim((string)($s['nome'] ?? '')),
+                    ]));
+                    if (trim($expandedName) === '') {
+                        $repoCreationErrors[] = 'Il pattern del nome repository produce un nome vuoto per uno studente.';
+                        break;
+                    }
+                    $repoName = GitHubAssignmentService::repoName($expandedName, $usedCodes);
                     $acceptanceCode = GitHubAssignmentService::generateAcceptanceCode();
                     try {
-                        $created = $github->createRepositoryFromTemplate($tOwner, $tRepo, $repoName, $org, $name, true);
+                        $created = $github->createRepositoryFromTemplate($tOwner, $tRepo, $repoName, $org, $expandedName, $private);
                         // Registriamo subito il nome per poter tentare la pulizia
                         // anche se la risposta non contiene html_url.
                         $createdRepos[] = ['owner' => $org, 'repo' => $repoName];
@@ -382,6 +445,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'org' => $org,
                     'slug' => $slug,
                     'repo_prefix' => $prefix,
+                    'name_template' => $name,
+                    'repository_visibility' => $repositoryVisibility,
+                    'privacy_visibility_forced' => $privacyVisibilityForced,
                     'template_id' => $templateId,
                     'assignment_mode' => $assignmentMode,
                     'team_groups' => $teamGroups,
@@ -492,6 +558,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 $selectedGroupIds = normalize_group_selection($formData['group_ids'] ?? ($formData['group_id'] ?? []));
+$confirmNameTemplate = (string)($formData['name_template'] ?? $formData['name'] ?? '');
+$confirmStudentName = $nameService->containsStudentPlaceholder($confirmNameTemplate);
+$confirmVisibility = $nameService->effectiveVisibility((string)($formData['visibility'] ?? 'private'), $confirmStudentName);
 ?>
 <!DOCTYPE html>
 <html lang="it">
@@ -551,6 +620,16 @@ include __DIR__ . '/partials/app_header.php';
                             }
                             echo h(implode(', ', $confirmGroupNames));
                             ?>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="alert <?= $confirmStudentName ? 'alert-warning' : 'alert-secondary' ?> mb-0">
+                            <i class="bi bi-tag"></i>
+                            <strong>Pattern nome repository:</strong> <code><?= h($confirmNameTemplate) ?></code>
+                            <span class="ms-2"><strong>Visibilità effettiva:</strong> <?= $confirmVisibility === 'private' ? 'Privata' : 'Pubblica' ?></span>
+                            <?php if ($confirmStudentName): ?>
+                                <div class="small mt-1"><i class="bi bi-shield-lock"></i> La presenza di <code>{studente}</code> obbliga la visibilità privata.</div>
+                            <?php endif; ?>
                         </div>
                     </div>
                     <div class="col-12">
@@ -650,8 +729,40 @@ include __DIR__ . '/partials/app_header.php';
                         </select>
                     </div>
                     <div class="col-md-6">
-                        <label class="form-label">Nome assignment (auto {gruppo}-{template})</label>
-                        <input type="text" name="name" class="form-control" placeholder="{gruppo}-{template}">
+                        <label for="assignment-name" class="form-label">Nome assignment / Nome repository (auto {gruppo}-{template})</label>
+                        <input type="text" name="name" id="assignment-name" class="form-control" placeholder="{gruppo}-{template}" value="<?= h((string)($formData['name_template'] ?? $formData['name'] ?? '')) ?>">
+                        <div class="mt-2 d-flex flex-wrap gap-1 align-items-center">
+                            <span class="small text-muted me-1">Inserisci placeholder:</span>
+                            <?php foreach ([
+                                '{gruppo}' => 'gruppo didattico',
+                                '{template}' => 'template',
+                                '{studente}' => 'studente',
+                                '{team}' => 'gruppo di lavoro',
+                                '{data}' => 'data',
+                                '{anno}' => 'anno',
+                                '{org}' => 'organizzazione GitHub',
+                            ] as $token => $description): ?>
+                                <button type="button" class="btn btn-sm btn-outline-secondary placeholder-token" data-placeholder="<?= h($token) ?>" title="<?= h($description) ?>"><?= h($token) ?></button>
+                            <?php endforeach; ?>
+                        </div>
+                        <div class="form-text">
+                            <strong>Legenda:</strong> {gruppo} = primo gruppo didattico selezionato; {template} = template scelto;
+                            {studente} = primo studente del roster (o lo studente corrente in assegnazione singola);
+                            {team} = primo gruppo di lavoro; {data}/{anno} = data/anno di creazione; {org} = organizzazione GitHub.
+                        </div>
+                        <div id="student-name-privacy-warning" class="alert alert-warning py-2 mt-2 mb-0 d-none">
+                            <i class="bi bi-shield-lock"></i>
+                            Il placeholder <code>{studente}</code> contiene dati personali: la visibilità verrà vincolata a <strong>Privata</strong>.
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="repository-visibility" class="form-label">Visibilità repository</label>
+                        <select name="visibility" id="repository-visibility" class="form-select" required>
+                            <?php $selectedVisibility = strtolower((string)($formData['visibility'] ?? 'private')); ?>
+                            <option value="private"<?= $selectedVisibility !== 'public' ? ' selected' : '' ?>>Privata (consigliata)</option>
+                            <option value="public"<?= $selectedVisibility === 'public' ? ' selected' : '' ?>>Pubblica</option>
+                        </select>
+                        <div class="form-text">Le repository pubbliche sono visibili a chiunque. Se usi {studente}, la scelta pubblica viene disabilitata e il server forza Privata.</div>
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Tipo</label>
@@ -675,6 +786,26 @@ include __DIR__ . '/partials/app_header.php';
                     </div>
                 </form>
             <?php endif; ?>
+            <div class="modal fade" id="team-rename-modal" tabindex="-1" aria-labelledby="team-rename-title" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="team-rename-title">Rinomina gruppo di lavoro</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+                        </div>
+                        <div class="modal-body">
+                            <label for="team-rename-input" class="form-label">Nuovo nome</label>
+                            <input type="text" class="form-control" id="team-rename-input" maxlength="120" autocomplete="off">
+                            <div id="team-rename-error" class="invalid-feedback">Inserisci un nome non vuoto.</div>
+                            <div class="form-text">Il nome viene usato anche per comporre il nome della repository quando è presente {team}.</div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button>
+                            <button type="button" class="btn btn-primary" id="team-rename-save">Salva nome</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -766,6 +897,15 @@ include __DIR__ . '/partials/app_header.php';
     }));
     let activeGroupId = groups[0]?.id || '';
     let nextGroupNumber = groups.length + 1;
+    const renameModalElement = document.getElementById('team-rename-modal');
+    const renameInput = document.getElementById('team-rename-input');
+    const renameSave = document.getElementById('team-rename-save');
+    const renameError = document.getElementById('team-rename-error');
+    const renameModal = renameModalElement && window.bootstrap
+        ? window.bootstrap.Modal.getOrCreateInstance(renameModalElement)
+        : null;
+    let renameGroupId = '';
+    let renameTimer = null;
 
     const colorForNewGroup = () => {
         const used = new Set(groups.map((group) => group.color.toLowerCase()));
@@ -777,6 +917,26 @@ include __DIR__ . '/partials/app_header.php';
 
     const syncPayload = () => {
         payloadInput.value = JSON.stringify(groups);
+    };
+
+    const clearRenameTimer = () => {
+        if (renameTimer !== null) {
+            window.clearTimeout(renameTimer);
+            renameTimer = null;
+        }
+    };
+
+    const openTeamRename = (group) => {
+        if (!renameModal || !renameInput) return;
+        renameGroupId = group.id;
+        renameInput.value = group.name;
+        renameInput.classList.remove('is-invalid');
+        renameError?.classList.remove('d-block');
+        renameModal.show();
+        window.setTimeout(() => {
+            renameInput.focus();
+            renameInput.select();
+        }, 150);
     };
 
     const renderStudentColors = () => {
@@ -814,6 +974,25 @@ include __DIR__ . '/partials/app_header.php';
             const label = document.createElement('span');
             label.className = 'fw-semibold';
             label.textContent = group.name + ' (' + group.student_ids.length + ')';
+            label.title = 'Doppio clic o pressione prolungata per rinominare';
+            label.style.userSelect = 'none';
+            label.addEventListener('dblclick', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                clearRenameTimer();
+                openTeamRename(group);
+            });
+            label.addEventListener('pointerdown', (event) => {
+                if (event.pointerType === 'mouse' && event.button !== 0) return;
+                clearRenameTimer();
+                renameTimer = window.setTimeout(() => {
+                    renameTimer = null;
+                    openTeamRename(group);
+                }, 600);
+            });
+            ['pointerup', 'pointercancel', 'pointerleave', 'pointermove'].forEach((eventName) => {
+                label.addEventListener(eventName, clearRenameTimer);
+            });
             card.appendChild(label);
 
             const remove = document.createElement('button');
@@ -866,7 +1045,52 @@ include __DIR__ . '/partials/app_header.php';
         activeGroupId = id;
         renderGroups();
     });
+    renameSave?.addEventListener('click', () => {
+        const target = groups.find((group) => group.id === renameGroupId);
+        const newName = (renameInput?.value || '').trim();
+        if (!target || !newName) {
+            renameInput?.classList.add('is-invalid');
+            renameError?.classList.add('d-block');
+            return;
+        }
+        target.name = newName.slice(0, 120);
+        syncPayload();
+        renderGroups();
+        renameModal?.hide();
+    });
     renderGroups();
+})();
+
+// Inserimento assistito dei placeholder nel pattern del nome repository.
+(() => {
+    const nameInput = document.getElementById('assignment-name');
+    const visibilitySelect = document.getElementById('repository-visibility');
+    const warning = document.getElementById('student-name-privacy-warning');
+    if (!nameInput) return;
+
+    const updateVisibilityHint = () => {
+        const hasStudent = /\{studente\}/i.test(nameInput.value || '');
+        const publicOption = visibilitySelect?.querySelector('option[value="public"]');
+        if (publicOption) publicOption.disabled = hasStudent;
+        if (hasStudent && visibilitySelect) visibilitySelect.value = 'private';
+        warning?.classList.toggle('d-none', !hasStudent);
+    };
+
+    document.querySelectorAll('.placeholder-token').forEach((button) => {
+        button.addEventListener('click', () => {
+            const token = button.dataset.placeholder || '';
+            if (!token) return;
+            const start = nameInput.selectionStart ?? nameInput.value.length;
+            const end = nameInput.selectionEnd ?? start;
+            nameInput.value = nameInput.value.slice(0, start) + token + nameInput.value.slice(end);
+            nameInput.focus();
+            const caret = start + token.length;
+            nameInput.setSelectionRange(caret, caret);
+            updateVisibilityHint();
+        });
+    });
+    nameInput.addEventListener('input', updateVisibilityHint);
+    updateVisibilityHint();
 })();
 </script>
 </body>
