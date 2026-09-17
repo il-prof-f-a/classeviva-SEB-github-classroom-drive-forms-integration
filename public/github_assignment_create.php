@@ -357,6 +357,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'anno' => substr($creationDate, 0, 4),
                 'org' => $org,
             ];
+            // Nome condiviso per link, test UDA, ricerca docente e Classroom:
+            // il pattern completo resta invece disponibile per le repository.
+            $sharedName = $nameService->expandSharedName($name, $baseNameContext);
 
             // GitHub consente POST /generate solo per repository marcati
             // esplicitamente come "Template repository". Verifichiamo prima
@@ -370,8 +373,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 );
             }
 
-            $slug = GitHubAssignmentService::assignmentSlug($name);
-            $prefix = GitHubAssignmentService::repoPrefix($name);
+            $slug = GitHubAssignmentService::assignmentSlug($sharedName);
+            $prefix = GitHubAssignmentService::repoPrefix($sharedName);
             $idTest = 'TEST_' . uniqid();
             $genericLink = app_url('public/accept_assignment.php') . '?assignment=' . urlencode($slug);
 
@@ -500,7 +503,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'id_uda' => $idUda,
                 'id_gruppo' => $groupId,
                 'tipo_test' => (string)$formData['tipo_test'],
-                'nome' => $name,
+                'nome' => $sharedName,
                 'descrizione' => (string)$formData['note'],
                 'piattaforma' => 'github',
                 'url' => '',
@@ -518,6 +521,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'slug' => $slug,
                     'repo_prefix' => $prefix,
                     'name_template' => $name,
+                    'name_context' => $sharedName,
                     'repository_visibility' => $repositoryVisibility,
                     'privacy_visibility_forced' => $privacyVisibilityForced,
                     'template_id' => $templateId,
@@ -540,7 +544,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         . '<p>Ti e stato assegnato un assignment GitHub.</p>'
                         . '<p>Accedi con il tuo account GitHub per accettare e ricevere la tua repository:</p>'
                         . '<p><a href="' . h($link) . '">' . h($link) . '</a></p>';
-                    if ($nm->sendHtmlEmail($email, 'Invito assignment: ' . $name, $body)) { $emailSent++; } else { $emailFailed++; }
+                    if ($nm->sendHtmlEmail($email, 'Invito assignment: ' . $sharedName, $body)) { $emailSent++; } else { $emailFailed++; }
                 }
             }
 
@@ -571,7 +575,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     foreach ($courseGroups as $gcCourse => $courseGroupId) {
                         try {
                             $materialData = [
-                                'title' => $name,
+                                'title' => $sharedName,
                                 'description' => 'Assignment GitHub — accedi con il tuo account GitHub per ricevere la repository.',
                                 'link' => $genericLink,
                                 'state' => 'DRAFT',

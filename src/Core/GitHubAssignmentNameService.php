@@ -53,6 +53,35 @@ final class GitHubAssignmentNameService
         return $expanded === null ? $pattern : $expanded;
     }
 
+    /**
+     * Crea il nome comune dell'assignment per link, test e pubblicazioni.
+     *
+     * Il pattern completo resta quello usato per i nomi delle repository,
+     * quindi può contenere il nome dello studente o del team. Questi due dati
+     * però non possono comparire nel link generico docente/studente né nel
+     * titolo condiviso su Classroom: vengono rimossi, mentre tutti gli altri
+     * placeholder vengono espansi con il contesto dell'assignment.
+     *
+     * @param array<string,mixed> $context
+     */
+    public function expandSharedName(string $pattern, array $context): string
+    {
+        $context['studente'] = '';
+        $context['team'] = '';
+        $expanded = $this->expand($pattern, $context);
+
+        // La rimozione di {studente}/{team} può lasciare separatori doppi
+        // (per esempio "gruppo-{team}-{anno}") o separatori ai bordi.
+        $expanded = preg_replace('/\s*([\-_.\/|])(?:\s*[\-_.\/|])+\s*/u', '$1', $expanded) ?? $expanded;
+        $expanded = preg_replace('/\s+/u', ' ', trim($expanded)) ?? trim($expanded);
+        $expanded = trim($expanded, " \t\n\r\0\x0B-_.\/|");
+
+        // Evita slug e link vuoti se l'utente ha inserito soltanto un
+        // placeholder personale. In condizioni normali il pattern contiene
+        // almeno un elemento comune e questo fallback non viene utilizzato.
+        return $expanded !== '' ? $expanded : 'assignment';
+    }
+
     public function containsStudentPlaceholder(string $pattern): bool
     {
         return preg_match('/\{studente\}/i', $pattern) === 1;

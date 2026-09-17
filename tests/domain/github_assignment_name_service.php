@@ -26,6 +26,17 @@ if ($service->expand('{studente} {team} {data} {anno} {org}', $context)
     !== 'Mario Rossi Gruppo 1 2026-09-16 2026 il-prof-f-a') {
     $failures[] = 'espansione studente/team/data/anno/org errata';
 }
+if ($service->expandSharedName('{gruppo}-{anno}-{team}', $context)
+    !== '4L Informatica - TPSIT-2026') {
+    $failures[] = 'nome condiviso con team rimosso errato';
+}
+if ($service->expandSharedName('{template} - fls 2026-27 {gruppo} {studente}', $context)
+    !== 'La Talpa - fls 2026-27 4L Informatica - TPSIT') {
+    $failures[] = 'nome condiviso con studente rimosso errato';
+}
+if ($service->expandSharedName('{team}', $context) !== 'assignment') {
+    $failures[] = 'fallback del nome condiviso vuoto errato';
+}
 if (!$service->containsStudentPlaceholder('Titolo-{STUDENTE}')) {
     $failures[] = 'rilevazione placeholder studente case-insensitive errata';
 }

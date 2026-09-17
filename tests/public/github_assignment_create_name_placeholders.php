@@ -22,6 +22,9 @@ $needles = [
     'Nome repository',
     'student-name-privacy-warning',
     'effectiveVisibility',
+    'expandSharedName',
+    'name_context',
+    '$sharedName',
     'createRepositoryFromTemplate',
 ];
 $failures = [];
