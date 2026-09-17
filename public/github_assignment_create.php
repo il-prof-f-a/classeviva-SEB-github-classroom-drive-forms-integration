@@ -549,7 +549,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $classroomPublished = false;
-            $classroomPublicationErrors = 0;
+            $classroomPublicationErrors = [];
             if ($modeClassroom) {
                 $integrations = new TeachingGroupIntegrationRepository($db, $userId);
                 // Un solo materiale per corso Classroom, anche se più gruppi
@@ -567,30 +567,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                     }
                 }
-                if ($courseGroups !== []) {
+                if ($courseGroups === []) {
+                    $classroomPublicationErrors[] = 'Nessun corso Classroom attivo è associato ai gruppi selezionati.';
+                } else {
                     $gc = new GoogleClassroomAPI($config);
                     // Argomento Classroom = argomento dell'UDA (fallback sul titolo).
                     $topicName = !empty((string)($uda['argomento'] ?? '')) ? (string)$uda['argomento'] : (string)($uda['titolo'] ?? '');
                     $legacyClassroomUpdated = false;
                     foreach ($courseGroups as $gcCourse => $courseGroupId) {
                         try {
-                            $materialData = [
+                            $courseInfo = $gc->getCourse($gcCourse);
+                            $courseState = strtoupper((string)($courseInfo['course_state'] ?? ''));
+                            if ($courseState !== '' && $courseState !== 'ACTIVE') {
+                                throw new Exception("Il corso Classroom {$gcCourse} è in stato {$courseState}; deve essere ACTIVE.");
+                            }
+
+                            $assignmentData = [
                                 'title' => $sharedName,
                                 'description' => 'Assignment GitHub — accedi con il tuo account GitHub per ricevere la repository.',
-                                'link' => $genericLink,
+                                'materials' => [$genericLink],
+                                'workType' => 'ASSIGNMENT',
                                 'state' => 'DRAFT',
+                                'maxPoints' => 100,
                             ];
                             if ($topicName !== '') {
-                                try {
-                                    $topic = $gc->findOrCreateTopic($gcCourse, $topicName);
-                                    $materialData['topicId'] = (string)($topic['id'] ?? '');
-                                } catch (Throwable $ignored) {
-                                    // argomento non impostabile: prosegue senza topic
-                                }
+                                $topic = $gc->findOrCreateTopic($gcCourse, $topicName);
+                                $assignmentData['topicId'] = (string)($topic['id'] ?? '');
                             }
-                            $created = $gc->createMaterial($gcCourse, $materialData);
+                            $created = $gc->createAssignment($gcCourse, $assignmentData);
                             $assignmentId = (string)($created['id'] ?? '');
                             $classroomUrl = trim((string)($created['link'] ?? ''));
+                            if ($assignmentId === '' || $classroomUrl === '') {
+                                throw new Exception('Classroom non ha restituito ID e URL del compito.');
+                            }
                             $db->insertRow('TEST_CLASSROOM_PUBBLICAZIONI', [
                                 'id_pubblicazione' => 'TCLPUB_' . bin2hex(random_bytes(10)),
                                 'id_test' => $idTest,
@@ -611,19 +620,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 $legacyClassroomUpdated = true;
                             }
                             $classroomPublished = true;
-                        } catch (Throwable $ignored) {
+                        } catch (Throwable $e) {
+                            $message = trim($e->getMessage());
+                            error_log('Pubblicazione Classroom fallita per il corso ' . $gcCourse . ': ' . $message);
                             // Un corso non disponibile non deve annullare le
                             // pubblicazioni già riuscite sugli altri corsi.
-                            $classroomPublicationErrors++;
+                            $classroomPublicationErrors[] = $gcCourse . ': ' . ($message !== '' ? $message : 'errore sconosciuto');
                         }
                     }
                 }
             }
 
             unset($_SESSION['github_assignment_form']);
-            $classroomMessage = $classroomPublished ? '. Bozze Classroom create.' : '';
-            if ($classroomPublicationErrors > 0) {
-                $classroomMessage .= ' Pubblicazioni Classroom non riuscite: ' . $classroomPublicationErrors . '.';
+            $classroomMessage = $classroomPublished ? '. Bozze compito Classroom create.' : '';
+            if ($classroomPublicationErrors !== []) {
+                $classroomMessage .= ' Pubblicazioni Classroom non riuscite: ' . implode(' | ', $classroomPublicationErrors) . '.';
             }
             $_SESSION['github_assignment_success'] = 'Assignment creato (' . $idTest . '). Email inviate: ' . $emailSent . '/' . ($emailSent + $emailFailed) . $classroomMessage;
             header('Location: uda_tests.php?id=' . urlencode($idUda));
