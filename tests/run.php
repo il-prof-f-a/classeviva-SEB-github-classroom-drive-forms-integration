@@ -557,6 +557,7 @@ $architectureTests = [
     'github assignment Classroom compito' => __DIR__ . '/public/github_assignment_create_classroom_assignment.php',
     'github assignment repository creation' => __DIR__ . '/public/github_assignment_repo_creation.php',
     'github assignment ClasseViva gate' => __DIR__ . '/public/github_assignment_create_classeviva_gate.php',
+    'github assignment roster JSON' => __DIR__ . '/public/github_assignment_create_roster_json.php',
     'github project service' => __DIR__ . '/domain/github_project_service.php',
     'github projects API contract' => __DIR__ . '/integration/github_projects_api.php',
     'github assignment project selection' => __DIR__ . '/public/github_assignment_create_projects.php',

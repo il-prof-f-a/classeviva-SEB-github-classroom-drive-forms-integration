@@ -32,6 +32,14 @@ $idUda = trim((string)($_GET['id_uda'] ?? ''));
 if ($idUda !== '' && !defined('REQUIRES_CLASSEVIVA_FOR_UDA')) {
     define('REQUIRES_CLASSEVIVA_FOR_UDA', $idUda);
 }
+// La richiesta load_roster viene consumata come JSON dal browser: il popup
+// ClasseViva globale deve restare nella pagina principale e non essere
+// aggiunto dalla shutdown function alla risposta AJAX.
+if ($_SERVER['REQUEST_METHOD'] === 'POST'
+    && (string)filter_input(INPUT_POST, 'action', FILTER_UNSAFE_RAW) === 'load_roster'
+    && !defined('SKIP_CV_TOKEN_POPUP')) {
+    define('SKIP_CV_TOKEN_POPUP', true);
+}
 
 require_once '../bootstrap.php';
 
