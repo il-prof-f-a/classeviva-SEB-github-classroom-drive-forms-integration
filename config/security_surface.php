@@ -8,6 +8,7 @@ return [
         'ajax_cancella_evidenza.php',
         'ajax_elimina_evidenza.php',
         'ajax_inserisci_evidenza.php',
+        'ajax_github_project_templates.php',
         'ajax_save_guide_preference.php',
         'ajax_upload_drive_file.php',
         'api/oral_rubric_load.php',

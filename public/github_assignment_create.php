@@ -14,6 +14,7 @@ use App\Core\GitHubAssignmentGroupRepository;
 use App\Core\GitHubAssignmentService;
 use App\Core\GitHubAssignmentTeamService;
 use App\Core\GitHubAssignmentNameService;
+use App\Core\GitHubProjectService;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupStudentService;
 use App\Core\ClasseVivaCapability;
@@ -132,6 +133,19 @@ if (!in_array($selectedOrg, $availableOrgLogins, true)) {
     $selectedOrg = $availableOrgLogins[0] ?? '';
 }
 
+$initialProjectTemplates = [];
+if ($ghAuthed && $selectedOrg !== '') {
+    try {
+        $initialProjectTemplates = $github->listOrganizationProjectTemplates($selectedOrg);
+    } catch (Throwable $ignored) {
+        $initialProjectTemplates = [];
+    }
+}
+$selectedProjectTemplateId = trim((string)($formData['project_template_id'] ?? ''));
+$projectEnabled = array_key_exists('project_enabled', $formData)
+    ? (bool)$formData['project_enabled']
+    : $initialProjectTemplates !== [];
+
 $error = null;
 $students = [];
 $step = 'form';
@@ -187,6 +201,23 @@ function assert_groups_belong_to_uda(array $groupIds, array $groups): void {
     }
 }
 
+/** @return array<string,mixed>|null */
+function resolve_project_template(GitHubIntegration $github, bool $enabled, string $org, string $projectId): ?array {
+    if (!$enabled) {
+        return null;
+    }
+    $projectId = trim($projectId);
+    if ($projectId === '') {
+        throw new Exception('Seleziona un Project template oppure disattiva il flag Project.');
+    }
+    foreach ($github->listOrganizationProjectTemplates($org) as $project) {
+        if ((string)($project['id'] ?? '') === $projectId) {
+            return $project;
+        }
+    }
+    throw new Exception('Il Project template selezionato non appartiene all’organizzazione o non è più disponibile.');
+}
+
 /** @param list<string> $groupIds @return list<array<string,mixed>> */
 function resolve_students_for_groups(array $config, $db, string $userId, array $groupIds, string $emailTemplate, string $emailDomain): array {
     $lists = [];
@@ -209,6 +240,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $org = trim((string)($_POST['org'] ?? ''));
             $name = trim((string)($_POST['name'] ?? ''));
             $visibility = strtolower(trim((string)($_POST['visibility'] ?? 'private')));
+            $projectEnabled = in_array(strtolower(trim((string)($_POST['add_project'] ?? ''))), ['1', 'true', 'on', 'yes'], true);
+            $projectTemplateId = trim((string)($_POST['project_template_id'] ?? ''));
             assert_groups_belong_to_uda($groupIds, $groups);
             if ($requiresClasseVivaForGroups) {
                 ClasseVivaTokenGuard::requireToken($config);
@@ -216,6 +249,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($templateId === '' || $org === '') {
                 throw new Exception('Gruppo, template e org sono obbligatori.');
             }
+            $projectTemplate = resolve_project_template($github, $projectEnabled, $org, $projectTemplateId);
             $tname = '';
             foreach ($templates as $t) { if ((string)$t['id_template'] === $templateId) { $tname = (string)($t['nome'] ?? ''); break; } }
             $gname = '';
@@ -247,6 +281,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'deadline' => trim((string)($_POST['deadline'] ?? '')),
                 'note' => trim((string)($_POST['note'] ?? '')),
                 'assignment_mode' => 'single',
+                'project_enabled' => $projectEnabled,
+                'project_template_id' => $projectTemplateId,
+                'project_template' => $projectTemplate,
             ];
             $formData = $_SESSION['github_assignment_form'];
             $students = resolve_students_for_groups($config, $db, $userId, $groupIds, $emailTemplate, $emailDomain);
@@ -264,6 +301,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'org' => $org,
                     'visibility' => $nameService->effectiveVisibility($visibility, $nameService->containsStudentPlaceholder($name)),
                     'privacy_visibility_forced' => $nameService->containsStudentPlaceholder($name),
+                    'project_enabled' => $projectEnabled,
+                    'project_template' => $projectTemplate,
                     'team_groups' => $teamService->defaultGroups($students),
                 ], JSON_THROW_ON_ERROR);
                 exit;
@@ -281,6 +320,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $org = trim((string)($_POST['org'] ?? $formData['org'] ?? ''));
             $namePosted = trim((string)($_POST['name'] ?? ''));
             $name = $namePosted !== '' ? $namePosted : (string)($formData['name_template'] ?? $formData['name'] ?? '');
+            $projectEnabled = in_array(strtolower(trim((string)($_POST['add_project'] ?? ($formData['project_enabled'] ?? '')))), ['1', 'true', 'on', 'yes'], true);
+            $projectTemplateId = trim((string)($_POST['project_template_id'] ?? ($formData['project_template_id'] ?? '')));
             $groupIds = normalize_group_selection($formData['group_ids'] ?? ($formData['group_id'] ?? []));
             assert_groups_belong_to_uda($groupIds, $groups);
             $groupId = $groupIds[0];
@@ -288,11 +329,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($templateId === '' || $org === '') {
                 throw new Exception('Template e org sono obbligatori.');
             }
+            $projectTemplate = resolve_project_template($github, $projectEnabled, $org, $projectTemplateId);
             $formData['name'] = $name;
             $formData['name_template'] = $name;
             $formData['org'] = $org;
             $formData['template_id'] = $templateId;
             $formData['visibility'] = strtolower(trim((string)($_POST['visibility'] ?? $formData['visibility'] ?? 'private')));
+            $formData['project_enabled'] = $projectEnabled;
+            $formData['project_template_id'] = $projectTemplateId;
+            $formData['project_template'] = $projectTemplate;
             $formData['tipo_test'] = trim((string)($_POST['tipo_test'] ?? $formData['tipo_test'] ?? 'altro'));
             $formData['deadline'] = trim((string)($_POST['deadline'] ?? $formData['deadline'] ?? ''));
             $formData['note'] = trim((string)($_POST['note'] ?? $formData['note'] ?? ''));
@@ -381,6 +426,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $usedCodes = [];
             $links = [];
             $createdRepos = [];
+            $projectRepositories = [];
             $repoCreationErrors = [];
             $studentsById = [];
             foreach ($students as $student) {
@@ -414,6 +460,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         // anche se la risposta non contiene html_url.
                         $createdRepos[] = ['owner' => $org, 'repo' => $repoName];
                         $repoUrl = (string)($created['html_url'] ?? '');
+                        $projectRepositories[] = [
+                            'owner' => $org,
+                            'name' => $repoName,
+                            'url' => $repoUrl,
+                            'node_id' => (string)($created['node_id'] ?? ''),
+                        ];
                         if ($repoUrl === '') {
                             throw new Exception('GitHub non ha restituito il collegamento alla repository.');
                         }
@@ -454,6 +506,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         // anche se la risposta non contiene html_url.
                         $createdRepos[] = ['owner' => $org, 'repo' => $repoName];
                         $repoUrl = (string)($created['html_url'] ?? '');
+                        $projectRepositories[] = [
+                            'owner' => $org,
+                            'name' => $repoName,
+                            'url' => $repoUrl,
+                            'node_id' => (string)($created['node_id'] ?? ''),
+                        ];
                         if ($repoUrl === '') {
                             throw new Exception('GitHub non ha restituito il collegamento alla repository.');
                         }
@@ -477,6 +535,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
                 throw new Exception('Creazione repository studenti fallita: ' . implode('; ', $repoCreationErrors));
+            }
+
+            $projectInstances = [];
+            if ($projectEnabled && is_array($projectTemplate)) {
+                try {
+                    $projectInstances = (new GitHubProjectService($github))->copyAndLinkForRepositories(
+                        $org,
+                        $projectTemplate,
+                        $projectRepositories,
+                        false
+                    );
+                } catch (Throwable $projectException) {
+                    foreach ($createdRepos as $createdRepo) {
+                        try {
+                            $github->deleteRepository($createdRepo['owner'], $createdRepo['repo']);
+                        } catch (Throwable $ignored) {
+                            error_log('[GitHub assignment] Cleanup repository fallita dopo errore Project: ' . $createdRepo['owner'] . '/' . $createdRepo['repo']);
+                        }
+                    }
+                    throw new Exception('Creazione Project sulle repository fallita: ' . $projectException->getMessage(), 0, $projectException);
+                }
             }
 
             foreach ($links as $link) {
@@ -528,6 +607,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'assignment_mode' => $assignmentMode,
                     'team_groups' => $teamGroups,
                     'modalita_invito' => $modes,
+                    'project' => [
+                        'enabled' => $projectEnabled,
+                        'template_id' => $projectEnabled ? (string)($projectTemplate['id'] ?? '') : '',
+                        'template_title' => $projectEnabled ? (string)($projectTemplate['title'] ?? '') : '',
+                        'template_url' => $projectEnabled ? (string)($projectTemplate['url'] ?? '') : '',
+                        'include_draft_issues' => false,
+                        'instances' => $projectInstances,
+                    ],
                     'teacher_token' => EncryptionHelper::encrypt((string)($_SESSION['github_access_token'] ?? '')),
                 ], JSON_THROW_ON_ERROR),
             ]);
@@ -699,6 +786,8 @@ include __DIR__ . '/partials/app_header.php';
                     <input type="hidden" name="action" value="create">
                     <input type="hidden" name="assignment_mode" id="assignment-mode" value="single">
                     <input type="hidden" name="team_groups_json" id="team-groups-json" value="">
+                    <input type="hidden" name="add_project" value="<?= !empty($formData['project_enabled']) ? '1' : '0' ?>">
+                    <input type="hidden" name="project_template_id" value="<?= h((string)($formData['project_template_id'] ?? '')) ?>">
                     <div class="col-12">
                         <div class="alert alert-info mb-0">
                             <i class="bi bi-people"></i>
@@ -724,6 +813,21 @@ include __DIR__ . '/partials/app_header.php';
                             <span class="ms-2"><strong>Visibilità effettiva:</strong> <?= $confirmVisibility === 'private' ? 'Privata' : 'Pubblica' ?></span>
                             <?php if ($confirmStudentName): ?>
                                 <div class="small mt-1"><i class="bi bi-shield-lock"></i> La presenza di <code>{studente}</code> obbliga la visibilità privata.</div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <?php $confirmProject = is_array($formData['project_template'] ?? null) ? $formData['project_template'] : null; ?>
+                        <div class="alert <?= !empty($formData['project_enabled']) && $confirmProject ? 'alert-info' : 'alert-light border' ?> mb-0">
+                            <i class="bi bi-kanban"></i>
+                            <?php if (!empty($formData['project_enabled']) && $confirmProject): ?>
+                                <strong>Project:</strong> <?= h((string)($confirmProject['title'] ?? 'Project template')) ?>
+                                <?php if (!empty($confirmProject['url'])): ?>
+                                    — <a href="<?= h((string)$confirmProject['url']) ?>" target="_blank" rel="noopener">Apri template</a>
+                                <?php endif; ?>
+                                <span class="small d-block">Verrà creata una copia del Project per ogni repository dell’assignment.</span>
+                            <?php else: ?>
+                                Nessun Project verrà aggiunto alle repository.
                             <?php endif; ?>
                         </div>
                     </div>
@@ -822,6 +926,34 @@ include __DIR__ . '/partials/app_header.php';
                                 <option value="<?= h((string)($o['login'] ?? '')) ?>"<?= $selectedOrg === (string)($o['login'] ?? '') ? ' selected' : '' ?>><?= h((string)($o['login'] ?? '')) ?></option>
                             <?php endforeach; ?>
                         </select>
+                    </div>
+                    <div class="col-12" id="project-template-options">
+                        <?php $hasProjectTemplates = $initialProjectTemplates !== []; ?>
+                        <div class="card border-info-subtle">
+                            <div class="card-body py-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="add_project" value="1" id="add-project"<?= $projectEnabled && $hasProjectTemplates ? ' checked' : '' ?><?= $hasProjectTemplates ? '' : ' disabled' ?>>
+                                    <label class="form-check-label fw-semibold" for="add-project">Aggiungi project alla repo da template</label>
+                                </div>
+                                <div class="mt-2" id="project-template-select-wrapper">
+                                    <label class="form-label mb-1" for="project-template-id">Project template</label>
+                                    <select name="project_template_id" id="project-template-id" class="form-select"<?= $hasProjectTemplates && $projectEnabled ? '' : ' disabled' ?>>
+                                        <option value="">— seleziona project template —</option>
+                                        <?php foreach ($initialProjectTemplates as $projectTemplate): ?>
+                                            <option value="<?= h((string)($projectTemplate['id'] ?? '')) ?>"<?= $selectedProjectTemplateId === (string)($projectTemplate['id'] ?? '') ? ' selected' : '' ?>><?= h((string)($projectTemplate['title'] ?? 'Project template')) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="form-text" id="project-template-help">
+                                    <?php if ($hasProjectTemplates): ?>
+                                        Verrà copiata una scheda Project separata per ogni repository generata.
+                                    <?php else: ?>
+                                        <span id="project-template-empty-message">Nessun project template disponibile.</span>
+                                        <a href="github_repo_templates.php#project-templates">Crea o gestisci un project template</a> e poi ricarica questa pagina.
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div class="col-md-6">
                         <label for="assignment-name" class="form-label">Nome assignment / Nome repository (auto {gruppo}-{template})</label>
@@ -922,6 +1054,8 @@ include __DIR__ . '/partials/app_header.php';
                         <input type="hidden" name="name" id="create-name" value="">
                         <input type="hidden" name="template_id" id="create-template-id" value="">
                         <input type="hidden" name="org" id="create-org" value="">
+                        <input type="hidden" name="add_project" id="create-add-project" value="0">
+                        <input type="hidden" name="project_template_id" id="create-project-template-id" value="">
                         <input type="hidden" name="visibility" id="create-visibility" value="private">
                         <input type="hidden" name="tipo_test" id="create-tipo-test" value="altro">
                         <input type="hidden" name="deadline" id="create-deadline" value="">
@@ -1238,6 +1372,97 @@ include __DIR__ . '/partials/app_header.php';
     renderGroups();
 })();
 
+// Catalogo Project template per organizzazione. Il flag resta preselezionato
+// solo quando il catalogo contiene almeno un template utilizzabile.
+(() => {
+    const orgSelect = document.getElementById('github-org');
+    const checkbox = document.getElementById('add-project');
+    const projectSelect = document.getElementById('project-template-id');
+    const help = document.getElementById('project-template-help');
+    if (!orgSelect || !checkbox || !projectSelect || !help) return;
+    const csrfToken = <?= AppCoreSecurityOutputEncoder::json($csrfToken) ?>;
+    const initialProjects = <?= AppCoreSecurityOutputEncoder::json($initialProjectTemplates) ?>;
+    const renderHelp = (message, includeLink = false, danger = false) => {
+        help.replaceChildren();
+        const text = document.createElement('span');
+        if (danger) text.className = 'text-danger';
+        text.textContent = message;
+        help.appendChild(text);
+        if (includeLink) {
+            help.appendChild(document.createTextNode(' '));
+            const link = document.createElement('a');
+            link.href = 'github_repo_templates.php#project-templates';
+            link.textContent = 'Crea o gestisci un project template';
+            help.appendChild(link);
+            help.appendChild(document.createTextNode(' e poi ricarica questa pagina.'));
+        }
+    };
+
+    const setProjects = (projects) => {
+        const previous = projectSelect.value;
+        const wasDisabled = checkbox.disabled;
+        projectSelect.replaceChildren();
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = '— seleziona project template —';
+        projectSelect.appendChild(empty);
+        (Array.isArray(projects) ? projects : []).forEach((project) => {
+            const option = document.createElement('option');
+            option.value = String(project.id || '');
+            option.textContent = String(project.title || 'Project template');
+            projectSelect.appendChild(option);
+        });
+        const hasProjects = projectSelect.options.length > 1;
+        checkbox.disabled = !hasProjects;
+        if (!hasProjects) {
+            checkbox.checked = false;
+            projectSelect.disabled = true;
+            renderHelp('Nessun project template disponibile.', true);
+            return;
+        }
+        const previousOption = [...projectSelect.options].find((option) => option.value === previous);
+        if (wasDisabled || !previousOption) checkbox.checked = true;
+        projectSelect.value = previousOption ? previous : projectSelect.options[1].value;
+        projectSelect.disabled = !checkbox.checked;
+        renderHelp('Verrà copiata una scheda Project separata per ogni repository generata.');
+    };
+    const sync = () => {
+        projectSelect.disabled = checkbox.disabled || !checkbox.checked;
+    };
+    const loadProjects = async (org) => {
+        if (!org) {
+            setProjects([]);
+            return;
+        }
+        renderHelp('Caricamento project template...');
+        projectSelect.disabled = true;
+        try {
+            const body = new FormData();
+            body.set('csrf_token', csrfToken);
+            body.set('org', org);
+            const response = await fetch('ajax_github_project_templates.php', {
+                method: 'POST', body, credentials: 'same-origin',
+                headers: {'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+            });
+            const raw = await response.text();
+            let payload;
+            try { payload = JSON.parse(raw); } catch (error) { throw new Error('Risposta non valida dal catalogo Project.'); }
+            if (!response.ok || !payload.ok) throw new Error(payload.error || 'Impossibile caricare i Project template.');
+            setProjects(payload.projects || []);
+        } catch (error) {
+            checkbox.checked = false;
+            checkbox.disabled = true;
+            projectSelect.disabled = true;
+            renderHelp(error instanceof Error ? error.message : 'Errore catalogo Project.', true, true);
+        }
+        sync();
+    };
+    checkbox.addEventListener('change', sync);
+    orgSelect.addEventListener('change', () => loadProjects(orgSelect.value));
+    setProjects(initialProjects);
+    if (orgSelect.value && initialProjects.length === 0) loadProjects(orgSelect.value);
+})();
+
 // Placeholder, anteprima concreta e vincoli tra modalità di assegnazione.
 (() => {
     const nameInput = document.getElementById('assignment-name');
@@ -1374,6 +1599,12 @@ include __DIR__ . '/partials/app_header.php';
             const target = document.getElementById(targetId);
             if (source && target) target.value = source.value || '';
         });
+        const projectFlag = document.getElementById('add-project');
+        const createProjectFlag = document.getElementById('create-add-project');
+        const projectSelect = document.getElementById('project-template-id');
+        const createProjectSelect = document.getElementById('create-project-template-id');
+        if (projectFlag && createProjectFlag) createProjectFlag.value = projectFlag.checked ? '1' : '0';
+        if (projectSelect && createProjectSelect) createProjectSelect.value = projectSelect.value || '';
     };
     const renderRoster = (students) => {
         rosterBody.replaceChildren();

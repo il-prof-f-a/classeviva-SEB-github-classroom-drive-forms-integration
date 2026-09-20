@@ -230,6 +230,32 @@ Il callback non è un parametro configurabile: l'applicazione lo deriva sempre d
 
 Client ID e Client Secret possono essere salvati per singolo utente dalla pagina **Integrazioni**. Non inserire mai client secret reali nei file tracciati da Git.
 
+### Project template per gli assignment
+
+La pagina **Template GitHub** mostra, oltre ai repository template, i ProjectV2
+template aperti visibili nelle organizzazioni GitHub autorizzate. Per usare un
+Project durante la creazione di un assignment il repository template e il
+Project devono appartenere alla stessa organizzazione. Il token OAuth deve
+includere lo scope `project`, oltre agli scope già necessari per repository e
+GitHub Classroom; dopo aver aggiunto lo scope è necessario riautorizzare GitHub
+dalla pagina **Integrazioni**.
+
+Il flag **Aggiungi project alla repo da template** è preselezionato quando è
+disponibile almeno un Project template, ma resta facoltativo. Se viene scelto,
+l'applicazione crea una copia separata del Project per ogni repository generata:
+una per ogni studente negli assignment individuali e una per ogni team negli
+assignment di gruppo. Il Project originale non viene spostato o modificato; le
+copie vengono collegate alle nuove repository e il docente che crea
+l'assignment riceve accesso amministrativo al Project. Le draft issue del
+template non vengono copiate.
+
+I metadati non sensibili delle copie (template usato, URL e Project associato a
+ogni repository) vengono salvati nel campo JSON del test; non è richiesta una
+migrazione del database e i vecchi test senza configurazione Project continuano
+a funzionare senza modifiche. Se una fase del batch fallisce, vengono rimossi
+solo i Project e le repository creati durante quel tentativo; il template
+originale e le risorse già esistenti non vengono toccati.
+
 ## Provider esterni, ClasseViva opzionale, AI ed email
 
 ClasseViva viene abilitata con `CLASSEVIVA_ENABLED=true` solo quando serve. L'integrazione usa API non ufficiali e non documentate, individuate mediante attività di reverse engineering; non è autorizzata, approvata o supportata da ClasseViva/Spaggiari e può smettere di funzionare senza preavviso. L'assenza del mapping o del token ClasseViva non blocca il lavoro locale sui gruppi didattici e sulle valutazioni; blocca soltanto le azioni esterne che richiedono una coppia ClasseViva valida.

@@ -401,7 +401,7 @@ function sortLink(string $field, string $label, string $currentField, string $cu
                                 <i class="bi bi-github"></i> Gestione Token GitHub
                             </a>
                             <a href="github_repo_templates.php" class="btn btn-outline-primary btn-sm">
-                                <i class="bi bi-code-square"></i> Repository Template GitHub
+                                <i class="bi bi-code-square"></i> Template GitHub
                             </a>
                         </div>
                     </div>

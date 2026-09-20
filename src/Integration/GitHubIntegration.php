@@ -2,12 +2,14 @@
 
 namespace App\Integration;
 
+use App\Core\GitHubProjectGatewayInterface;
+
 /**
  * GitHub Integration
  *
  * Gestisce l'autenticazione OAuth e le chiamate API a GitHub/GitHub Classroom
  */
-class GitHubIntegration
+class GitHubIntegration implements GitHubProjectGatewayInterface
 {
     private $clientId;
     private $clientSecret;
@@ -26,7 +28,7 @@ class GitHubIntegration
     /**
      * Genera URL per autorizzazione OAuth GitHub
      */
-    public function getAuthorizationUrl($state = null, $returnTo = null, $scopes = 'read:user read:org repo user:email admin:org')
+    public function getAuthorizationUrl($state = null, $returnTo = null, $scopes = 'read:user read:org repo user:email admin:org project')
     {
         if (!$state) {
             $state = bin2hex(random_bytes(16));
@@ -320,6 +322,148 @@ class GitHubIntegration
     }
 
     /**
+     * Elenca i ProjectV2 template aperti di un'organizzazione.
+     * @return list<array<string,mixed>>
+     */
+    public function listOrganizationProjectTemplates(string $org): array
+    {
+        $org = trim($org);
+        if ($org === '' || preg_match('/^[A-Za-z0-9_.-]{1,100}$/', $org) !== 1) {
+            throw new \InvalidArgumentException('Organizzazione GitHub non valida.');
+        }
+        $data = $this->graphqlRequest(
+            <<<'GRAPHQL'
+            query($login: String!) {
+              organization(login: $login) {
+                id
+                login
+                projectsV2(first: 100, orderBy: {field: NUMBER, direction: DESC}) {
+                  nodes { id number title url shortDescription closed template }
+                }
+              }
+            }
+            GRAPHQL,
+            ['login' => $org]
+        );
+        $organization = (array)($data['organization'] ?? []);
+        $organizationId = trim((string)($organization['id'] ?? ''));
+        $login = trim((string)($organization['login'] ?? $org));
+        $projects = [];
+        foreach ((array)($organization['projectsV2']['nodes'] ?? []) as $project) {
+            if (!is_array($project) || empty($project['template']) || !empty($project['closed'])) {
+                continue;
+            }
+            $projects[] = [
+                'id' => (string)($project['id'] ?? ''),
+                'number' => (int)($project['number'] ?? 0),
+                'title' => (string)($project['title'] ?? ''),
+                'url' => (string)($project['url'] ?? ''),
+                'short_description' => (string)($project['shortDescription'] ?? ''),
+                'organization' => $login,
+                'organization_id' => $organizationId,
+                'is_template' => true,
+                'closed' => false,
+            ];
+        }
+        return $projects;
+    }
+
+    public function getOrganizationNodeId(string $org): string
+    {
+        $data = $this->graphqlRequest(
+            'query($login: String!) { organization(login: $login) { id } }',
+            ['login' => trim($org)]
+        );
+        $id = trim((string)($data['organization']['id'] ?? ''));
+        if ($id === '') {
+            throw new \RuntimeException('Node ID organizzazione GitHub non disponibile.');
+        }
+        return $id;
+    }
+
+    public function getAuthenticatedUserNodeId(): string
+    {
+        $data = $this->graphqlRequest('query { viewer { id } }');
+        $id = trim((string)($data['viewer']['id'] ?? ''));
+        if ($id === '') {
+            throw new \RuntimeException('Node ID dell’utente GitHub non disponibile.');
+        }
+        return $id;
+    }
+
+    public function getRepositoryNodeId(string $owner, string $repo): string
+    {
+        $data = $this->graphqlRequest(
+            'query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id } }',
+            ['owner' => trim($owner), 'name' => trim($repo)]
+        );
+        $id = trim((string)($data['repository']['id'] ?? ''));
+        if ($id === '') {
+            throw new \RuntimeException('Node ID repository GitHub non disponibile.');
+        }
+        return $id;
+    }
+
+    /** @return array<string,mixed> */
+    public function copyProjectV2(string $projectId, string $ownerId, string $title, bool $includeDraftIssues = false): array
+    {
+        $data = $this->graphqlRequest(
+            'mutation($input: CopyProjectV2Input!) { copyProjectV2(input: $input) { projectV2 { id number title url } } }',
+            ['input' => [
+                'projectId' => trim($projectId),
+                'ownerId' => trim($ownerId),
+                'title' => trim($title),
+                'includeDraftIssues' => $includeDraftIssues,
+            ]]
+        );
+        return (array)($data['copyProjectV2']['projectV2'] ?? []);
+    }
+
+    /** @return array<string,mixed> */
+    public function linkProjectV2ToRepository(string $projectId, string $repositoryId): array
+    {
+        $data = $this->graphqlRequest(
+            'mutation($input: LinkProjectV2ToRepositoryInput!) { linkProjectV2ToRepository(input: $input) { repository { id name url } } }',
+            ['input' => ['projectId' => trim($projectId), 'repositoryId' => trim($repositoryId)]]
+        );
+        return (array)($data['linkProjectV2ToRepository']['repository'] ?? []);
+    }
+
+    public function updateProjectV2Collaborators(string $projectId, string $actorId, string $role = 'ADMIN'): void
+    {
+        $role = strtoupper(trim($role));
+        if (!in_array($role, ['READ', 'WRITE', 'ADMIN'], true)) {
+            throw new \InvalidArgumentException('Ruolo Project non valido.');
+        }
+        $this->graphqlRequest(
+            'mutation($input: UpdateProjectV2CollaboratorsInput!) { updateProjectV2Collaborators(input: $input) { collaborators(first: 1) { totalCount } } }',
+            ['input' => [
+                'projectId' => trim($projectId),
+                'collaborators' => [[
+                    'userId' => trim($actorId),
+                    'role' => $role,
+                ]],
+            ]]
+        );
+    }
+
+    public function unlinkProjectV2FromRepository(string $projectId, string $repositoryId): void
+    {
+        $this->graphqlRequest(
+            'mutation($input: UnlinkProjectV2FromRepositoryInput!) { unlinkProjectV2FromRepository(input: $input) { repository { id } } }',
+            ['input' => ['projectId' => trim($projectId), 'repositoryId' => trim($repositoryId)]]
+        );
+    }
+
+    public function deleteProjectV2(string $projectId): void
+    {
+        $this->graphqlRequest(
+            'mutation($input: DeleteProjectV2Input!) { deleteProjectV2(input: $input) { projectV2 { id } } }',
+            ['input' => ['projectId' => trim($projectId)]]
+        );
+    }
+
+    /**
      * Lista repository di un'organizzazione
      */
     public function listOrgRepositories($orgName, $type = 'all')
@@ -502,6 +646,70 @@ class GitHubIntegration
             }
         }
         return ['items' => $items, 'truncated' => $truncated, 'pages' => $pages];
+    }
+
+    /**
+     * Esegue una richiesta GraphQL autenticata a GitHub.
+     * @param array<string,mixed> $variables
+     * @return array<string,mixed>
+     */
+    public function graphqlRequest(string $query, array $variables = []): array
+    {
+        if (!$this->accessToken) {
+            throw new \Exception('Access token non impostato. Effettua prima l’autenticazione.');
+        }
+        $payload = json_encode(['query' => $query, 'variables' => $variables], JSON_THROW_ON_ERROR);
+        $headers = [
+            'Authorization: Bearer ' . $this->accessToken,
+            'Accept: application/vnd.github+json',
+            'Content-Type: application/json',
+            'X-GitHub-Api-Version: 2022-11-28',
+            'User-Agent: Sistema-UDA-PHP',
+        ];
+        $lastError = 'risposta non valida';
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            $ch = curl_init('https://api.github.com/graphql');
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST => true,
+                CURLOPT_POSTFIELDS => $payload,
+                CURLOPT_HTTPHEADER => $headers,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS => 3,
+                CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
+            ]);
+            $response = curl_exec($ch);
+            $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlError = curl_error($ch);
+            curl_close($ch);
+
+            if ($response === false) {
+                $lastError = $curlError !== '' ? $curlError : 'errore di rete';
+            } else {
+                $decoded = json_decode((string)$response, true);
+                if ($httpCode >= 200 && $httpCode < 300 && is_array($decoded)) {
+                    if (!empty($decoded['errors']) && is_array($decoded['errors'])) {
+                        $messages = array_map(
+                            static fn(mixed $error): string => is_array($error) ? (string)($error['message'] ?? 'errore GraphQL') : 'errore GraphQL',
+                            $decoded['errors']
+                        );
+                        throw new \Exception('GitHub GraphQL error: ' . implode('; ', $messages));
+                    }
+                    return (array)($decoded['data'] ?? []);
+                }
+                if (is_array($decoded)) {
+                    $lastError = (string)($decoded['message'] ?? ('HTTP ' . $httpCode));
+                } else {
+                    $lastError = 'HTTP ' . $httpCode;
+                }
+            }
+            if (in_array($httpCode, [403, 429, 0], true) && $attempt < 3) {
+                sleep($attempt);
+                continue;
+            }
+            break;
+        }
+        throw new \Exception('GitHub GraphQL error: ' . $lastError);
     }
 
     /**
