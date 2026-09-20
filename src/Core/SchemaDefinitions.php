@@ -342,6 +342,7 @@ class SchemaDefinitions
                     'id_assignment',
                     'student_repository_url',
                     'id_studente',
+                    'email_studente',
                     'acceptance_code',
                     'github_username',
                     'accepted_at',

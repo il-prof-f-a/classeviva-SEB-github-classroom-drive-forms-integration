@@ -21,6 +21,7 @@ return [
         'generate_kahoot_quiz.php',
         'generate_socrative_quiz.php',
         'github_assignment_create.php',
+        'github_assignment_edit.php',
         'github_assignment_review.php',
         'github_assignments.php',
         'github_classroom_mapping.php',

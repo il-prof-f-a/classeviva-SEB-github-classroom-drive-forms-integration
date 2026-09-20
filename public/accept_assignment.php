@@ -13,8 +13,9 @@
  *  4. "Accetta" -> aggiunge all'org + collaborator (token docente), registra, redirect.
  *  5. Se ha già accettato -> redirect diretto alla repo.
  *
- * Le email non sono persistite: vengono risolte just-in-time dai roster del gruppo
- * (Google Classroom primario, ClasseViva fallback) e confrontate con le email OAuth.
+ * Le email vengono risolte just-in-time dai roster del gruppo (Google Classroom
+ * primario, ClasseViva fallback); il docente può inoltre salvare un override
+ * esplicito sulla singola associazione dall'editor dell'assignment.
  */
 
 require_once '../bootstrap.php';
@@ -207,9 +208,15 @@ if ($github->isAuthenticated() && $error === null) {
         $resolved = ($groupId !== '' && $ownerId !== '') ? resolve_group_emails($db, $config, $groupId, $ownerId) : [];
 
         if ($code !== '') {
-            $expectedEmail = '';
-            foreach ($resolved as $s) {
-                if ((string)($s['id_studente'] ?? '') === $studentId) { $expectedEmail = strtolower(trim((string)($s['email'] ?? ''))); break; }
+            // L'editor docente può impostare un'email esplicita per la riga
+            // dell'assignment. Ha precedenza sul roster runtime: consente di
+            // correggere un'email istituzionale senza modificare l'identità
+            // persistente dello studente.
+            $expectedEmail = strtolower(trim((string)($link['email_studente'] ?? '')));
+            if ($expectedEmail === '') {
+                foreach ($resolved as $s) {
+                    if ((string)($s['id_studente'] ?? '') === $studentId) { $expectedEmail = strtolower(trim((string)($s['email'] ?? ''))); break; }
+                }
             }
             if ($expectedEmail === '') {
                 // Il codice personale identifica già una sola riga di
@@ -230,6 +237,23 @@ if ($github->isAuthenticated() && $error === null) {
             foreach ($resolved as $s) {
                 $e = strtolower(trim((string)($s['email'] ?? '')));
                 if ($e !== '' && in_array($e, $ghEmails, true)) { $matched = $s; break; }
+            }
+            // Anche il link generico deve riconoscere gli override email
+            // salvati dal docente, prima del fallback allo username già
+            // accettato.
+            if ($matched === null) {
+                foreach ($db->findWhere('GITHUB_ASSIGNMENT_STUDENT_LINKS', ['id_assignment' => $testId]) as $candidate) {
+                    if (!is_array($candidate)) continue;
+                    $overrideEmail = strtolower(trim((string)($candidate['email_studente'] ?? '')));
+                    if ($overrideEmail !== '' && in_array($overrideEmail, $ghEmails, true)) {
+                        $matched = [
+                            'id_studente' => (string)($candidate['id_studente'] ?? ''),
+                            'email' => $overrideEmail,
+                        ];
+                        $link = $candidate;
+                        break;
+                    }
+                }
             }
             // Se lo studente ha già accettato l'assignment, il suo username è
             // registrato sul link. Questo consente di usare il link generico

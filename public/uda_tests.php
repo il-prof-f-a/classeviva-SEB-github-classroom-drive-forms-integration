@@ -713,14 +713,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                                 <i class="bi bi-send"></i>
                                             </a>
                                         <?php endif; ?>
-                                        <!-- Pulsante Modifica -->
-                                        <button type="button"
-                                                class="btn btn-sm btn-outline-primary mb-1"
-                                                data-bs-toggle="modal"
-                                                data-bs-target="#editTestModal"
-                                                onclick="loadTestForEdit(<?= htmlspecialchars(json_encode($test, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES) ?>)">
-                                            <i class="bi bi-pencil"></i>
-                                        </button>
+                                        <!-- Pulsante Modifica: gli assignment GitHub hanno un editor completo dedicato. -->
+                                        <?php if ($piattaforma === 'github'): ?>
+                                            <a href="github_assignment_edit.php?test_id=<?= urlencode((string)$test['id_test']) ?>&id_uda=<?= urlencode((string)($test['id_uda'] ?? ($uda->id_uda ?? ''))) ?>#test-data"
+                                               class="btn btn-sm btn-outline-primary mb-1"
+                                               title="Modifica assignment GitHub">
+                                                <i class="bi bi-pencil"></i>
+                                            </a>
+                                        <?php else: ?>
+                                            <button type="button"
+                                                    class="btn btn-sm btn-outline-primary mb-1"
+                                                    data-bs-toggle="modal"
+                                                    data-bs-target="#editTestModal"
+                                                    onclick="loadTestForEdit(<?= htmlspecialchars(json_encode($test, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES) ?>)">
+                                                <i class="bi bi-pencil"></i>
+                                            </button>
+                                        <?php endif; ?>
                                         <!-- Pulsante Elimina -->
                                         <form method="POST" class="d-inline" onsubmit="return confirm('Sicuro di voler eliminare questo test?');">
                                             <input type="hidden" name="action" value="delete_test">
