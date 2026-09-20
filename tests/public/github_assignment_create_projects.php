@@ -26,6 +26,10 @@ if (str_contains($source, 'AppCoreSecurityOutputEncoder::json')) {
 if (!str_contains($source, '\\App\\Core\\Security\\OutputEncoder::json($csrfToken)')) {
     $failures[] = 'token CSRF del catalogo Project non codificato con OutputEncoder';
 }
+if (!str_contains($source, "const keepPrevious = previous !== ''")
+    || !str_contains($source, 'projectSelect.value = keepPrevious ? previous : projectSelect.options[1].value')) {
+    $failures[] = 'il primo Project disponibile non viene preselezionato quando il valore precedente è vuoto';
+}
 
 if ($failures !== []) {
     foreach ($failures as $failure) {

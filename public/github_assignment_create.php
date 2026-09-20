@@ -1429,8 +1429,9 @@ include __DIR__ . '/partials/app_header.php';
             return;
         }
         const previousOption = [...projectSelect.options].find((option) => option.value === previous);
-        if (wasDisabled || !previousOption) checkbox.checked = true;
-        projectSelect.value = previousOption ? previous : projectSelect.options[1].value;
+        const keepPrevious = previous !== '' && Boolean(previousOption);
+        if (wasDisabled || !keepPrevious) checkbox.checked = true;
+        projectSelect.value = keepPrevious ? previous : projectSelect.options[1].value;
         projectSelect.disabled = !checkbox.checked;
         renderHelp('Verrà copiata una scheda Project separata per ogni repository generata.');
     };
