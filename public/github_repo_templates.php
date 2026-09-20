@@ -248,9 +248,10 @@ $linguaggiDisponibili = [
                         </div>
                         <?php foreach ($githubOrganizations as $organization): ?>
                             <?php $orgLogin = trim((string)($organization['login'] ?? '')); if ($orgLogin === '') continue; ?>
-                            <a href="https://github.com/orgs/<?= rawurlencode($orgLogin) ?>/projects/new" target="_blank" rel="noopener" class="btn btn-outline-info btn-sm me-1 mb-1">
-                                <i class="bi bi-plus-circle"></i> Crea project template in <?= htmlspecialchars($orgLogin, ENT_QUOTES, 'UTF-8') ?>
+                            <a href="https://github.com/orgs/<?= rawurlencode($orgLogin) ?>/projects/" target="_blank" rel="noopener" class="btn btn-outline-info btn-sm me-1 mb-1">
+                                <i class="bi bi-plus-circle"></i> Crea un nuovo project in <?= htmlspecialchars($orgLogin, ENT_QUOTES, 'UTF-8') ?>
                             </a>
+                            <span class="small text-muted">Crea un nuovo project, impostalo come template, poi torna qui e aggiorna la pagina.</span>
                         <?php endforeach; ?>
                     <?php else: ?>
                         <div class="table-responsive">
@@ -272,9 +273,10 @@ $linguaggiDisponibili = [
                             </table>
                         </div>
                         <?php foreach (array_unique(array_map(static fn(array $project): string => (string)($project['organization'] ?? ''), $projectTemplates)) as $orgLogin): if ($orgLogin === '') continue; ?>
-                            <a href="https://github.com/orgs/<?= rawurlencode($orgLogin) ?>/projects/new" target="_blank" rel="noopener" class="btn btn-outline-info btn-sm me-1">
-                                <i class="bi bi-plus-circle"></i> Gestisci project template in <?= htmlspecialchars($orgLogin, ENT_QUOTES, 'UTF-8') ?>
+                            <a href="https://github.com/orgs/<?= rawurlencode($orgLogin) ?>/projects/" target="_blank" rel="noopener" class="btn btn-outline-info btn-sm me-1">
+                                <i class="bi bi-plus-circle"></i> Gestisci project in <?= htmlspecialchars($orgLogin, ENT_QUOTES, 'UTF-8') ?>
                             </a>
+                            <span class="small text-muted">Per aggiungerne uno: crea un nuovo project, impostalo come template, poi torna qui e aggiorna la pagina.</span>
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </div>

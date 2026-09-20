@@ -11,6 +11,8 @@ foreach ([
     'Apri su GitHub' => 'manca il link di apertura del Project',
     'Nessun project template disponibile' => 'manca lo stato vuoto Project',
     'github.com/orgs/' => 'manca il link alla creazione/gestione Project dell’organizzazione',
+    '/projects/' => 'il link Project deve aprire l’elenco dell’organizzazione',
+    'impostalo come template' => 'manca l’istruzione per impostare il Project come template',
     'GITHUB_REPO_TEMPLATES' => 'la pagina non deve perdere il catalogo repository template',
 ] as $needle => $message) {
     if (!str_contains($source, $needle)) {
