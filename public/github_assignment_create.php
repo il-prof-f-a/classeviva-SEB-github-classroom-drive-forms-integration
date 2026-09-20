@@ -1388,8 +1388,8 @@ include __DIR__ . '/partials/app_header.php';
     const projectSelect = document.getElementById('project-template-id');
     const help = document.getElementById('project-template-help');
     if (!orgSelect || !checkbox || !projectSelect || !help) return;
-    const csrfToken = <?= AppCoreSecurityOutputEncoder::json($csrfToken) ?>;
-    const initialProjects = <?= AppCoreSecurityOutputEncoder::json($initialProjectTemplates) ?>;
+    const csrfToken = <?= \App\Core\Security\OutputEncoder::json($csrfToken) ?>;
+    const initialProjects = <?= \App\Core\Security\OutputEncoder::json($initialProjectTemplates) ?>;
     const renderHelp = (message, includeLink = false, danger = false) => {
         help.replaceChildren();
         const text = document.createElement('span');

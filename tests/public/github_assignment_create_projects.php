@@ -20,6 +20,13 @@ foreach ([
     }
 }
 
+if (str_contains($source, 'AppCoreSecurityOutputEncoder::json')) {
+    $failures[] = 'namespace OutputEncoder corrotto nel JavaScript inline';
+}
+if (!str_contains($source, '\\App\\Core\\Security\\OutputEncoder::json($csrfToken)')) {
+    $failures[] = 'token CSRF del catalogo Project non codificato con OutputEncoder';
+}
+
 if ($failures !== []) {
     foreach ($failures as $failure) {
         fwrite(STDERR, "FAIL: {$failure}\n");
