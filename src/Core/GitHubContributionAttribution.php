@@ -29,6 +29,34 @@ final class GitHubContributionAttribution
      */
     public static function commitOwner(array $commit, array $identities): string
     {
+        $directOwner = self::directCommitOwner($commit, $identities);
+        if ($directOwner === 'student') {
+            return 'student';
+        }
+
+        // GitHub stores co-authors in the commit message instead of exposing
+        // them as a second API author. A matching co-author therefore owns the
+        // commit for this student's review too, even when the direct author is
+        // another student.
+        foreach (self::coauthorIdentities($commit) as $coauthor) {
+            $login = self::normalise($coauthor['login'] ?? null);
+            if ($login !== '' && self::matches($login, $identities['logins'] ?? [])) {
+                return 'student';
+            }
+            $email = self::normaliseEmail($coauthor['email'] ?? null);
+            if ($email !== '' && self::matches($email, $identities['emails'] ?? [])) {
+                return 'student';
+            }
+        }
+
+        return $directOwner;
+    }
+
+    /**
+     * @return 'student'|'other'|'unknown'
+     */
+    private static function directCommitOwner(array $commit, array $identities): string
+    {
         $authorLogin = self::normalise($commit['author_login'] ?? null);
         if ($authorLogin !== '') {
             return self::matches($authorLogin, $identities['logins'] ?? []) ? 'student' : 'other';
@@ -50,6 +78,56 @@ final class GitHubContributionAttribution
         }
 
         return 'unknown';
+    }
+
+    /**
+     * Extracts Git's conventional ``Co-authored-by: Name <email>`` trailers.
+     * The optional array form also supports normalized payloads received from
+     * the metadata endpoint, while keeping the parser deterministic.
+     *
+     * @return array<int,array{name:string,email:string,login:string}>
+     */
+    public static function coauthorIdentities(array $commit): array
+    {
+        $result = [];
+        $seen = [];
+        $add = static function ($name, $email, $login = '') use (&$result, &$seen): void {
+            $name = trim((string)$name);
+            $email = strtolower(trim((string)$email));
+            $login = strtolower(trim((string)$login));
+            if ($email === '' && $login === '' && $name === '') {
+                return;
+            }
+            $key = $email !== '' ? 'email:' . $email : 'name:' . strtolower($name);
+            if (isset($seen[$key])) {
+                return;
+            }
+            $seen[$key] = true;
+            $result[] = ['name' => $name, 'email' => $email, 'login' => $login];
+        };
+
+        foreach ((array)($commit['coauthors'] ?? []) as $coauthor) {
+            if (is_array($coauthor)) {
+                $add($coauthor['name'] ?? '', $coauthor['email'] ?? '', $coauthor['login'] ?? '');
+            }
+        }
+
+        $message = (string)($commit['message'] ?? '');
+        if ($message !== '' && preg_match_all(
+            '/^\s*Co-authored-by:\s*(.*?)\s*<([^>\s]+)>\s*$/im',
+            $message,
+            $matches,
+            PREG_SET_ORDER
+        )) {
+            foreach ($matches as $match) {
+                $name = trim((string)($match[1] ?? ''));
+                $email = trim((string)($match[2] ?? ''));
+                $login = preg_match('/^[A-Za-z0-9_.-]{1,100}$/', $name) === 1 ? $name : '';
+                $add($name, $email, $login);
+            }
+        }
+
+        return $result;
     }
 
     /**

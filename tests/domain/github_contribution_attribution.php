@@ -49,6 +49,23 @@ $require($result['commits'][0]['student_owned'] === true, 'commit dello studente
 $require($result['commits'][1]['student_owned'] === false, 'commit di altro autore classificato come studente');
 $require($result['commits'][2]['attribution_state'] === 'unknown', 'autore assente non marcato unknown');
 
+$coauthored = [
+    'sha' => 'eeeeeeee',
+    'author_login' => 'other',
+    'author_email' => 'email@email.it',
+    'committer_login' => 'other',
+    'committer_email' => 'email@email.it',
+    'message' => "Implementazione condivisa\n\nCo-authored-by: Student Name <email@email.it>",
+    'additions' => 5,
+];
+$require(
+    GitHubContributionAttribution::commitOwner($coauthored, $identities) === 'student',
+    'un commit co-autore dello studente deve essere attribuito anche allo studente'
+);
+$coauthoredResult = GitHubContributionAttribution::attributeCommits([$coauthored], $identities, $globalLoc);
+$require($coauthoredResult['commits'][0]['student_owned'] === true, 'commit co-autore non colorato come contributo dello studente');
+$require($coauthoredResult['student_additions'] === 5, 'LOC del commit co-autore non conteggiate per lo studente');
+
 $partial = GitHubContributionAttribution::attributeCommits(
     [['sha' => 'dddddddd', 'author_login' => 'student', 'additions' => 2]],
     $identities,

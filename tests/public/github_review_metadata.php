@@ -70,6 +70,17 @@ $require(str_contains($review, "action: 'repo_contributions'"), 'client contribu
 $require(str_contains($review, 'student_additions'), 'metriche studente assenti');
 $require(str_contains($review, 'githubMetadataCache'), 'cache globale repository assente');
 $require(str_contains($review, 'compareCommits'), 'origine branch non analizzata');
+$require(str_contains($review, 'github-issue-toggle'), 'titolo issue non espandibile');
+$require(str_contains($review, 'github-issue-details'), 'dettagli issue collassabili assenti');
+$require(str_contains($review, 'github-meta-toggle'), 'titolo commit non espandibile');
+$require(str_contains($review, 'github-meta-details'), 'dettagli commit collassabili assenti');
+$require(str_contains($review, "const expandedClass = studentOwned ? ' show' : '';"), 'stato iniziale commit non legato all\'attribuzione');
+$require(str_contains($review, "const issueExpandedClass = issueOwned ? ' show' : '';"), 'stato iniziale issue non legato all\'attribuzione');
+$require(str_contains($review, 'github-worktree-graph'), 'contenitore grafo worktree assente');
+$require(str_contains($review, 'renderWorktreeGraph'), 'renderer grafo worktree assente');
+$require(str_contains($review, 'github-graph-node'), 'nodo grafo worktree assente');
+$require(str_contains($review, "'parents'"), 'parent commit non incluso nei metadati');
+$require(str_contains($review, "'head_sha'"), 'head branch non incluso nei metadati');
 
 // Il JSON incorporato deve passare dall'encoder centrale, non da json_encode
 // grezzo nel markup della pagina.

@@ -561,6 +561,10 @@ if ($postAction === 'repo_metadata') {
             $commitPayload[] = [
                 'sha' => $sha,
                 'short_sha' => substr($sha, 0, 7),
+                'parents' => array_values(array_filter(array_map(
+                    static fn ($parent): string => strtolower(trim((string)(is_array($parent) ? ($parent['sha'] ?? '') : $parent))),
+                    is_array($commit['parents'] ?? null) ? $commit['parents'] : []
+                ), static fn (string $parentSha): bool => preg_match('~^[0-9a-f]{7,64}$~', $parentSha) === 1)),
                 'title' => $title,
                 'body' => $body,
                 'date' => (string)($commit['commit']['author']['date'] ?? ''),
@@ -568,6 +572,8 @@ if ($postAction === 'repo_metadata') {
                 'author_email' => trim((string)($commit['commit']['author']['email'] ?? '')) ?: null,
                 'committer_login' => trim((string)($commit['committer']['login'] ?? '')) ?: null,
                 'committer_email' => trim((string)($commit['commit']['committer']['email'] ?? '')) ?: null,
+                'message' => $message,
+                'coauthors' => GitHubContributionAttribution::coauthorIdentities(['message' => $message]),
                 'url' => GitHubReviewMetadata::commitUrl($owner, $repo, $sha),
                 'issue_refs' => GitHubReviewMetadata::extractIssueReferences($message, $owner, $repo),
                 'branch_origin' => $origin,
@@ -603,6 +609,7 @@ if ($postAction === 'repo_metadata') {
                 }
                 $branchPayload = [
                     'name' => $branchName,
+                    'head_sha' => is_array($branchItem) ? strtolower(trim((string)($branchItem['commit']['sha'] ?? ''))) : '',
                     'origin_source' => $branchName !== '' && $branchName === $defaultBranch ? 'default_branch' : 'unknown',
                     'first_unique_commit_sha' => null,
                     'first_unique_commit_author_login' => null,
@@ -741,10 +748,16 @@ if ($postAction === 'repo_contributions') {
             }
             $normalised = [
                 'sha' => $sha,
+                'parents' => is_array($commitRow['parents'] ?? null) ? array_values(array_filter(array_map(
+                    static fn ($parent): string => strtolower(trim((string)$parent)),
+                    $commitRow['parents']
+                ), static fn (string $parentSha): bool => preg_match('~^[0-9a-f]{7,64}$~', $parentSha) === 1)) : [],
                 'author_login' => trim((string)($commitRow['author_login'] ?? '')) ?: null,
                 'author_email' => trim((string)($commitRow['author_email'] ?? '')) ?: null,
                 'committer_login' => trim((string)($commitRow['committer_login'] ?? '')) ?: null,
                 'committer_email' => trim((string)($commitRow['committer_email'] ?? '')) ?: null,
+                'message' => (string)($commitRow['message'] ?? ''),
+                'coauthors' => is_array($commitRow['coauthors'] ?? null) ? $commitRow['coauthors'] : [],
                 'additions' => 0,
             ];
             $candidateOwner = GitHubContributionAttribution::commitOwner($normalised, $identities);
@@ -755,6 +768,12 @@ if ($postAction === 'repo_contributions') {
                     $normalised['author_email'] = trim((string)($detail['commit']['author']['email'] ?? '')) ?: null;
                     $normalised['committer_login'] = trim((string)($detail['committer']['login'] ?? '')) ?: null;
                     $normalised['committer_email'] = trim((string)($detail['commit']['committer']['email'] ?? '')) ?: null;
+                    $normalised['message'] = (string)($detail['commit']['message'] ?? $normalised['message']);
+                    $normalised['coauthors'] = GitHubContributionAttribution::coauthorIdentities(['message' => $normalised['message']]);
+                    $normalised['parents'] = is_array($detail['parents'] ?? null) ? array_values(array_filter(array_map(
+                        static fn ($parent): string => strtolower(trim((string)(is_array($parent) ? ($parent['sha'] ?? '') : $parent))),
+                        $detail['parents']
+                    ), static fn (string $parentSha): bool => preg_match('~^[0-9a-f]{7,64}$~', $parentSha) === 1)) : $normalised['parents'];
                     $normalised['additions'] = max(0, (int)($detail['stats']['additions'] ?? 0));
                 } catch (Throwable $commitError) {
                     $partial = true;
@@ -1838,6 +1857,121 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            color: #212529;
 
 	        }
+	        .github-meta-toggle,
+	        .github-issue-toggle {
+	            color: inherit;
+	            text-decoration: none;
+	        }
+        .github-meta-toggle:hover,
+        .github-issue-toggle:hover {
+            color: inherit;
+            text-decoration: underline;
+        }
+
+        /* Worktree inline: una lettura compatta del DAG senza dipendenze
+           esterne. I colori seguono quelli già usati per branch/tag/issue e
+           distinguono i commit dello studente da quelli altrui. */
+        .github-worktree-graph {
+            background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+            border: 1px solid #d8dee4;
+            border-radius: .5rem;
+            padding: .55rem .65rem;
+            box-shadow: 0 3px 10px rgba(33, 37, 41, .1);
+            max-height: 26rem;
+            overflow: auto;
+        }
+        .github-worktree-graph .github-graph-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: .5rem;
+            margin-bottom: .45rem;
+            font-size: .78rem;
+            color: #495057;
+        }
+        .github-graph-grid {
+            display: grid;
+            gap: .25rem;
+        }
+        .github-graph-row {
+            display: grid;
+            grid-template-columns: 1.35rem minmax(0, 1fr);
+            align-items: stretch;
+            min-height: 2rem;
+        }
+        .github-graph-lane {
+            position: relative;
+            display: flex;
+            justify-content: center;
+        }
+        .github-graph-lane::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: #adb5bd;
+        }
+        .github-graph-row:first-child .github-graph-lane::before { top: 50%; }
+        .github-graph-row:last-child .github-graph-lane::before { bottom: 50%; }
+        .github-graph-node {
+            position: relative;
+            z-index: 1;
+            width: .72rem;
+            height: .72rem;
+            margin-top: .6rem;
+            border-radius: 50%;
+            border: 2px solid #fff;
+            box-shadow: 0 0 0 1px rgba(33, 37, 41, .22), 0 2px 4px rgba(33, 37, 41, .2);
+        }
+        .github-graph-node-student { background: #212529; }
+        .github-graph-node-other { background: #adb5bd; }
+        .github-graph-node-unknown { background: #6c757d; }
+        .github-graph-commit {
+            min-width: 0;
+            padding: .25rem .4rem;
+            border-left: 3px solid #adb5bd;
+            border-radius: .25rem;
+            background: rgba(255, 255, 255, .85);
+        }
+        .github-graph-commit-student { border-left-color: #212529; }
+        .github-graph-commit-other { color: #6c757d; background: #f1f3f5; }
+        .github-graph-commit-title {
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: .74rem;
+            font-weight: 600;
+        }
+        .github-graph-commit-meta {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: .2rem .35rem;
+            margin-top: .15rem;
+            font-size: .67rem;
+        }
+        .github-graph-parent {
+            color: #6c757d;
+            font-size: .64rem;
+        }
+        .github-graph-branch,
+        .github-graph-tag,
+        .github-graph-issue {
+            display: inline-flex;
+            align-items: center;
+            gap: .15rem;
+            padding: .08rem .3rem;
+            border-radius: 999px;
+            text-decoration: none;
+            font-size: .64rem;
+            line-height: 1.2;
+        }
+        .github-graph-branch { color: #216e2b; background: #d9f0dc; border: 1px solid #8fc997; }
+        .github-graph-tag { color: #075985; background: #dff3ff; border: 1px solid #9bd7f5; }
+        .github-graph-issue { color: #a45100; background: #fff0d9; border: 1px solid #f0c27b; }
+        .github-graph-legend { white-space: nowrap; }
 
 	        table.github-grades-table tr.rubric-row-active {
 	            background-color: #fff3cd !important;
@@ -2084,6 +2218,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                                     data-last-commit="<?= htmlspecialchars((string)($lastCommit ?? '')) ?>">
                                                 <i class="bi bi-clipboard-check"></i>
                                             </button>
+                                            <?php if ($repoFullRow): ?>
+                                                <div class="collapse github-worktree-graph mt-2" id="worktree-graph-<?= $idx ?>"
+                                                     data-repo="<?= htmlspecialchars($repoFullRow) ?>"
+                                                     data-student-id="<?= htmlspecialchars((string)$studentId) ?>"
+                                                     data-loaded="0"
+                                                     aria-label="Grafico branch, tag e commit della repository">
+                                                    <div class="text-muted small"><i class="bi bi-diagram-3"></i> Il grafico del worktree viene caricato insieme ai dettagli.</div>
+                                                </div>
+                                            <?php endif; ?>
                                         </div>
 	                                    <?php else: ?>
 	                                        <em class="text-muted d-block mt-2">Associa studente</em>
@@ -2134,7 +2277,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                                      data-loaded="0">
                                                     <div class="text-muted"><i class="bi bi-hourglass-split"></i> Metadati GitHub non ancora caricati.</div>
                                                 </div>
-                                                <ul class="list-group list-group-flush small github-commits-list">
+                                                <ul class="list-group list-group-flush small github-commits-list d-none" data-rendered="0">
                                                     <?php foreach ($commitsList as $c): ?>
                                                         <?php
                                                         $msg = (string)($c['commit']['message'] ?? '');
@@ -2322,6 +2465,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             return escapeHtml(date.toLocaleString('it-IT'));
         }
 
+        function renderWorktreeGraph(container, data, repoFull) {
+            if (!container || !data) return;
+            const commits = Array.isArray(data.commits) ? data.commits : [];
+            const branches = Array.isArray(data.branches) ? data.branches : [];
+            const tagMap = data.tags && typeof data.tags === 'object' ? data.tags : {};
+            const branchMap = new Map();
+            branches.forEach(function (branch) {
+                const name = typeof branch === 'string' ? branch : String(branch?.name || '');
+                const headSha = typeof branch === 'string' ? '' : String(branch?.head_sha || '').toLowerCase();
+                if (!name || !headSha) return;
+                if (!branchMap.has(headSha)) branchMap.set(headSha, []);
+                branchMap.get(headSha).push({name: name, owned: branch?.student_owned === true || branch?.student_owned === 1 || branch?.student_owned === '1'});
+            });
+
+            const ordered = commits.slice().reverse();
+            const rows = ordered.map(function (commit) {
+                const sha = String(commit?.sha || '').toLowerCase();
+                const shortSha = escapeHtml(commit?.short_sha || sha.slice(0, 7));
+                const studentOwned = commit?.student_owned === true || commit?.student_owned === 1 || commit?.student_owned === '1';
+                const state = String(commit?.attribution_state || 'unknown');
+                const nodeClass = studentOwned ? 'github-graph-node-student' : (state === 'other' ? 'github-graph-node-other' : 'github-graph-node-unknown');
+                const commitClass = studentOwned ? 'github-graph-commit-student' : 'github-graph-commit-other';
+                const commitTitle = escapeHtml(commit?.title || '(messaggio vuoto)');
+                const commitLink = commit?.url ? safeGithubAnchor(commit.url, shortSha, 'text-decoration-none') : shortSha;
+                const parentList = Array.isArray(commit?.parents) ? commit.parents : [];
+                const parentHtml = parentList.length
+                    ? '<span class="github-graph-parent"><i class="bi bi-arrow-return-right"></i> ' + parentList.slice(0, 3).map(function (parent) { return escapeHtml(String(parent).slice(0, 7)); }).join(' · ') + (parentList.length > 3 ? ' …' : '') + '</span>'
+                    : '<span class="github-graph-parent"><i class="bi bi-circle"></i> radice</span>';
+                const branchHtml = (branchMap.get(sha) || []).map(function (branch) {
+                    const href = 'https://github.com/' + repoFull + '/tree/' + encodeURIComponent(branch.name);
+                    return safeGithubAnchor(href, '<i class="bi bi-diagram-3"></i> ' + escapeHtml(branch.name), 'github-graph-branch');
+                }).join('');
+                const tags = Array.isArray(commit?.tags) ? commit.tags : (Array.isArray(tagMap[sha]) ? tagMap[sha] : []);
+                const tagHtml = tags.map(function (tag) {
+                    const href = 'https://github.com/' + repoFull + '/releases/tag/' + encodeURIComponent(String(tag));
+                    return safeGithubAnchor(href, '<i class="bi bi-tag"></i> ' + escapeHtml(tag), 'github-graph-tag');
+                }).join('');
+                const issueHtml = (Array.isArray(commit?.issue_refs) ? commit.issue_refs : []).map(function (ref) {
+                    return safeGithubAnchor(ref.url, '<i class="bi bi-exclamation-circle"></i> ' + escapeHtml(ref.label || ('#' + (ref.number || ''))), 'github-graph-issue');
+                }).join('');
+                return '<div class="github-graph-row" data-sha="' + escapeHtml(sha) + '">' +
+                    '<div class="github-graph-lane"><span class="github-graph-node ' + nodeClass + '" title="' + (studentOwned ? 'Commit dello studente' : 'Commit di altro autore') + '"></span></div>' +
+                    '<div class="github-graph-commit ' + commitClass + '">' +
+                    '<span class="github-graph-commit-title" title="' + commitTitle + '">' + commitTitle + '</span>' +
+                    '<div class="github-graph-commit-meta"><span>' + commitLink + '</span> ' + formatGithubDate(commit?.date) + ' ' + parentHtml + branchHtml + tagHtml + issueHtml + '</div>' +
+                    '</div></div>';
+            }).join('');
+            const legend = '<div class="github-graph-title"><strong><i class="bi bi-diagram-3"></i> Worktree Git</strong>' +
+                '<span class="github-graph-legend"><span class="github-graph-branch">branch</span> <span class="github-graph-tag">tag</span> <span class="github-graph-issue">issue</span></span></div>';
+            const note = data.truncated ? '<div class="small text-warning mt-1">Visualizzazione parziale: la cronologia GitHub è stata limitata.</div>' : '';
+            container.innerHTML = legend + (rows ? '<div class="github-graph-grid">' + rows + '</div>' : '<div class="small text-muted">Nessun commit disponibile per il grafico.</div>') + note;
+            container.dataset.loaded = '1';
+        }
+
         function renderIssueReferences(refs) {
             if (!Array.isArray(refs) || !refs.length) return '';
             return '<span class="github-issue-references ms-2">' + refs.map(function (ref) {
@@ -2333,11 +2530,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         function renderCommitMetadataItem(commit, repoFull) {
             const sha = String(commit?.sha || '');
             const itemId = 'github-meta-commit-' + (++githubMetadataCounter) + '-' + sha.slice(0, 12);
+            const summaryId = itemId + '-summary';
             const title = escapeHtml(commit?.title || '(messaggio vuoto)');
             const body = String(commit?.body || '').trim();
             const attributionState = String(commit?.attribution_state || 'unknown');
             const studentOwned = commit?.student_owned === true || commit?.student_owned === 1 || commit?.student_owned === '1';
             const attributionClass = studentOwned ? 'commit-student' : 'commit-other';
+            const expandedClass = studentOwned ? ' show' : '';
+            const expandedValue = studentOwned ? 'true' : 'false';
             const tags = Array.isArray(commit?.tags) ? commit.tags : [];
             const tagHtml = tags.map(function (tag) {
                 return '<span class="badge github-tag-badge me-1"><i class="bi bi-tag"></i> ' + escapeHtml(tag) + '</span>';
@@ -2357,12 +2557,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 '<div class="border rounded p-2 bg-light commit-details" data-loaded="0"><div class="text-muted">Clicca “Dettagli” per caricare stats/files.</div></div>' +
                 '</div>' : '';
             return '<li class="list-group-item px-0 ' + attributionClass + '" data-student-owned="' + (studentOwned ? '1' : '0') + '" data-attribution-state="' + escapeHtml(attributionState) + '">' +
-                '<div class="fw-bold">' + title + renderIssueReferences(commit?.issue_refs) + '</div>' +
+                '<button type="button" class="btn btn-link p-0 text-start fw-bold github-meta-toggle"' +
+                ' data-bs-toggle="collapse" data-bs-target="#' + escapeHtml(summaryId) + '"' +
+                ' aria-controls="' + escapeHtml(summaryId) + '" aria-expanded="' + expandedValue + '">' +
+                '<i class="bi bi-chevron-down me-1"></i>' + title + '</button>' +
+                '<div class="collapse github-meta-details' + expandedClass + ' mt-2" id="' + escapeHtml(summaryId) + '">' +
                 (body ? '<div class="commit-message-body">' + escapeHtml(body) + renderIssueReferences(commit?.issue_refs) + '</div>' : '') +
                 '<div class="text-muted">' + escapeHtml(commit?.short_sha || sha.slice(0, 7)) + ' • ' + formatGithubDate(commit?.date) +
                 ' <span class="ms-2 github-branch-reference"><i class="bi bi-diagram-3"></i> ' + escapeHtml(branchLabel) + '</span> ' + tagHtml +
                 (commit?.url ? safeGithubAnchor(commit.url, 'Apri', 'ms-2') : '') + detailsButton +
-                '</div>' + details + '</li>';
+                '</div>' + details + '</div></li>';
         }
 
         function renderRepoMetadata(container, data, repoFull) {
@@ -2396,8 +2600,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                     const issueState = String(issue?.attribution_state || 'unknown');
                     const issueOwned = issue?.student_owned === true || issue?.student_owned === 1 || issue?.student_owned === '1';
                     const issueClass = issueOwned ? '' : ' github-attribution-' + (issueState === 'other' ? 'other' : 'unknown');
+                    const issueDetailsId = 'github-meta-issue-' + (++githubMetadataCounter) + '-' + String(issue.number || 'unknown');
+                    const issueExpandedClass = issueOwned ? ' show' : '';
+                    const issueExpandedValue = issueOwned ? 'true' : 'false';
                     html += '<div class="list-group-item px-0 py-2' + issueClass + '" data-student-owned="' + (issueOwned ? '1' : '0') + '" data-attribution-state="' + escapeHtml(issueState) + '">' +
-                        safeGithubAnchor(issue.url, '<i class="bi bi-exclamation-circle"></i> #' + escapeHtml(issue.number) + ' ' + escapeHtml(issue.title || '(senza titolo)'), 'github-issue-link fw-semibold') +
+                        '<button type="button" class="btn btn-link p-0 text-start fw-semibold github-issue-toggle"' +
+                        ' data-bs-toggle="collapse" data-bs-target="#' + escapeHtml(issueDetailsId) + '"' +
+                        ' aria-controls="' + escapeHtml(issueDetailsId) + '" aria-expanded="' + issueExpandedValue + '">' +
+                        '<i class="bi bi-chevron-down me-1"></i><i class="bi bi-exclamation-circle"></i> #' + escapeHtml(issue.number) + ' ' + escapeHtml(issue.title || '(senza titolo)') + '</button>' +
+                        '<div class="collapse github-issue-details' + issueExpandedClass + ' mt-1" id="' + escapeHtml(issueDetailsId) + '">' +
+                        safeGithubAnchor(issue.url, '<i class="bi bi-box-arrow-up-right"></i> Apri issue su GitHub', 'github-issue-link small') +
                         ' <span class="badge ' + stateClass + ' ms-1">' + escapeHtml(issue.state || 'open') + '</span>' +
                         '<div class="small text-muted">Aperta: ' + formatGithubDate(issue.created_at) +
                         ' · Chiusa: ' + formatGithubDate(issue.closed_at) + '</div>' +
@@ -2408,7 +2620,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                             return safeGithubAnchor(linked.url, '<i class="bi bi-git"></i> ' + escapeHtml(linked.sha.slice(0, 7)), 'me-1');
                         }).join('') + '</div>';
                     }
-                    html += '</div>';
+                    html += '</div></div>';
                 });
                 html += '</div>';
             }
@@ -2425,6 +2637,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 list.innerHTML = commits.length
                     ? commits.map(function (commit) { return renderCommitMetadataItem(commit, repoFull); }).join('')
                     : '<li class="list-group-item px-0 text-muted">Nessun commit disponibile.</li>';
+                list.classList.remove('d-none');
+                list.dataset.rendered = '1';
                 bindCommitDetailsButtons(list);
             }
         }
@@ -2747,10 +2961,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 const commitsTarget = commitsToggleBtn ? (commitsToggleBtn.getAttribute('data-bs-target') || commitsToggleBtn.dataset.bsTarget || '') : '';
                 const commitsEl = commitsTarget ? document.querySelector(commitsTarget) : null;
 
-	                const isOpen = (commitsEl && commitsEl.classList.contains('show'));
-	                if (isOpen) {
+                const isOpen = (commitsEl && commitsEl.classList.contains('show'));
+                if (isOpen) {
                     if (commitsEl) {
                         hideCollapseElement(commitsEl);
+                    }
+                    const graphContainer = cell.querySelector('.github-worktree-graph');
+                    if (graphContainer) {
+                        hideCollapseElement(graphContainer);
                     }
                     const locContainer = cell.querySelector('.repo-loc');
                     const locCollapse = locContainer ? locContainer.closest('.collapse') : null;
@@ -2782,9 +3000,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 const metadataContainer = cell.querySelector('.github-review-metadata');
                 const metadataRepo = metadataContainer ? (metadataContainer.dataset.repo || '') : '';
                 const studentId = btn.dataset.studentId || (metadataContainer ? metadataContainer.dataset.studentId : '') || '';
+                const graphContainer = cell.querySelector('.github-worktree-graph');
+                if (graphContainer) {
+                    showCollapseElement(graphContainer);
+                }
                 if (metadataContainer && metadataRepo) {
                     await loadRepoMetadata(metadataContainer, metadataRepo, studentId);
                     await loadRepoContributions(metadataContainer, metadataRepo, studentId, locContainer);
+                    if (graphContainer && metadataContainer._metadataData) {
+                        renderWorktreeGraph(graphContainer, metadataContainer._metadataData, metadataRepo);
+                    }
                 }
 
 	                // Solo i commit attribuiti allo studente vengono espansi e
