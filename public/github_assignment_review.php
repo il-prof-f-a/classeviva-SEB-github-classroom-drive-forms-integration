@@ -2966,7 +2966,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                     if (commitsEl) {
                         hideCollapseElement(commitsEl);
                     }
-                    const graphContainer = cell.querySelector('.github-worktree-graph');
+                    const graphContainer = row.querySelector('.github-worktree-graph');
                     if (graphContainer) {
                         hideCollapseElement(graphContainer);
                     }
@@ -3000,7 +3000,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 const metadataContainer = cell.querySelector('.github-review-metadata');
                 const metadataRepo = metadataContainer ? (metadataContainer.dataset.repo || '') : '';
                 const studentId = btn.dataset.studentId || (metadataContainer ? metadataContainer.dataset.studentId : '') || '';
-                const graphContainer = cell.querySelector('.github-worktree-graph');
+                const graphContainer = row.querySelector('.github-worktree-graph');
                 if (graphContainer) {
                     showCollapseElement(graphContainer);
                 }
