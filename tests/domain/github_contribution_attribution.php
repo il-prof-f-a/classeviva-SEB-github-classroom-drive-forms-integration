@@ -15,6 +15,7 @@ spl_autoload_register(static function (string $class) use ($root): void {
 });
 
 use App\Core\GitHubContributionAttribution;
+use App\Core\GitHubBlameLocAttributor;
 
 $failures = [];
 $require = static function (bool $condition, string $message) use (&$failures): void {
@@ -92,6 +93,50 @@ $issues = GitHubContributionAttribution::attributeIssues([
 $require($issues[0]['student_owned'] === true, 'issue dello studente non attribuita');
 $require($issues[1]['student_owned'] === false, 'issue di altro autore attribuita allo studente');
 $require($issues[2]['attribution_state'] === 'unknown', 'issue senza autore non marcata unknown');
+
+$blameLoc = GitHubBlameLocAttributor::aggregate([
+    [
+        'path' => 'src/Main.java',
+        'language' => 'Java',
+        'line_types' => ['code', 'comment', 'blank', 'code'],
+        'ranges' => [
+            [
+                'starting_line' => 1,
+                'ending_line' => 2,
+                'commit' => [
+                    'oid' => 'studentsha',
+                    'author_login' => 'student',
+                    'author_email' => 'email@email.it',
+                    'message' => 'Codice studente',
+                ],
+            ],
+            [
+                'starting_line' => 3,
+                'ending_line' => 4,
+                'commit' => [
+                    'oid' => 'othersha',
+                    'author_login' => 'other',
+                    'author_email' => 'email@email.it',
+                    'message' => 'Codice altro',
+                ],
+            ],
+        ],
+    ],
+], $identities);
+$require($blameLoc['enabled'] === true, 'attribuzione blame non abilitata');
+$require($blameLoc['totals']['total'] === 4, 'totale righe blame errato');
+$require($blameLoc['student']['total'] === 2, 'LOC studente blame errate');
+$require($blameLoc['student']['code'] === 1, 'LOC codice studente blame errate');
+$require($blameLoc['student']['comment'] === 1, 'commenti studente blame errati');
+$require($blameLoc['student']['blank'] === 0, 'righe blank studente blame errate');
+$require($blameLoc['by_language']['Java']['student']['total'] === 2, 'riepilogo linguaggio blame errato');
+
+$disabledBlameLoc = GitHubBlameLocAttributor::disabled('timeout', [
+    'files' => 2,
+    'total' => 4,
+]);
+$require($disabledBlameLoc['enabled'] === false, 'disattivazione blame non rispettata');
+$require($disabledBlameLoc['reason'] === 'timeout', 'motivo disattivazione blame errato');
 
 if ($failures !== []) {
     foreach ($failures as $failure) {

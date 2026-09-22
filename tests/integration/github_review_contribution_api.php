@@ -20,6 +20,8 @@ $require(str_contains($integration, 'function getBranch'), 'getBranch mancante')
 $require(str_contains($integration, 'function compareCommits'), 'compareCommits mancante');
 $require(str_contains($integration, 'validatedRepository'), 'metodi review senza validazione repository');
 $require(str_contains($integration, 'validatedBranch'), 'metodi review senza validazione branch');
+$require(str_contains($integration, 'function getRepositoryBlameSnapshot'), 'snapshot blame repository mancante');
+$require(str_contains($integration, 'graphqlRequest'), 'snapshot blame senza API GraphQL');
 
 if ($failures !== []) {
     foreach ($failures as $failure) {

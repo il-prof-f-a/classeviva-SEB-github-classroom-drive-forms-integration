@@ -3,6 +3,7 @@
 namespace App\Integration;
 
 use App\Core\GitHubProjectGatewayInterface;
+use App\Core\GitHubBlameLocAttributor;
 
 /**
  * GitHub Integration
@@ -710,6 +711,145 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
             break;
         }
         throw new \Exception('GitHub GraphQL error: ' . $lastError);
+    }
+
+    /**
+     * Recupera una snapshot lineare della repository corrente: contenuto
+     * testuale classificato per riga e intervalli GitHub blame. Il cache
+     * contiene solo metadati LOC, mai il sorgente dei file.
+     *
+     * @return array<string,mixed>
+     */
+    public function getRepositoryBlameSnapshot(
+        string $owner,
+        string $repo,
+        string $ref,
+        int $maxFiles = 250,
+        int $maxBytes = 8_000_000,
+        ?string $cacheDir = null
+    ): array {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        $ref = $this->validatedBranch($ref);
+        $maxFiles = max(1, min(1000, $maxFiles));
+        $maxBytes = max(100_000, min(50_000_000, $maxBytes));
+
+        $tree = $this->apiRequest('GET', "/repos/{$owner}/{$repo}/git/trees/{$ref}", null, ['recursive' => '1']);
+        if (!is_array($tree)) {
+            throw new \RuntimeException('Albero GitHub non disponibile.');
+        }
+        if (!empty($tree['truncated'])) {
+            return [
+                'enabled' => false,
+                'reason' => 'tree_truncated',
+                'details' => ['max_files' => $maxFiles],
+            ];
+        }
+
+        $entries = is_array($tree['tree'] ?? null) ? $tree['tree'] : [];
+        $files = [];
+        $bytes = 0;
+        $binaryExtensions = ['7z', 'avi', 'bmp', 'class', 'dll', 'doc', 'docx', 'gif', 'gz', 'ico', 'jar', 'jpeg', 'jpg', 'mov', 'mp3', 'mp4', 'pdf', 'png', 'ppt', 'pptx', 'so', 'tar', 'wav', 'webp', 'xls', 'xlsx', 'zip'];
+        foreach ($entries as $entry) {
+            if (!is_array($entry) || ($entry['type'] ?? '') !== 'blob') {
+                continue;
+            }
+            $path = trim((string)($entry['path'] ?? ''));
+            if ($path === '' || preg_match('~(^|/)(?:\.git|vendor|node_modules|storage)(?:/|$)~i', $path)) {
+                continue;
+            }
+            $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+            if ($extension !== '' && in_array($extension, $binaryExtensions, true)) {
+                continue;
+            }
+            $size = max(0, (int)($entry['size'] ?? 0));
+            $bytes += $size;
+            if (count($files) >= $maxFiles) {
+                return ['enabled' => false, 'reason' => 'file_limit', 'details' => ['files' => count($files) + 1, 'max_files' => $maxFiles]];
+            }
+            if ($bytes > $maxBytes) {
+                return ['enabled' => false, 'reason' => 'byte_limit', 'details' => ['bytes' => $bytes, 'max_bytes' => $maxBytes]];
+            }
+            $files[] = ['path' => $path, 'bytes' => $size];
+        }
+
+        $treeSha = strtolower(trim((string)($tree['sha'] ?? '')));
+        $cacheFile = null;
+        if ($cacheDir !== null && preg_match('/^[0-9a-f]{40}$/', $treeSha) === 1) {
+            if (!is_dir($cacheDir)) {
+                @mkdir($cacheDir, 0700, true);
+            }
+            $cacheFile = rtrim($cacheDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . hash('sha256', $owner . '/' . $repo . ':' . $treeSha) . '.json';
+            if (is_file($cacheFile)) {
+                $cached = json_decode((string)@file_get_contents($cacheFile), true);
+                if (is_array($cached) && ($cached['tree_sha'] ?? '') === $treeSha && ($cached['enabled'] ?? false) === true) {
+                    return $cached + ['cached' => true];
+                }
+            }
+        }
+
+        $quote = static fn(string $value): string => json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $rootExpression = $quote($ref);
+        $fields = [];
+        foreach ($files as $index => $file) {
+            $path = (string)$file['path'];
+            $fields[] = 'file' . $index . ': object(expression: ' . $quote($ref . ':' . $path) . ') { ... on Blob { text isBinary } }';
+            $fields[] = 'blame' . $index . ': object(expression: ' . $rootExpression . ') { ... on Commit { blame(path: ' . $quote($path) . ') { ranges { startingLine endingLine commit { oid message author { name email user { login } } committer { name email user { login } } } } } } }';
+        }
+        $query = 'query { repository(owner: ' . $quote($owner) . ', name: ' . $quote($repo) . ') { ' . implode(' ', $fields) . ' } }';
+        $data = $this->graphqlRequest($query);
+        $repository = is_array($data['repository'] ?? null) ? $data['repository'] : [];
+        $snapshotFiles = [];
+        foreach ($files as $index => $file) {
+            $blob = is_array($repository['file' . $index] ?? null) ? $repository['file' . $index] : [];
+            $text = $blob['text'] ?? null;
+            if (!is_string($text)) {
+                continue;
+            }
+            $ranges = [];
+            $blame = is_array($repository['blame' . $index] ?? null) ? $repository['blame' . $index] : [];
+            foreach ((array)($blame['ranges'] ?? []) as $range) {
+                if (!is_array($range)) {
+                    continue;
+                }
+                $commit = is_array($range['commit'] ?? null) ? $range['commit'] : [];
+                $author = is_array($commit['author'] ?? null) ? $commit['author'] : [];
+                $authorUser = is_array($author['user'] ?? null) ? $author['user'] : [];
+                $committer = is_array($commit['committer'] ?? null) ? $commit['committer'] : [];
+                $committerUser = is_array($committer['user'] ?? null) ? $committer['user'] : [];
+                $ranges[] = [
+                    'starting_line' => (int)($range['startingLine'] ?? 0),
+                    'ending_line' => (int)($range['endingLine'] ?? 0),
+                    'commit' => [
+                        'oid' => strtolower(trim((string)($commit['oid'] ?? ''))),
+                        'message' => (string)($commit['message'] ?? ''),
+                        'author_login' => trim((string)($authorUser['login'] ?? '')) ?: null,
+                        'author_email' => trim((string)($author['email'] ?? '')) ?: null,
+                        'committer_login' => trim((string)($committerUser['login'] ?? '')) ?: null,
+                        'committer_email' => trim((string)($committer['email'] ?? '')) ?: null,
+                    ],
+                ];
+            }
+            $snapshotFiles[] = [
+                'path' => $file['path'],
+                'bytes' => strlen($text),
+                'language' => GitHubBlameLocAttributor::languageForPath((string)$file['path']),
+                'line_types' => GitHubBlameLocAttributor::lineTypesForText((string)$file['path'], $text),
+                'ranges' => $ranges,
+            ];
+        }
+
+        $snapshot = [
+            'enabled' => true,
+            'reason' => '',
+            'tree_sha' => $treeSha,
+            'files' => $snapshotFiles,
+            'cached' => false,
+        ];
+        if ($cacheFile !== null) {
+            @file_put_contents($cacheFile, json_encode($snapshot, JSON_THROW_ON_ERROR), LOCK_EX);
+            @chmod($cacheFile, 0600);
+        }
+        return $snapshot;
     }
 
     /**

@@ -18,6 +18,7 @@ header('Expires: 0');
 
 use App\Core\Database\DatabaseFactory;
 use App\Core\GitHubAssignmentService;
+use App\Core\GitHubBlameLocAttributor;
 use App\Core\GitHubReviewMetadata;
 use App\Core\NotificationManager;
 use App\Core\GitHubContributionAttribution;
@@ -145,6 +146,18 @@ function normalizeGithubReviewGrade($value): string
         return number_format((float)$numeric, 1, '.', '');
     }
     return $value;
+}
+
+/** @return array{enabled:bool,max_ms:int,max_files:int,max_bytes:int} */
+function ghReviewStudentLocConfig(): array
+{
+    $enabled = filter_var((string)env('GITHUB_STUDENT_LOC_ENABLED', 'true'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+    return [
+        'enabled' => $enabled !== false,
+        'max_ms' => max(250, min(120_000, (int)env('GITHUB_STUDENT_LOC_MAX_MS', '5000'))),
+        'max_files' => max(1, min(1000, (int)env('GITHUB_STUDENT_LOC_MAX_FILES', '250'))),
+        'max_bytes' => max(100_000, min(50_000_000, (int)env('GITHUB_STUDENT_LOC_MAX_BYTES', '8000000'))),
+    ];
 }
 
 // Risolve le email degli studenti di un gruppo (Google Classroom primario, ClasseViva fallback).
@@ -676,6 +689,7 @@ if ($postAction === 'repo_metadata') {
         jsonResponse([
             'ok' => true,
             'repo' => $repoFull,
+            'ref' => $defaultBranch,
             'commits' => $commitPayload,
             'issues' => $issues,
             'branches' => $branches,
@@ -799,6 +813,55 @@ if ($postAction === 'repo_contributions') {
         $issues = GitHubContributionAttribution::attributeIssues($issueRows, $identities);
 
         $studentAdditions = (int)($commitAttribution['student_additions'] ?? 0);
+        $studentLocConfig = ghReviewStudentLocConfig();
+        $studentLoc = $studentLocConfig['enabled']
+            ? GitHubBlameLocAttributor::disabled('not_calculated')
+            : GitHubBlameLocAttributor::disabled('disabled_by_configuration');
+        $studentLoc['elapsed_ms'] = 0;
+        if ($studentLocConfig['enabled']) {
+            $ref = trim((string)($metadata['ref'] ?? ''));
+            if ($ref === '' || preg_match('~^[A-Za-z0-9_.\/-]{1,200}$~', $ref) !== 1) {
+                $ref = 'main';
+            }
+            $blameStartedAt = microtime(true);
+            try {
+                $blameSnapshot = $github->getRepositoryBlameSnapshot(
+                    $owner,
+                    $repo,
+                    $ref,
+                    $studentLocConfig['max_files'],
+                    $studentLocConfig['max_bytes'],
+                    ROOT_PATH . '/storage/cache/github_blame'
+                );
+                $elapsedMs = (int)round((microtime(true) - $blameStartedAt) * 1000);
+                if ($elapsedMs > $studentLocConfig['max_ms']) {
+                    $studentLoc = GitHubBlameLocAttributor::disabled('timeout', [
+                        'elapsed_ms' => $elapsedMs,
+                        'max_ms' => $studentLocConfig['max_ms'],
+                    ]);
+                } elseif (($blameSnapshot['enabled'] ?? false) !== true) {
+                    $studentLoc = GitHubBlameLocAttributor::disabled(
+                        (string)($blameSnapshot['reason'] ?? 'unavailable'),
+                        is_array($blameSnapshot['details'] ?? null) ? $blameSnapshot['details'] : []
+                    );
+                } else {
+                    $studentLoc = GitHubBlameLocAttributor::aggregate(
+                        is_array($blameSnapshot['files'] ?? null) ? $blameSnapshot['files'] : [],
+                        $identities,
+                        [
+                            'max_files' => $studentLocConfig['max_files'],
+                            'max_bytes' => $studentLocConfig['max_bytes'],
+                        ]
+                    );
+                    $studentLoc['cached'] = (bool)($blameSnapshot['cached'] ?? false);
+                }
+                $studentLoc['elapsed_ms'] = $elapsedMs;
+            } catch (Throwable $blameError) {
+                $studentLoc = GitHubBlameLocAttributor::disabled('error');
+                $studentLoc['elapsed_ms'] = (int)round((microtime(true) - $blameStartedAt) * 1000);
+                $warnings[] = 'Attribuzione LOC studente non disponibile.';
+            }
+        }
         jsonResponse([
             'ok' => true,
             'repo' => $repoFull,
@@ -808,8 +871,11 @@ if ($postAction === 'repo_contributions') {
             'issues' => $issues,
             'loc' => [
                 'student_additions' => $studentAdditions,
+                'student_loc' => $studentLoc,
+                'student_loc_disabled' => !($studentLoc['enabled'] ?? false),
                 'partial' => $partial,
             ],
+            'student_loc_disabled' => !($studentLoc['enabled'] ?? false),
             'partial' => $partial,
             'warnings' => $warnings,
         ], 200, true);
@@ -1877,8 +1943,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             border-radius: .5rem;
             padding: .55rem .65rem;
             box-shadow: 0 3px 10px rgba(33, 37, 41, .1);
-            max-height: 26rem;
-            overflow: auto;
+            height: auto;
+            max-height: none;
+            overflow: visible;
+        }
+        .github-worktree-graph-svg-frame {
+            width: 100%;
+            overflow-x: auto;
+            overflow-y: visible;
+        }
+        .github-worktree-graph-svg {
+            display: block;
+            width: 100%;
+            min-width: 24rem;
+            height: auto;
         }
         .github-worktree-graph .github-graph-title {
             display: flex;
@@ -1972,6 +2050,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         .github-graph-tag { color: #075985; background: #dff3ff; border: 1px solid #9bd7f5; }
         .github-graph-issue { color: #a45100; background: #fff0d9; border: 1px solid #f0c27b; }
         .github-graph-legend { white-space: nowrap; }
+        .github-worktree-graph-svg .github-graph-edge {
+            fill: none;
+            stroke: #adb5bd;
+            stroke-width: 1.8;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+        .github-worktree-graph-svg .github-graph-edge-student { stroke: #212529; }
+        .github-worktree-graph-svg .github-graph-edge-other { stroke: #adb5bd; }
+        .github-worktree-graph-svg .github-graph-lane-main {
+            stroke: #6c757d;
+            stroke-width: 1.5;
+            stroke-dasharray: 3 3;
+        }
+        .github-worktree-graph-svg .github-graph-lane-branch {
+            stroke: #8fc997;
+            stroke-width: 1.2;
+            stroke-dasharray: 2 3;
+        }
+        .github-worktree-graph-svg .github-graph-svg-node {
+            width: auto;
+            height: auto;
+            margin: 0;
+            border: 0;
+            box-shadow: 0 0 0 2px #fff, 0 1px 4px rgba(33, 37, 41, .28);
+        }
+        .github-worktree-graph-svg .github-graph-svg-node.github-graph-node-student { fill: #212529; }
+        .github-worktree-graph-svg .github-graph-svg-node.github-graph-node-other { fill: #adb5bd; }
+        .github-worktree-graph-svg .github-graph-svg-node.github-graph-node-unknown { fill: #6c757d; }
+        .github-worktree-graph-svg .github-graph-svg-title { fill: #212529; font-size: 11px; font-weight: 600; }
+        .github-worktree-graph-svg .github-graph-svg-meta { fill: #6c757d; font-size: 9px; }
+        .github-worktree-graph-svg .github-graph-branch { fill: #216e2b; font-size: 9px; font-weight: 600; }
+        .github-worktree-graph-svg .github-graph-tag { fill: #075985; font-size: 9px; font-weight: 600; }
+        .github-worktree-graph-svg .github-graph-issue { fill: #a45100; font-size: 9px; font-weight: 600; }
 
 	        table.github-grades-table tr.rubric-row-active {
 	            background-color: #fff3cd !important;
@@ -2465,57 +2577,174 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             return escapeHtml(date.toLocaleString('it-IT'));
         }
 
+        function buildWorktreeGraphSvg(data, repoFull) {
+            const commits = (Array.isArray(data?.commits) ? data.commits : []).filter(function (commit) {
+                return commit && String(commit.sha || '').trim() !== '';
+            });
+            const branches = Array.isArray(data?.branches) ? data.branches : [];
+            const tagMap = data?.tags && typeof data.tags === 'object' ? data.tags : {};
+            const commitBySha = new Map(commits.map(function (commit) {
+                return [String(commit.sha || '').toLowerCase(), commit];
+            }));
+            const branchRows = branches.map(function (branch) {
+                if (typeof branch === 'string') return {name: branch, head_sha: ''};
+                return {
+                    name: String(branch?.name || ''),
+                    head_sha: String(branch?.head_sha || '').toLowerCase(),
+                    origin_source: String(branch?.origin_source || ''),
+                    student_owned: branch?.student_owned === true || branch?.student_owned === 1 || branch?.student_owned === '1'
+                };
+            }).filter(function (branch) { return branch.name !== ''; });
+            const defaultBranch = branchRows.find(function (branch) { return branch.origin_source === 'default_branch'; }) ||
+                branchRows.find(function (branch) { return /^(main|master)$/i.test(branch.name); }) || null;
+            const ordered = commits.map(function (commit, index) {
+                return {commit: commit, index: index, time: Date.parse(String(commit.date || ''))};
+            }).sort(function (left, right) {
+                if (Number.isNaN(left.time) || Number.isNaN(right.time)) return left.index - right.index;
+                return left.time - right.time || left.index - right.index;
+            }).map(function (entry) { return entry.commit; });
+
+            function parentsOf(sha) {
+                const commit = commitBySha.get(String(sha || '').toLowerCase());
+                return Array.isArray(commit?.parents) ? commit.parents.map(function (parent) { return String(parent || '').toLowerCase(); }).filter(Boolean) : [];
+            }
+            function firstParentPath(headSha) {
+                const path = new Set();
+                let current = String(headSha || '').toLowerCase();
+                let guard = 0;
+                while (current && commitBySha.has(current) && !path.has(current) && guard++ < 1000) {
+                    path.add(current);
+                    current = parentsOf(current)[0] || '';
+                }
+                return path;
+            }
+
+            const mainPath = firstParentPath(defaultBranch?.head_sha || ordered[ordered.length - 1]?.sha || '');
+            const laneBySha = new Map();
+            mainPath.forEach(function (sha) { laneBySha.set(sha, 0); });
+            let leftLane = -1;
+            let rightLane = 1;
+            branchRows.forEach(function (branch) {
+                if (!branch.head_sha || branch === defaultBranch) return;
+                const path = firstParentPath(branch.head_sha);
+                const lane = (Math.abs(leftLane) <= Math.abs(rightLane)) ? leftLane-- : rightLane++;
+                path.forEach(function (sha) {
+                    if (!mainPath.has(sha) && !laneBySha.has(sha)) laneBySha.set(sha, lane);
+                });
+            });
+            ordered.forEach(function (commit, index) {
+                const sha = String(commit.sha || '').toLowerCase();
+                if (laneBySha.has(sha)) return;
+                const inherited = parentsOf(sha).map(function (parent) { return laneBySha.get(parent); }).find(function (lane) { return lane !== undefined; });
+                laneBySha.set(sha, inherited !== undefined ? inherited : (index % 2 ? rightLane++ : leftLane--));
+            });
+
+            const lanes = Array.from(laneBySha.values());
+            const minLane = lanes.length ? Math.min.apply(null, lanes) : 0;
+            const maxLane = lanes.length ? Math.max.apply(null, lanes) : 0;
+            const laneWidth = 58;
+            const marginLeft = 18;
+            const textOffset = 22;
+            const rowHeight = 42;
+            const top = 22;
+            const labelWidth = 300;
+            const width = Math.max(390, marginLeft + (maxLane - minLane + 1) * laneWidth + labelWidth);
+            const height = Math.max(70, top + ordered.length * rowHeight + 16);
+            const xForSha = function (sha) { return marginLeft + (laneBySha.get(String(sha || '').toLowerCase()) - minLane) * laneWidth; };
+            const yForSha = function (sha) { const index = ordered.findIndex(function (commit) { return String(commit.sha || '').toLowerCase() === String(sha || '').toLowerCase(); }); return top + index * rowHeight + rowHeight / 2; };
+            const branchByHead = new Map();
+            branchRows.forEach(function (branch) {
+                if (!branch.head_sha) return;
+                if (!branchByHead.has(branch.head_sha)) branchByHead.set(branch.head_sha, []);
+                branchByHead.get(branch.head_sha).push(branch);
+            });
+
+            function svgText(value, maxLength) {
+                const raw = String(value || '');
+                const shortened = raw.length > maxLength ? raw.slice(0, maxLength - 1) + '…' : raw;
+                return escapeHtml(shortened);
+            }
+            function svgHref(url) {
+                const value = String(url || '');
+                return /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\/|$)/i.test(value) ? escapeHtml(value) : '';
+            }
+            function svgLink(url, text, className, x, y) {
+                const href = svgHref(url);
+                const attrs = className ? ' class="' + className + '"' : '';
+                const label = '<text x="' + x + '" y="' + y + '"' + attrs + '>' + text + '</text>';
+                return href ? '<a href="' + href + '" target="_blank" rel="noopener noreferrer">' + label + '</a>' : label;
+            }
+
+            const svg = ['<svg class="github-worktree-graph-svg" role="img" aria-label="Grafo Git con branch, tag e commit" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="xMinYMin meet" xmlns="http://www.w3.org/2000/svg">'];
+            svg.push('<rect x="0" y="0" width="' + width + '" height="' + height + '" rx="8" fill="#ffffff"/>');
+            const laneGroups = new Map();
+            laneBySha.forEach(function (lane, sha) {
+                if (!laneGroups.has(lane)) laneGroups.set(lane, []);
+                laneGroups.get(lane).push(sha);
+            });
+            laneGroups.forEach(function (shas, lane) {
+                const ys = shas.map(yForSha).filter(function (value) { return value >= top; });
+                if (!ys.length) return;
+                const x = marginLeft + (lane - minLane) * laneWidth;
+                const laneClass = lane === 0 ? 'github-graph-lane-main' : 'github-graph-lane-branch';
+                svg.push('<line class="' + laneClass + '" x1="' + x + '" y1="' + Math.min.apply(null, ys) + '" x2="' + x + '" y2="' + Math.max.apply(null, ys) + '"/>');
+            });
+            ordered.forEach(function (commit) {
+                const childSha = String(commit.sha || '').toLowerCase();
+                const childX = xForSha(childSha);
+                const childY = yForSha(childSha);
+                parentsOf(childSha).forEach(function (parentSha) {
+                    if (!commitBySha.has(parentSha) || !laneBySha.has(parentSha)) return;
+                    const parentX = xForSha(parentSha);
+                    const parentY = yForSha(parentSha);
+                    const studentOwned = commit?.student_owned === true || commit?.student_owned === 1 || commit?.student_owned === '1';
+                    const edgeClass = studentOwned ? 'github-graph-edge github-graph-edge-student' : 'github-graph-edge github-graph-edge-other';
+                    const curve = Math.max(8, Math.abs(childY - parentY) * .32);
+                    svg.push('<path class="' + edgeClass + '" d="M ' + parentX + ' ' + parentY + ' C ' + parentX + ' ' + (parentY + curve) + ', ' + childX + ' ' + (childY - curve) + ', ' + childX + ' ' + childY + '"/>');
+                });
+            });
+            ordered.forEach(function (commit) {
+                const sha = String(commit.sha || '').toLowerCase();
+                const x = xForSha(sha);
+                const y = yForSha(sha);
+                const studentOwned = commit?.student_owned === true || commit?.student_owned === 1 || commit?.student_owned === '1';
+                const state = String(commit?.attribution_state || 'unknown');
+                const nodeClass = studentOwned ? 'github-graph-node-student' : (state === 'other' ? 'github-graph-node-other' : 'github-graph-node-unknown');
+                const title = svgText(commit?.title || '(messaggio vuoto)', 46);
+                const shortSha = svgText(commit?.short_sha || sha.slice(0, 7), 7);
+                const commitUrl = commit?.url || ('https://github.com/' + repoFull + '/commit/' + sha);
+                svg.push('<circle class="github-graph-node github-graph-svg-node ' + nodeClass + '" cx="' + x + '" cy="' + y + '" r="6"><title>' + title + '</title></circle>');
+                svg.push(svgLink(commitUrl, title, 'github-graph-svg-title', x + textOffset, y - 3));
+                svg.push('<text class="github-graph-svg-meta" x="' + (x + textOffset) + '" y="' + (y + 11) + '">' + shortSha + ' · ' + formatGithubDate(commit?.date) + '</text>');
+                (branchByHead.get(sha) || []).forEach(function (branch, branchIndex) {
+                    const branchUrl = 'https://github.com/' + repoFull + '/tree/' + encodeURIComponent(branch.name);
+                    svg.push(svgLink(branchUrl, 'branch: ' + svgText(branch.name, 28), 'github-graph-branch', x + textOffset + 155 + (branchIndex * 78), y - 3));
+                });
+                const tags = Array.isArray(commit?.tags) ? commit.tags : (Array.isArray(tagMap[sha]) ? tagMap[sha] : []);
+                tags.slice(0, 3).forEach(function (tag, tagIndex) {
+                    const tagUrl = 'https://github.com/' + repoFull + '/releases/tag/' + encodeURIComponent(String(tag));
+                    svg.push(svgLink(tagUrl, 'tag: ' + svgText(tag, 22), 'github-graph-tag', x + textOffset + 155 + ((branchByHead.get(sha) || []).length + tagIndex) * 78, y + 11));
+                });
+                (Array.isArray(commit?.issue_refs) ? commit.issue_refs : []).slice(0, 3).forEach(function (ref, issueIndex) {
+                    svg.push(svgLink(ref.url, svgText(ref.label || ('#' + (ref.number || '')), 16), 'github-graph-issue', x + textOffset + 155 + issueIndex * 58, y + 22));
+                });
+            });
+            svg.push('</svg>');
+            return svg.join('');
+        }
+
         function renderWorktreeGraph(container, data, repoFull) {
             if (!container || !data) return;
             const commits = Array.isArray(data.commits) ? data.commits : [];
             const branches = Array.isArray(data.branches) ? data.branches : [];
             const tagMap = data.tags && typeof data.tags === 'object' ? data.tags : {};
-            const branchMap = new Map();
-            branches.forEach(function (branch) {
-                const name = typeof branch === 'string' ? branch : String(branch?.name || '');
-                const headSha = typeof branch === 'string' ? '' : String(branch?.head_sha || '').toLowerCase();
-                if (!name || !headSha) return;
-                if (!branchMap.has(headSha)) branchMap.set(headSha, []);
-                branchMap.get(headSha).push({name: name, owned: branch?.student_owned === true || branch?.student_owned === 1 || branch?.student_owned === '1'});
-            });
-
-            const ordered = commits.slice().reverse();
-            const rows = ordered.map(function (commit) {
-                const sha = String(commit?.sha || '').toLowerCase();
-                const shortSha = escapeHtml(commit?.short_sha || sha.slice(0, 7));
-                const studentOwned = commit?.student_owned === true || commit?.student_owned === 1 || commit?.student_owned === '1';
-                const state = String(commit?.attribution_state || 'unknown');
-                const nodeClass = studentOwned ? 'github-graph-node-student' : (state === 'other' ? 'github-graph-node-other' : 'github-graph-node-unknown');
-                const commitClass = studentOwned ? 'github-graph-commit-student' : 'github-graph-commit-other';
-                const commitTitle = escapeHtml(commit?.title || '(messaggio vuoto)');
-                const commitLink = commit?.url ? safeGithubAnchor(commit.url, shortSha, 'text-decoration-none') : shortSha;
-                const parentList = Array.isArray(commit?.parents) ? commit.parents : [];
-                const parentHtml = parentList.length
-                    ? '<span class="github-graph-parent"><i class="bi bi-arrow-return-right"></i> ' + parentList.slice(0, 3).map(function (parent) { return escapeHtml(String(parent).slice(0, 7)); }).join(' · ') + (parentList.length > 3 ? ' …' : '') + '</span>'
-                    : '<span class="github-graph-parent"><i class="bi bi-circle"></i> radice</span>';
-                const branchHtml = (branchMap.get(sha) || []).map(function (branch) {
-                    const href = 'https://github.com/' + repoFull + '/tree/' + encodeURIComponent(branch.name);
-                    return safeGithubAnchor(href, '<i class="bi bi-diagram-3"></i> ' + escapeHtml(branch.name), 'github-graph-branch');
-                }).join('');
-                const tags = Array.isArray(commit?.tags) ? commit.tags : (Array.isArray(tagMap[sha]) ? tagMap[sha] : []);
-                const tagHtml = tags.map(function (tag) {
-                    const href = 'https://github.com/' + repoFull + '/releases/tag/' + encodeURIComponent(String(tag));
-                    return safeGithubAnchor(href, '<i class="bi bi-tag"></i> ' + escapeHtml(tag), 'github-graph-tag');
-                }).join('');
-                const issueHtml = (Array.isArray(commit?.issue_refs) ? commit.issue_refs : []).map(function (ref) {
-                    return safeGithubAnchor(ref.url, '<i class="bi bi-exclamation-circle"></i> ' + escapeHtml(ref.label || ('#' + (ref.number || ''))), 'github-graph-issue');
-                }).join('');
-                return '<div class="github-graph-row" data-sha="' + escapeHtml(sha) + '">' +
-                    '<div class="github-graph-lane"><span class="github-graph-node ' + nodeClass + '" title="' + (studentOwned ? 'Commit dello studente' : 'Commit di altro autore') + '"></span></div>' +
-                    '<div class="github-graph-commit ' + commitClass + '">' +
-                    '<span class="github-graph-commit-title" title="' + commitTitle + '">' + commitTitle + '</span>' +
-                    '<div class="github-graph-commit-meta"><span>' + commitLink + '</span> ' + formatGithubDate(commit?.date) + ' ' + parentHtml + branchHtml + tagHtml + issueHtml + '</div>' +
-                    '</div></div>';
-            }).join('');
+            const tagCount = Object.values(tagMap).reduce(function (total, tags) { return total + (Array.isArray(tags) ? tags.length : 0); }, 0);
             const legend = '<div class="github-graph-title"><strong><i class="bi bi-diagram-3"></i> Worktree Git</strong>' +
                 '<span class="github-graph-legend"><span class="github-graph-branch">branch</span> <span class="github-graph-tag">tag</span> <span class="github-graph-issue">issue</span></span></div>';
+            const summary = '<div class="small text-muted mb-1">' + commits.length + ' commit · ' + branches.length + ' branch · ' + tagCount + ' tag</div>';
             const note = data.truncated ? '<div class="small text-warning mt-1">Visualizzazione parziale: la cronologia GitHub è stata limitata.</div>' : '';
-            container.innerHTML = legend + (rows ? '<div class="github-graph-grid">' + rows + '</div>' : '<div class="small text-muted">Nessun commit disponibile per il grafico.</div>') + note;
+            const svg = buildWorktreeGraphSvg(data, repoFull);
+            container.innerHTML = legend + summary + '<div class="github-worktree-graph-svg-frame">' + svg + '</div>' + note;
             container.dataset.loaded = '1';
         }
 
@@ -2679,6 +2908,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 : {};
             const requestMetadata = {
                 truncated: Boolean(metadata.truncated),
+                ref: String(metadata.ref || (locContainer && locContainer.dataset.ref) || 'main'),
                 commits: Array.isArray(metadata.commits) ? metadata.commits : [],
                 branches: Array.isArray(metadata.branches) ? metadata.branches : [],
                 issues: Array.isArray(metadata.issues) ? metadata.issues : [],
@@ -2714,7 +2944,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 renderRepoMetadata(container, merged, repoFull);
                 container._contributionData = data;
                 if (locContainer && data.loc) {
-                    locContainer.dataset.studentAdditions = String(data.loc.student_additions ?? 0);
+                    locContainer._studentLoc = data.loc.student_loc || null;
+                    locContainer.dataset.studentLocDisabled = data.loc.student_loc_disabled ? '1' : '0';
                     locContainer.dataset.contributionPartial = data.partial ? '1' : '0';
                     if (locContainer._locData) {
                         renderRepoLoc(locContainer, locContainer._locData);
@@ -2848,11 +3079,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             const source = data.source || '';
             const when = data.data_creazione || '';
             const cached = data.cached ? ' (cache)' : '';
-            const hasContribution = Object.prototype.hasOwnProperty.call(container.dataset, 'studentAdditions');
-            const studentAdditions = hasContribution ? Number(container.dataset.studentAdditions || 0) : null;
+            const studentLoc = container._studentLoc && typeof container._studentLoc === 'object'
+                ? container._studentLoc
+                : null;
+            const hasContribution = Boolean(studentLoc && studentLoc.enabled === true);
+            const studentMetrics = hasContribution && studentLoc.student && typeof studentLoc.student === 'object'
+                ? studentLoc.student
+                : {};
             const metric = function (key) {
                 return hasContribution
-                    ? formatContributionMetric(studentAdditions, totals[key])
+                    ? formatContributionMetric(studentMetrics[key], totals[key])
                     : escapeHtml(totals[key] ?? '-');
             };
 
@@ -2860,6 +3096,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             html += '<div class="mb-2"><strong>LOC</strong> ' + cached + ' <span class="text-muted">[' + escapeHtml(source) + ' ' + escapeHtml(when) + ']</span></div>';
             html += '<div class="mb-2">File: ' + escapeHtml(totals.files ?? '-') + ' • Tot: ' + metric('total') +
                 ' • Code: ' + metric('code') + ' • Comment: ' + metric('comment') + ' • Blank: ' + metric('blank') + '</div>';
+            if (studentLoc && studentLoc.enabled !== true) {
+                const reason = studentLoc.reason === 'disabled_by_configuration'
+                    ? 'disattivata dalla configurazione'
+                    : (studentLoc.reason === 'timeout' ? 'tempo massimo superato' : 'non disponibile');
+                html += '<div class="alert alert-secondary py-1 px-2 small">Attribuzione LOC per studente ' + reason + '; visualizzato il totale della repository.</div>';
+            }
             if (hasContribution && (data.partial || container.dataset.contributionPartial === '1')) {
                 html += '<div class="alert alert-warning py-1 px-2 small">Attribuzione LOC parziale: alcuni commit non sono stati analizzati.</div>';
             }
@@ -2870,13 +3112,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                     '<th>Linguaggio</th><th class="text-end">File</th><th class="text-end">Tot</th><th class="text-end">Code</th><th class="text-end">Comm</th><th class="text-end">Blank</th>' +
                     '</tr></thead><tbody>';
                 entries.forEach(function ([lang, row]) {
+                    const languageStudent = hasContribution && studentLoc.by_language && studentLoc.by_language[lang] && studentLoc.by_language[lang].student
+                        ? studentLoc.by_language[lang].student
+                        : {};
                     html += '<tr>' +
                         '<td>' + escapeHtml(lang) + '</td>' +
                         '<td class="text-end">' + escapeHtml(row.files ?? '-') + '</td>' +
-                        '<td class="text-end">' + (hasContribution ? formatContributionMetric(studentAdditions, row.total) : escapeHtml(row.total ?? '-')) + '</td>' +
-                        '<td class="text-end">' + (hasContribution ? formatContributionMetric(studentAdditions, row.code) : escapeHtml(row.code ?? '-')) + '</td>' +
-                        '<td class="text-end">' + (hasContribution ? formatContributionMetric(studentAdditions, row.comment) : escapeHtml(row.comment ?? '-')) + '</td>' +
-                        '<td class="text-end">' + (hasContribution ? formatContributionMetric(studentAdditions, row.blank) : escapeHtml(row.blank ?? '-')) + '</td>' +
+                        '<td class="text-end">' + (hasContribution ? formatContributionMetric(languageStudent.total, row.total) : escapeHtml(row.total ?? '-')) + '</td>' +
+                        '<td class="text-end">' + (hasContribution ? formatContributionMetric(languageStudent.code, row.code) : escapeHtml(row.code ?? '-')) + '</td>' +
+                        '<td class="text-end">' + (hasContribution ? formatContributionMetric(languageStudent.comment, row.comment) : escapeHtml(row.comment ?? '-')) + '</td>' +
+                        '<td class="text-end">' + (hasContribution ? formatContributionMetric(languageStudent.blank, row.blank) : escapeHtml(row.blank ?? '-')) + '</td>' +
                         '</tr>';
                 });
                 html += '</tbody></table></div>';

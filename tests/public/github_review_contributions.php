@@ -28,6 +28,10 @@ $require(str_contains($review, 'assignment_student'), 'controllo ownership assig
 $require(str_contains($attribution, 'attributeCommits'), 'classificatore commit assente');
 $require(str_contains($attribution, 'attributeBranches'), 'classificatore branch assente');
 $require(str_contains($attribution, 'attributeIssues'), 'classificatore issue assente');
+$require(str_contains($review, 'GitHubBlameLocAttributor'), 'attribuzione LOC blame non usata');
+$require(str_contains($review, 'student_loc_disabled'), 'flag disattivazione LOC studente assente');
+$require(str_contains($review, 'GITHUB_STUDENT_LOC_MAX_MS'), 'soglia temporale LOC studente assente');
+$require(str_contains($review, 'GITHUB_STUDENT_LOC_MAX_FILES'), 'limite file LOC studente assente');
 
 if ($failures !== []) {
     foreach ($failures as $failure) {

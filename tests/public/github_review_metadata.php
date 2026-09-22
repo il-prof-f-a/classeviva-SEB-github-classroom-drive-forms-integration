@@ -80,6 +80,11 @@ $require(str_contains($review, 'github-worktree-graph'), 'contenitore grafo work
 $require(str_contains($review, 'renderWorktreeGraph'), 'renderer grafo worktree assente');
 $require(str_contains($review, 'github-graph-node'), 'nodo grafo worktree assente');
 $require(str_contains($review, "row.querySelector('.github-worktree-graph')"), 'il grafo non viene cercato sulla riga della tabella');
+$require(str_contains($review, 'buildWorktreeGraphSvg'), 'renderer SVG DAG assente');
+$require(str_contains($review, 'github-worktree-graph-svg'), 'SVG worktree assente');
+$require(str_contains($review, 'github-graph-edge'), 'archi DAG assenti');
+$require(str_contains($review, 'github-graph-lane-main'), 'corsia main assente');
+$require(!str_contains($review, 'max-height: 26rem'), 'altezza fissa del pannello worktree ancora presente');
 $require(str_contains($review, "'parents'"), 'parent commit non incluso nei metadati');
 $require(str_contains($review, "'head_sha'"), 'head branch non incluso nei metadati');
 
