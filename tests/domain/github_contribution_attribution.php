@@ -130,6 +130,11 @@ $require($blameLoc['student']['code'] === 1, 'LOC codice studente blame errate')
 $require($blameLoc['student']['comment'] === 1, 'commenti studente blame errati');
 $require($blameLoc['student']['blank'] === 0, 'righe blank studente blame errate');
 $require($blameLoc['by_language']['Java']['student']['total'] === 2, 'riepilogo linguaggio blame errato');
+$require(
+    GitHubBlameLocAttributor::lineTypesForText('Main.java', "// comment\n\nint x = 1;\n") === ['comment', 'blank', 'code'],
+    'classificazione righe blame errata'
+);
+$require(GitHubBlameLocAttributor::languageForPath('Main.java') === 'Java', 'linguaggio blame errato');
 
 $disabledBlameLoc = GitHubBlameLocAttributor::disabled('timeout', [
     'files' => 2,

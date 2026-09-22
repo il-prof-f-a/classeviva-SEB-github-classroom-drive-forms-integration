@@ -164,7 +164,11 @@ final class GitHubBlameLocAttributor
                 } elseif (strpos($trim, $blockStart) === 0) {
                     $isComment = true;
                     if (strpos($trim, $blockEnd) === false || $blockStart === $blockEnd) {
-                        $inBlock = true;
+                        if ($blockStart === $blockEnd) {
+                            $inBlock = substr_count($trim, $blockStart) === 1;
+                        } else {
+                            $inBlock = true;
+                        }
                     }
                 }
             }

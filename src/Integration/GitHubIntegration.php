@@ -729,6 +729,7 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
         ?string $cacheDir = null
     ): array {
         [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        $rawRef = trim($ref);
         $ref = $this->validatedBranch($ref);
         $maxFiles = max(1, min(1000, $maxFiles));
         $maxBytes = max(100_000, min(50_000_000, $maxBytes));
@@ -782,17 +783,17 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
             if (is_file($cacheFile)) {
                 $cached = json_decode((string)@file_get_contents($cacheFile), true);
                 if (is_array($cached) && ($cached['tree_sha'] ?? '') === $treeSha && ($cached['enabled'] ?? false) === true) {
-                    return $cached + ['cached' => true];
+                    return array_merge($cached, ['cached' => true]);
                 }
             }
         }
 
         $quote = static fn(string $value): string => json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        $rootExpression = $quote($ref);
+        $rootExpression = $quote($rawRef);
         $fields = [];
         foreach ($files as $index => $file) {
             $path = (string)$file['path'];
-            $fields[] = 'file' . $index . ': object(expression: ' . $quote($ref . ':' . $path) . ') { ... on Blob { text isBinary } }';
+            $fields[] = 'file' . $index . ': object(expression: ' . $quote($rawRef . ':' . $path) . ') { ... on Blob { text isBinary } }';
             $fields[] = 'blame' . $index . ': object(expression: ' . $rootExpression . ') { ... on Commit { blame(path: ' . $quote($path) . ') { ranges { startingLine endingLine commit { oid message author { name email user { login } } committer { name email user { login } } } } } } }';
         }
         $query = 'query { repository(owner: ' . $quote($owner) . ', name: ' . $quote($repo) . ') { ' . implode(' ', $fields) . ' } }';
@@ -806,7 +807,8 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
                 continue;
             }
             $ranges = [];
-            $blame = is_array($repository['blame' . $index] ?? null) ? $repository['blame' . $index] : [];
+            $blameObject = is_array($repository['blame' . $index] ?? null) ? $repository['blame' . $index] : [];
+            $blame = is_array($blameObject['blame'] ?? null) ? $blameObject['blame'] : [];
             foreach ((array)($blame['ranges'] ?? []) as $range) {
                 if (!is_array($range)) {
                     continue;
