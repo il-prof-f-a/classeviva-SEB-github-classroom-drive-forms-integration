@@ -154,7 +154,7 @@ function ghReviewStudentLocConfig(): array
     $enabled = filter_var((string)env('GITHUB_STUDENT_LOC_ENABLED', 'true'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
     return [
         'enabled' => $enabled !== false,
-        'max_ms' => max(250, min(120_000, (int)env('GITHUB_STUDENT_LOC_MAX_MS', '5000'))),
+        'max_ms' => max(250, min(120_000, (int)env('GITHUB_STUDENT_LOC_MAX_MS', '20000'))),
         'max_files' => max(1, min(1000, (int)env('GITHUB_STUDENT_LOC_MAX_FILES', '250'))),
         'max_bytes' => max(100_000, min(50_000_000, (int)env('GITHUB_STUDENT_LOC_MAX_BYTES', '8000000'))),
     ];

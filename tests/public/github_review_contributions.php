@@ -5,7 +5,9 @@ declare(strict_types=1);
 $root = dirname(__DIR__, 2);
 $review = file_get_contents($root . '/public/github_assignment_review.php');
 $attribution = file_get_contents($root . '/src/Core/GitHubContributionAttribution.php');
-if ($review === false || $attribution === false) {
+$envExample = file_get_contents($root . '/.env.example');
+$configEnvExample = file_get_contents($root . '/config/.env.example');
+if ($review === false || $attribution === false || $envExample === false || $configEnvExample === false) {
     fwrite(STDERR, "FAIL: impossibile leggere i file della review contributi\n");
     exit(1);
 }
@@ -31,6 +33,9 @@ $require(str_contains($attribution, 'attributeIssues'), 'classificatore issue as
 $require(str_contains($review, 'GitHubBlameLocAttributor'), 'attribuzione LOC blame non usata');
 $require(str_contains($review, 'student_loc_disabled'), 'flag disattivazione LOC studente assente');
 $require(str_contains($review, 'GITHUB_STUDENT_LOC_MAX_MS'), 'soglia temporale LOC studente assente');
+$require(str_contains($review, "env('GITHUB_STUDENT_LOC_MAX_MS', '20000')"), 'soglia LOC studente non impostata a 20 secondi');
+$require(str_contains($envExample, 'GITHUB_STUDENT_LOC_MAX_MS=20000'), '.env.example non allineato a 20 secondi');
+$require(str_contains($configEnvExample, 'GITHUB_STUDENT_LOC_MAX_MS=20000'), 'config/.env.example non allineato a 20 secondi');
 $require(str_contains($review, 'GITHUB_STUDENT_LOC_MAX_FILES'), 'limite file LOC studente assente');
 
 if ($failures !== []) {
