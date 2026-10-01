@@ -2969,18 +2969,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             return repoFull + '@' + (ref || 'main');
         }
 
-        async function loadRepoMetadata(container, repoFull, studentId, signal, ref) {
-            if (!container || !repoFull || container.dataset.loaded === '1' || container.dataset.loading === '1') {
+        function githubReviewRequestToken(state, prefix) {
+            if (state && Number.isFinite(Number(state.generation))) {
+                return prefix + '-' + String(state.generation);
+            }
+            return prefix + '-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+        }
+
+        function isGithubReviewRequestCurrent(row, state, container, tokenKey, token) {
+            if (row && state && !isGithubReviewStateCurrent(row, state)) return false;
+            if (container && tokenKey && container.dataset[tokenKey] !== token) return false;
+            return true;
+        }
+
+        async function loadRepoMetadata(container, repoFull, studentId, signal, ref, row, state) {
+            if (!container || !repoFull || (row && state && !isGithubReviewStateCurrent(row, state)) || container.dataset.loaded === '1') {
                 return container?._metadataData || null;
             }
             container.dataset.studentId = studentId || container.dataset.studentId || '';
             const cacheKey = githubMetadataCacheKey(repoFull, ref);
+            const requestToken = githubReviewRequestToken(state, 'metadata');
+            container.dataset.metadataRequestToken = requestToken;
+            container.dataset.loading = '1';
             if (githubMetadataCache.has(cacheKey)) {
                 const cached = githubMetadataCache.get(cacheKey);
-                renderRepoMetadata(container, cached, repoFull);
+                if (isGithubReviewRequestCurrent(row, state, container, 'metadataRequestToken', requestToken)) {
+                    renderRepoMetadata(container, cached, repoFull);
+                }
+                if (container.dataset.metadataRequestToken === requestToken) {
+                    delete container.dataset.metadataRequestToken;
+                    delete container.dataset.loading;
+                }
                 return cached;
             }
-            container.dataset.loading = '1';
             container.innerHTML = '<div class="text-muted"><i class="bi bi-hourglass-split"></i> Caricamento issue, branch, tag e commit…</div>';
             try {
                 const body = new URLSearchParams({action: 'repo_metadata', repo: repoFull, student_id: studentId || '', csrf_token: REVIEW_CSRF_TOKEN});
@@ -2988,22 +3009,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 const data = await response.json();
                 if (!data.ok) throw new Error(data.error || 'Metadati non disponibili');
                 githubMetadataCache.set(cacheKey, data);
+                if (!isGithubReviewRequestCurrent(row, state, container, 'metadataRequestToken', requestToken)) return null;
                 renderRepoMetadata(container, data, repoFull);
                 return data;
             } catch (error) {
-                if (error && error.name === 'AbortError') throw error;
+                if ((error && error.name === 'AbortError') || !isGithubReviewRequestCurrent(row, state, container, 'metadataRequestToken', requestToken)) return null;
                 container.innerHTML = '<div class="text-danger"><i class="bi bi-exclamation-triangle"></i> ' + escapeHtml(error.message || 'Errore nel caricamento dei metadati') + '</div>';
                 container.dataset.loaded = '0';
                 throw error;
             } finally {
-                delete container.dataset.loading;
+                if (container.dataset.metadataRequestToken === requestToken) {
+                    delete container.dataset.metadataRequestToken;
+                    delete container.dataset.loading;
+                }
             }
         }
 
-        async function loadRepoContributions(container, repoFull, studentId, locContainer, signal) {
-            if (!container || !repoFull || !studentId || container.dataset.contributionsLoading === '1') return null;
+        async function loadRepoContributions(container, repoFull, studentId, locContainer, signal, row, state) {
+            if (!container || !repoFull || !studentId || (row && state && !isGithubReviewStateCurrent(row, state))) return null;
             const metadata = container._metadataData;
             if (!metadata) return null;
+            const requestToken = githubReviewRequestToken(state, 'contributions');
+            container.dataset.contributionsRequestToken = requestToken;
             container.dataset.contributionsLoading = '1';
             const globalLoc = locContainer && locContainer._locData && locContainer._locData.totals
                 ? locContainer._locData.totals
@@ -3027,6 +3054,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 const response = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body, signal});
                 const data = await response.json();
                 if (!data.ok) throw new Error(data.error || 'Attribuzioni non disponibili');
+                if (!isGithubReviewRequestCurrent(row, state, container, 'contributionsRequestToken', requestToken)) return null;
 
                 const commitBySha = new Map((Array.isArray(data.commits) ? data.commits : []).map(function (commit) {
                     return [String(commit.sha || '').toLowerCase(), commit];
@@ -3055,98 +3083,123 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 }
                 return data;
             } catch (error) {
-                if (error && error.name === 'AbortError') throw error;
+                if ((error && error.name === 'AbortError') || !isGithubReviewRequestCurrent(row, state, container, 'contributionsRequestToken', requestToken)) return null;
                 throw error;
             } finally {
-                delete container.dataset.contributionsLoading;
+                if (container.dataset.contributionsRequestToken === requestToken) {
+                    delete container.dataset.contributionsRequestToken;
+                    delete container.dataset.contributionsLoading;
+                }
             }
         }
 
-        async function loadCommitDetails(container, repoFull, sha, withComments, signal) {
-            if (!container) return;
+        async function loadCommitDetails(container, repoFull, sha, withComments, signal, row, state) {
+            if (!container || (row && state && !isGithubReviewStateCurrent(row, state))) return null;
 
+            const requestToken = githubReviewRequestToken(state, 'commit');
+            container.dataset.commitRequestToken = requestToken;
             container.setAttribute('data-commit-state', 'loading');
             container.innerHTML = '<div class="text-muted">Caricamento…</div>';
 
-            const body = new URLSearchParams({action: 'commit_details', repo: repoFull, sha, with_comments: withComments ? '1' : '0'});
-            const res = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body, signal});
-            const data = await res.json();
+            try {
+                const body = new URLSearchParams({action: 'commit_details', repo: repoFull, sha, with_comments: withComments ? '1' : '0'});
+                const res = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body, signal});
+                const data = await res.json();
+                if (!isGithubReviewRequestCurrent(row, state, container, 'commitRequestToken', requestToken)) return null;
 
-            if (!data.ok) {
-                container.innerHTML = '<div class="text-danger">Errore: ' + escapeHtml(data.error || 'Errore') + '</div>';
-                container.setAttribute('data-commit-state', 'error');
-                return;
-            }
-
-            const commit = data.commit || {};
-            const stats = commit.stats || {};
-            const files = Array.isArray(commit.files) ? commit.files : [];
-            const issueRefs = Array.isArray(data.issue_refs) ? data.issue_refs : [];
-
-            let html = '';
-            if (issueRefs.length) {
-                html += '<div class="mb-2"><strong>Issue:</strong> ' + renderIssueReferences(issueRefs) + '</div>';
-            }
-            html += '<div class="mb-2"><strong>Stats</strong>: +' + escapeHtml(stats.additions ?? '-') +
-                ' / -' + escapeHtml(stats.deletions ?? '-') +
-                ' (tot ' + escapeHtml(stats.total ?? '-') + ')</div>';
-
-            html += '<div class="mb-2"><strong>Files</strong>: ' + escapeHtml(files.length) + (data.files_truncated ? ' (parziale)' : '') + '</div>';
-            if (files.length) {
-                html += '<ul class="list-group list-group-flush">';
-                files.forEach(function (f) {
-                    html += '<li class="list-group-item px-0 py-1">'
-                        + '<span class="badge bg-secondary me-2">' + escapeHtml(f.status ?? '') + '</span>'
-                        + '<span class="font-monospace">' + escapeHtml(f.filename ?? '') + '</span>'
-                        + '<span class="text-muted ms-2">+' + escapeHtml(f.additions ?? '-') + ' / -' + escapeHtml(f.deletions ?? '-') + ' (Δ ' + escapeHtml(f.changes ?? '-') + ')</span>'
-                        + '</li>';
-                });
-                html += '</ul>';
-                if (data.files_truncated) {
-                    html += '<div class="text-muted mt-1">Troppi file: mostrati solo i primi 50.</div>';
+                if (!data.ok) {
+                    container.innerHTML = '<div class="text-danger">Errore: ' + escapeHtml(data.error || 'Errore') + '</div>';
+                    container.setAttribute('data-commit-state', 'error');
+                    return null;
                 }
-            } else {
-                html += '<div class="text-muted">Nessun file disponibile.</div>';
-            }
 
-            if (!withComments) {
-                html += '<button type="button" class="btn btn-sm btn-outline-secondary mt-2 load-commit-comments">Carica commenti commit</button>';
-            } else {
-                const comments = Array.isArray(data.comments) ? data.comments : [];
-                html += '<div class="mt-2"><strong>Commenti</strong>: ' + escapeHtml(comments.length) + '</div>';
-                if (comments.length) {
+                const commit = data.commit || {};
+                const stats = commit.stats || {};
+                const files = Array.isArray(commit.files) ? commit.files : [];
+                const issueRefs = Array.isArray(data.issue_refs) ? data.issue_refs : [];
+
+                let html = '';
+                if (issueRefs.length) {
+                    html += '<div class="mb-2"><strong>Issue:</strong> ' + renderIssueReferences(issueRefs) + '</div>';
+                }
+                html += '<div class="mb-2"><strong>Stats</strong>: +' + escapeHtml(stats.additions ?? '-') +
+                    ' / -' + escapeHtml(stats.deletions ?? '-') +
+                    ' (tot ' + escapeHtml(stats.total ?? '-') + ')</div>';
+
+                html += '<div class="mb-2"><strong>Files</strong>: ' + escapeHtml(files.length) + (data.files_truncated ? ' (parziale)' : '') + '</div>';
+                if (files.length) {
                     html += '<ul class="list-group list-group-flush">';
-                    comments.forEach(function (c) {
+                    files.forEach(function (f) {
                         html += '<li class="list-group-item px-0 py-1">'
-                            + '<div class="fw-semibold">' + escapeHtml(c.user?.login ?? '') + ' • ' + escapeHtml(c.created_at ?? '') + '</div>'
-                            + '<div>' + escapeHtml(c.body ?? '') + '</div>'
-                            + (c.html_url ? '<div><a target="_blank" href="' + escapeHtml(c.html_url) + '">Apri su GitHub</a></div>' : '')
+                            + '<span class="badge bg-secondary me-2">' + escapeHtml(f.status ?? '') + '</span>'
+                            + '<span class="font-monospace">' + escapeHtml(f.filename ?? '') + '</span>'
+                            + '<span class="text-muted ms-2">+' + escapeHtml(f.additions ?? '-') + ' / -' + escapeHtml(f.deletions ?? '-') + ' (Δ ' + escapeHtml(f.changes ?? '-') + ')</span>'
                             + '</li>';
                     });
                     html += '</ul>';
+                    if (data.files_truncated) {
+                        html += '<div class="text-muted mt-1">Troppi file: mostrati solo i primi 50.</div>';
+                    }
+                } else {
+                    html += '<div class="text-muted">Nessun file disponibile.</div>';
                 }
-            }
 
-            container.innerHTML = html;
-            container.dataset.loaded = '1';
-            container.setAttribute('data-commit-state', 'loaded');
-            const forceBtn = container.querySelector('.repo-loc-force');
-            if (forceBtn) {
-                forceBtn.addEventListener('click', function () {
-                    loadRepoLoc(container, container.dataset.repo || '', container.dataset.ref || 'main', true).catch(function () {
-                        // L'errore viene già mostrato nel pannello LOC.
+                if (!withComments) {
+                    html += '<button type="button" class="btn btn-sm btn-outline-secondary mt-2 load-commit-comments">Carica commenti commit</button>';
+                } else {
+                    const comments = Array.isArray(data.comments) ? data.comments : [];
+                    html += '<div class="mt-2"><strong>Commenti</strong>: ' + escapeHtml(comments.length) + '</div>';
+                    if (comments.length) {
+                        html += '<ul class="list-group list-group-flush">';
+                        comments.forEach(function (c) {
+                            html += '<li class="list-group-item px-0 py-1">'
+                                + '<div class="fw-semibold">' + escapeHtml(c.user?.login ?? '') + ' • ' + escapeHtml(c.created_at ?? '') + '</div>'
+                                + '<div>' + escapeHtml(c.body ?? '') + '</div>'
+                                + (c.html_url ? '<div><a target="_blank" href="' + escapeHtml(c.html_url) + '">Apri su GitHub</a></div>' : '')
+                                + '</li>';
+                        });
+                        html += '</ul>';
+                    }
+                }
+
+                if (!isGithubReviewRequestCurrent(row, state, container, 'commitRequestToken', requestToken)) return null;
+                container.innerHTML = html;
+                container.dataset.loaded = '1';
+                container.setAttribute('data-commit-state', 'loaded');
+                const forceBtn = container.querySelector('.repo-loc-force');
+                if (forceBtn) {
+                    forceBtn.addEventListener('click', function () {
+                        const forceRow = container.closest('tr');
+                        const forceState = forceRow?._githubReviewLoadState || null;
+                        loadRepoLoc(container, container.dataset.repo || '', container.dataset.ref || 'main', true, forceState?.controller?.signal, forceRow, forceState).catch(function () {
+                            // L'errore viene già mostrato nel pannello LOC.
+                        });
                     });
-                });
-            }
-            container.dataset.repo = repoFull;
-            container.dataset.sha = sha;
-            container.dataset.withComments = withComments ? '1' : '0';
+                }
+                container.dataset.repo = repoFull;
+                container.dataset.sha = sha;
+                container.dataset.withComments = withComments ? '1' : '0';
 
-            const btn = container.querySelector('.load-commit-comments');
-            if (btn) {
-                btn.addEventListener('click', function () {
-                    loadCommitDetails(container, repoFull, sha, true);
-                });
+                const btn = container.querySelector('.load-commit-comments');
+                if (btn) {
+                    btn.addEventListener('click', function () {
+                        const commentRow = container.closest('tr');
+                        const commentState = commentRow?._githubReviewLoadState || null;
+                        loadCommitDetails(container, repoFull, sha, true, commentState?.controller?.signal, commentRow, commentState).catch(function () {
+                            // L'errore viene mostrato nello stesso pannello.
+                        });
+                    });
+                }
+                return data;
+            } catch (error) {
+                if ((error && error.name === 'AbortError') || !isGithubReviewRequestCurrent(row, state, container, 'commitRequestToken', requestToken)) return null;
+                container.innerHTML = '<div class="text-danger">Errore: ' + escapeHtml(error.message || 'Errore nel caricamento del commit') + '</div>';
+                container.setAttribute('data-commit-state', 'error');
+                throw error;
+            } finally {
+                if (container.dataset.commitRequestToken === requestToken) {
+                    delete container.dataset.commitRequestToken;
+                }
             }
         }
 
@@ -3165,7 +3218,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                     return;
                 }
 
-                loadCommitDetails(container, repoFull, sha, false);
+                const row = btn.closest('tr');
+                const state = row?._githubReviewLoadState || null;
+                loadCommitDetails(container, repoFull, sha, false, state?.controller?.signal, row, state).catch(function () {
+                    // L'errore viene mostrato nello stesso pannello senza promise non gestite.
+                });
                 });
             });
         }
@@ -3239,9 +3296,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             container.dataset.loaded = '1';
         }
 
-        async function loadRepoLoc(container, repoFull, ref, force, signal) {
-            if (!container) return null;
+        async function loadRepoLoc(container, repoFull, ref, force, signal, row, state) {
+            if (!container || (row && state && !isGithubReviewStateCurrent(row, state))) return null;
 
+            const requestToken = githubReviewRequestToken(state, 'loc');
+            container.dataset.locRequestToken = requestToken;
+            container.dataset.locLoading = '1';
             container.innerHTML = '<div class="text-muted">Calcolo LOC...</div>';
 
             const body = new URLSearchParams({action: 'repo_loc', repo: repoFull, ref, force: force ? '1' : '0'});
@@ -3251,22 +3311,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 res = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body, signal});
                 const responseText = await res.text();
                 data = JSON.parse(responseText);
+                if (!isGithubReviewRequestCurrent(row, state, container, 'locRequestToken', requestToken)) return null;
             } catch (error) {
-                if (error && error.name === 'AbortError') throw error;
+                if ((error && error.name === 'AbortError') || !isGithubReviewRequestCurrent(row, state, container, 'locRequestToken', requestToken)) return null;
                 const status = res && res.status ? ` (HTTP ${res.status})` : '';
                 container.innerHTML = '<div class="text-danger">Errore: risposta LOC non valida dal server' + status + '.</div>';
+                if (container.dataset.locRequestToken === requestToken) {
+                    delete container.dataset.locRequestToken;
+                    delete container.dataset.locLoading;
+                }
                 throw error;
             }
 
             if (!data.ok) {
+                if (!isGithubReviewRequestCurrent(row, state, container, 'locRequestToken', requestToken)) return null;
                 container.innerHTML = '<div class="text-danger">Errore: ' + escapeHtml(data.error || 'Errore') + '</div>';
+                if (container.dataset.locRequestToken === requestToken) {
+                    delete container.dataset.locRequestToken;
+                    delete container.dataset.locLoading;
+                }
                 throw new Error(data.error || 'Errore LOC');
             }
 
+            if (!isGithubReviewRequestCurrent(row, state, container, 'locRequestToken', requestToken)) return null;
             container._locData = data;
             container.dataset.repo = repoFull;
             container.dataset.ref = ref;
             renderRepoLoc(container, data);
+            if (container.dataset.locRequestToken === requestToken) {
+                delete container.dataset.locRequestToken;
+                delete container.dataset.locLoading;
+            }
             return data;
         }
 
@@ -3323,6 +3398,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             return Boolean(row && state && row._githubReviewLoadState === state && !state.controller.signal.aborted);
         }
 
+        function clearGithubReviewRequestMarkers(row) {
+            if (!row) return;
+            row.querySelectorAll('.github-review-metadata, .repo-loc, .commit-details').forEach(function (container) {
+                ['metadataRequestToken', 'contributionsRequestToken', 'locRequestToken', 'commitRequestToken', 'loading', 'contributionsLoading', 'locLoading'].forEach(function (key) {
+                    delete container.dataset[key];
+                });
+            });
+        }
+
         function setPanelState(row, panelName, state, content) {
             const panel = row ? row.querySelector('[data-panel="' + panelName + '"]') : null;
             if (!panel) return;
@@ -3372,11 +3456,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             if (!row || !panelName) return;
             const context = getGithubReviewLoadContext(row);
             if (panelName === 'LOC' && context.locContainer) {
+                const state = row._githubReviewLoadState;
+                if (!state || !isGithubReviewStateCurrent(row, state)) {
+                    startGithubReviewLoads(row, context);
+                    return;
+                }
                 setPanelState(row, 'loc', 'loading', '<div class="text-muted">Calcolo LOC…</div>');
-                loadRepoLoc(context.locContainer, context.repoFull, context.ref, true, row._githubReviewLoadState?.controller?.signal)
-                    .then(function () { setPanelState(row, 'loc', 'success'); })
+                loadRepoLoc(context.locContainer, context.repoFull, context.ref, true, state.controller.signal, row, state)
+                    .then(function () {
+                        if (isGithubReviewStateCurrent(row, state)) setPanelState(row, 'loc', 'success');
+                    })
                     .catch(function (error) {
-                        if (error && error.name === 'AbortError') return;
+                        if ((error && error.name === 'AbortError') || !isGithubReviewStateCurrent(row, state)) return;
                         setPanelState(row, 'loc', 'error', renderGithubReviewRetry('LOC', error));
                     });
                 return;
@@ -3400,7 +3491,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 const repoFull = detailBtn.dataset.repo || '';
                 const sha = detailBtn.dataset.sha || '';
                 if (!container || container.dataset.loaded === '1' || !repoFull || !sha) return Promise.resolve();
-                return loadCommitDetails(container, repoFull, sha, false, state.controller.signal).catch(function () {
+                return loadCommitDetails(container, repoFull, sha, false, state.controller.signal, row, state).catch(function () {
                     // Il dettaglio del singolo commit non deve bloccare gli altri pannelli.
                 });
             });
@@ -3431,9 +3522,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
             const locPromise = locContainer && locContainer.dataset.loaded === '1'
                 ? Promise.resolve(locContainer._locData || null)
-                : loadRepoLoc(locContainer, state.repoFull, state.ref, false, state.controller.signal);
+                : loadRepoLoc(locContainer, state.repoFull, state.ref, false, state.controller.signal, row, state);
             const metadataPromise = metadataContainer && state.repoFull
-                ? loadRepoMetadata(metadataContainer, state.repoFull, context.studentId || '', state.controller.signal, state.ref)
+                ? loadRepoMetadata(metadataContainer, state.repoFull, context.studentId || '', state.controller.signal, state.ref, row, state)
                 : Promise.resolve(null);
             state.promises = [locPromise, metadataPromise];
 
@@ -3453,7 +3544,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                     setPanelState(row, 'graph', 'success');
                 }
                 setPanelState(row, 'metadata', 'success');
-                return loadRepoContributions(metadataContainer, state.repoFull, context.studentId || '', locContainer, state.controller.signal);
+                return loadRepoContributions(metadataContainer, state.repoFull, context.studentId || '', locContainer, state.controller.signal, row, state);
             });
             state.promises.push(contributionsPromise);
 
@@ -3508,6 +3599,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 const isOpen = Boolean(commitsEl && commitsEl.classList.contains('show'));
                 if (isOpen) {
                     if (row._githubReviewLoadState && row._githubReviewLoadState.controller) row._githubReviewLoadState.controller.abort();
+                    clearGithubReviewRequestMarkers(row);
                     if (commitsEl) hideCollapseElement(commitsEl);
                     const graphContainer = row.querySelector('.github-worktree-graph');
                     if (graphContainer) hideCollapseElement(graphContainer);

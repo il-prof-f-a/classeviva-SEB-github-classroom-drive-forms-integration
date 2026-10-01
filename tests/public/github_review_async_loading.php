@@ -38,6 +38,15 @@ $require(str_contains($review, 'runWithConcurrency(commits'), 'i dettagli commit
 $require(str_contains($review, "setAttribute('data-commit-state', 'loading')"), 'manca lo stato loading del singolo commit');
 $require(str_contains($review, 'function githubMetadataCacheKey'), 'manca la chiave cache metadata repository/ref');
 $require(str_contains($review, "repoFull + '@' + (ref || 'main')"), 'la cache metadata non include il ref');
+$require(str_contains($review, 'function isGithubReviewRequestCurrent'), 'manca la guardia per le risposte asincrone obsolete');
+$require(str_contains($review, 'metadataRequestToken'), 'manca il token per le richieste metadati');
+$require(str_contains($review, 'contributionsRequestToken'), 'manca il token per le richieste contributo');
+$require(str_contains($review, 'locRequestToken'), 'manca il token per le richieste LOC');
+$require(str_contains($review, 'commitRequestToken'), 'manca il token per i dettagli commit');
+$require(!str_contains($review, "container.dataset.loading === '1'"), 'la guardia loading impedisce il riavvio della generazione corrente');
+$require(!str_contains($review, "container.dataset.contributionsLoading === '1'"), 'la guardia contributionsLoading impedisce il riavvio della generazione corrente');
+$require(preg_match('/loadCommitDetails\(container, repoFull, sha, false[^;]*\)\.catch/s', $review) === 1, 'il caricamento manuale dei dettagli commit non gestisce il rifiuto della promise');
+$require(preg_match('/loadCommitDetails\(container, repoFull, sha, true[^;]*\)\.catch/s', $review) === 1, 'il caricamento dei commenti commit non gestisce il rifiuto della promise');
 $require(substr_count($review, 'aria-live="polite"') >= 4, 'i quattro pannelli non hanno feedback ARIA indipendente');
 $require(!preg_match('/function loadCommitDetailsProgressively\(row, commits, context, state\).*?const commits =/s', $review), 'il coordinatore commit ridefinisce il parametro commits');
 
