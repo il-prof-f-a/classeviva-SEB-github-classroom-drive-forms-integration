@@ -25,8 +25,8 @@ $require(str_contains($review, 'data-panel="metadata"'), 'manca il placeholder m
 $require(str_contains($review, 'data-panel="graph"'), 'manca il placeholder grafo');
 $require(str_contains($review, 'data-panel="contributions"'), 'manca il placeholder contributo studente');
 $require(str_contains($review, 'setPanelState'), 'manca uno stato indipendente per pannello');
-$require(str_contains($review, 'const locPromise = loadRepoLoc'), 'LOC non parte dal coordinatore');
-$require(str_contains($review, 'const metadataPromise = loadRepoMetadata'), 'metadati non partono dal coordinatore');
+$require(str_contains($review, 'const locPromise =') && str_contains($review, 'loadRepoLoc(locContainer'), 'LOC non parte dal coordinatore');
+$require(str_contains($review, 'const metadataPromise =') && str_contains($review, 'loadRepoMetadata(metadataContainer'), 'metadati non partono dal coordinatore');
 $require(str_contains($review, 'Promise.allSettled([locPromise, metadataPromise])'), 'LOC e metadati non sono coordinati in parallelo');
 $require(str_contains($review, 'runWithConcurrency'), 'manca il pool per i dettagli commit');
 

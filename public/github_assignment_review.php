@@ -2336,7 +2336,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                 // Identificativo anonimo stabile nella pagina: non espone username o repository.
                                 $githubIdDisplay = (string)($idx + 1);
                                 ?>
-                                <tr>
+                                <tr data-github-review-generation="0">
                                     <td class="student-vote-col">
                                         <input type="hidden" name="github_username[<?= $idx ?>]" value="<?= htmlspecialchars($uname) ?>">
                                         <input type="hidden" name="id_studente[<?= $idx ?>]" value="<?= htmlspecialchars($studentId) ?>">
@@ -2412,6 +2412,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                             </button>
                                             <?php if ($repoFullRow): ?>
                                                 <div class="collapse github-worktree-graph mt-2" id="worktree-graph-<?= $idx ?>"
+                                                     data-panel="graph"
                                                      data-repo="<?= htmlspecialchars($repoFullRow) ?>"
                                                      data-student-id="<?= htmlspecialchars((string)$studentId) ?>"
                                                      data-loaded="0"
@@ -2450,6 +2451,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                                        <?php if ($repoFullRow): ?>
 	                                            <div class="collapse mt-2" id="<?= htmlspecialchars($locContainerId) ?>">
                                                 <div class="border rounded p-2 bg-light repo-loc"
+                                                     data-panel="loc"
                                                      data-loaded="0"
                                                      data-repo="<?= htmlspecialchars($repoFullRow) ?>"
                                                      data-ref="<?= htmlspecialchars($locRef) ?>"
@@ -2463,11 +2465,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                                                <i class="bi bi-list"></i> Dettaglio commit
 	                                            </button>
                                             <div class="collapse mt-2" id="commits-<?= $idx ?>">
-                                                <div class="github-review-metadata border rounded p-2 mb-2"
+                                                <div class="github-review-metadata github-review-panel border rounded p-2 mb-2"
+                                                     data-panel="metadata"
                                                      data-repo="<?= htmlspecialchars($repoFullRow) ?>"
                                                      data-student-id="<?= htmlspecialchars((string)$studentId) ?>"
                                                      data-loaded="0">
                                                     <div class="text-muted"><i class="bi bi-hourglass-split"></i> Metadati GitHub non ancora caricati.</div>
+                                                </div>
+                                                <div class="github-review-contributions-status github-review-panel border rounded p-2 mb-2"
+                                                     data-panel="contributions"
+                                                     aria-live="polite">
+                                                    <div class="text-muted"><i class="bi bi-hourglass-split"></i> Il percorso dello studente verrà calcolato dopo i metadati.</div>
                                                 </div>
                                                 <ul class="list-group list-group-flush small github-commits-list d-none" data-rendered="0">
                                                     <?php foreach ($commitsList as $c): ?>
@@ -2954,31 +2962,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
         const githubMetadataCache = new Map();
 
-        async function loadRepoMetadata(container, repoFull, studentId) {
-            if (!container || !repoFull || container.dataset.loaded === '1' || container.dataset.loading === '1') return;
+        async function loadRepoMetadata(container, repoFull, studentId, signal) {
+            if (!container || !repoFull || container.dataset.loaded === '1' || container.dataset.loading === '1') {
+                return container?._metadataData || null;
+            }
             container.dataset.studentId = studentId || container.dataset.studentId || '';
             if (githubMetadataCache.has(repoFull)) {
-                renderRepoMetadata(container, githubMetadataCache.get(repoFull), repoFull);
-                return;
+                const cached = githubMetadataCache.get(repoFull);
+                renderRepoMetadata(container, cached, repoFull);
+                return cached;
             }
             container.dataset.loading = '1';
             container.innerHTML = '<div class="text-muted"><i class="bi bi-hourglass-split"></i> Caricamento issue, branch, tag e commit…</div>';
             try {
                 const body = new URLSearchParams({action: 'repo_metadata', repo: repoFull, student_id: studentId || '', csrf_token: REVIEW_CSRF_TOKEN});
-                const response = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body});
+                const response = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body, signal});
                 const data = await response.json();
                 if (!data.ok) throw new Error(data.error || 'Metadati non disponibili');
                 githubMetadataCache.set(repoFull, data);
                 renderRepoMetadata(container, data, repoFull);
+                return data;
             } catch (error) {
+                if (error && error.name === 'AbortError') throw error;
                 container.innerHTML = '<div class="text-danger"><i class="bi bi-exclamation-triangle"></i> ' + escapeHtml(error.message || 'Errore nel caricamento dei metadati') + '</div>';
                 container.dataset.loaded = '0';
+                throw error;
             } finally {
                 delete container.dataset.loading;
             }
         }
 
-        async function loadRepoContributions(container, repoFull, studentId, locContainer) {
+        async function loadRepoContributions(container, repoFull, studentId, locContainer, signal) {
             if (!container || !repoFull || !studentId || container.dataset.contributionsLoading === '1') return null;
             const metadata = container._metadataData;
             if (!metadata) return null;
@@ -3002,7 +3016,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                     metadata: JSON.stringify(requestMetadata),
                     csrf_token: REVIEW_CSRF_TOKEN
                 });
-                const response = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body});
+                const response = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body, signal});
                 const data = await response.json();
                 if (!data.ok) throw new Error(data.error || 'Attribuzioni non disponibili');
 
@@ -3033,9 +3047,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 }
                 return data;
             } catch (error) {
+                if (error && error.name === 'AbortError') throw error;
                 const warning = '<div class="alert alert-warning py-1 px-2 small mt-2 mb-0">Attribuzioni non disponibili: ' + escapeHtml(error.message || 'errore') + '</div>';
                 container.insertAdjacentHTML('beforeend', warning);
-                return null;
+                throw error;
             } finally {
                 delete container.dataset.contributionsLoading;
             }
@@ -3109,7 +3124,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             const forceBtn = container.querySelector('.repo-loc-force');
             if (forceBtn) {
                 forceBtn.addEventListener('click', function () {
-                    loadRepoLoc(container, container.dataset.repo || '', container.dataset.ref || 'main', true);
+                    loadRepoLoc(container, container.dataset.repo || '', container.dataset.ref || 'main', true).catch(function () {
+                        // L'errore viene già mostrato nel pannello LOC.
+                    });
                 });
             }
             container.dataset.repo = repoFull;
@@ -3213,8 +3230,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             container.dataset.loaded = '1';
         }
 
-        async function loadRepoLoc(container, repoFull, ref, force) {
-            if (!container) return;
+        async function loadRepoLoc(container, repoFull, ref, force, signal) {
+            if (!container) return null;
 
             container.innerHTML = '<div class="text-muted">Calcolo LOC...</div>';
 
@@ -3222,24 +3239,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             let res = null;
             let data = null;
             try {
-                res = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body});
+                res = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body, signal});
                 const responseText = await res.text();
                 data = JSON.parse(responseText);
             } catch (error) {
+                if (error && error.name === 'AbortError') throw error;
                 const status = res && res.status ? ` (HTTP ${res.status})` : '';
                 container.innerHTML = '<div class="text-danger">Errore: risposta LOC non valida dal server' + status + '.</div>';
-                return;
+                throw error;
             }
 
             if (!data.ok) {
                 container.innerHTML = '<div class="text-danger">Errore: ' + escapeHtml(data.error || 'Errore') + '</div>';
-                return;
+                throw new Error(data.error || 'Errore LOC');
             }
 
             container._locData = data;
             container.dataset.repo = repoFull;
             container.dataset.ref = ref;
             renderRepoLoc(container, data);
+            return data;
         }
 
 	        function showCollapseElement(el) {
@@ -3275,95 +3294,181 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            await Promise.all(workers);
 	        }
 
-	        document.querySelectorAll('.show-details-btn').forEach(function (btn) {
-	            btn.addEventListener('click', async function () {
-	                const cell = btn.closest('td');
-	                if (!cell) return;
-	                const row = btn.closest('tr');
+        function createGithubReviewLoadState(row) {
+            const previous = row._githubReviewLoadState;
+            if (previous && previous.controller) {
+                previous.controller.abort();
+            }
+            const generation = (Number(row.dataset.githubReviewGeneration || '0') || 0) + 1;
+            row.dataset.githubReviewGeneration = String(generation);
+            return {
+                generation,
+                controller: new AbortController(),
+                repoFull: '',
+                ref: '',
+                promises: []
+            };
+        }
 
-                // Lista commit
+        function isGithubReviewStateCurrent(row, state) {
+            return Boolean(row && state && row._githubReviewLoadState === state && !state.controller.signal.aborted);
+        }
+
+        function setPanelState(row, panelName, state, content) {
+            const panel = row ? row.querySelector('[data-panel="' + panelName + '"]') : null;
+            if (!panel) return;
+            panel.dataset.state = state;
+            if (typeof content === 'string') {
+                panel.innerHTML = content;
+            }
+        }
+
+        function renderGithubReviewRetry(label, error) {
+            const message = error && error.message ? error.message : 'Errore nel caricamento';
+            return '<div class="alert alert-warning py-1 px-2 small mb-0" role="status">' +
+                '<i class="bi bi-exclamation-triangle"></i> ' + escapeHtml(label) + ': ' + escapeHtml(message) +
+                ' <button type="button" class="btn btn-sm btn-link p-0 github-review-retry" data-retry-panel="' + escapeHtml(label) + '">Riprova</button></div>';
+        }
+
+        function startStudentCommitDetails(row, state) {
+            const detailButtons = Array.from(row.querySelectorAll('.commit-details-btn[data-student-owned="1"]')).slice(0, 20);
+            const promises = detailButtons.map(function (detailBtn) {
+                const targetSelector = detailBtn.dataset.target || '';
+                const collapseSelector = detailBtn.getAttribute('data-bs-target') || detailBtn.dataset.bsTarget || targetSelector;
+                const collapseEl = collapseSelector ? document.querySelector(collapseSelector) : null;
+                if (collapseEl) showCollapseElement(collapseEl);
+                const container = targetSelector ? document.querySelector(targetSelector + ' .commit-details') : null;
+                const repoFull = detailBtn.dataset.repo || '';
+                const sha = detailBtn.dataset.sha || '';
+                if (!container || container.dataset.loaded === '1' || !repoFull || !sha) return Promise.resolve();
+                return loadCommitDetails(container, repoFull, sha, false).catch(function () {
+                    // Il dettaglio del singolo commit non deve bloccare gli altri pannelli.
+                });
+            });
+            return Promise.allSettled(promises).then(function () { return state; });
+        }
+
+        function startGithubReviewLoads(row, context) {
+            const state = createGithubReviewLoadState(row);
+            row._githubReviewLoadState = state;
+            state.repoFull = context.repoFull || '';
+            state.ref = context.ref || 'main';
+
+            const locContainer = context.locContainer;
+            const metadataContainer = context.metadataContainer;
+            const graphContainer = context.graphContainer;
+            const contributionsContainer = context.contributionsContainer;
+            if (locContainer && locContainer.dataset.loaded !== '1') {
+                setPanelState(row, 'loc', 'loading', '<div class="text-muted">Calcolo LOC…</div>');
+            }
+            if (metadataContainer && metadataContainer.dataset.loaded !== '1') {
+                setPanelState(row, 'metadata', 'loading', '<div class="text-muted"><i class="bi bi-hourglass-split"></i> Caricamento issue, branch, tag e commit…</div>');
+            }
+            if (graphContainer && graphContainer.dataset.loaded !== '1') {
+                setPanelState(row, 'graph', 'loading', '<div class="text-muted small"><i class="bi bi-diagram-3"></i> Preparazione del grafo…</div>');
+            }
+            if (contributionsContainer) {
+                setPanelState(row, 'contributions', 'loading', '<div class="text-muted"><i class="bi bi-person-check"></i> Caricamento percorso dello studente…</div>');
+            }
+
+            const locPromise = locContainer && locContainer.dataset.loaded === '1'
+                ? Promise.resolve(locContainer._locData || null)
+                : loadRepoLoc(locContainer, state.repoFull, state.ref, false, state.controller.signal);
+            const metadataPromise = metadataContainer && state.repoFull
+                ? loadRepoMetadata(metadataContainer, state.repoFull, context.studentId || '', state.controller.signal)
+                : Promise.resolve(null);
+            state.promises = [locPromise, metadataPromise];
+
+            locPromise.then(function (data) {
+                if (!isGithubReviewStateCurrent(row, state)) return;
+                if (data && locContainer && locContainer.dataset.loaded !== '1') renderRepoLoc(locContainer, data);
+                setPanelState(row, 'loc', 'success');
+            }).catch(function (error) {
+                if (error && error.name === 'AbortError' || !isGithubReviewStateCurrent(row, state)) return;
+                setPanelState(row, 'loc', 'error', renderGithubReviewRetry('LOC', error));
+            });
+
+            const contributionsPromise = metadataPromise.then(function (metadata) {
+                if (!metadata || !isGithubReviewStateCurrent(row, state)) return null;
+                if (graphContainer) {
+                    renderWorktreeGraph(graphContainer, metadata, state.repoFull);
+                    setPanelState(row, 'graph', 'success');
+                }
+                setPanelState(row, 'metadata', 'success');
+                return loadRepoContributions(metadataContainer, state.repoFull, context.studentId || '', locContainer, state.controller.signal);
+            });
+            state.promises.push(contributionsPromise);
+
+            metadataPromise.then(function (metadata) {
+                if (!metadata || !isGithubReviewStateCurrent(row, state)) return;
+                renderWorktreeGraph(graphContainer, metadata, state.repoFull);
+            }).catch(function (error) {
+                if (error && error.name === 'AbortError' || !isGithubReviewStateCurrent(row, state)) return;
+                setPanelState(row, 'metadata', 'error', renderGithubReviewRetry('Metadati', error));
+                setPanelState(row, 'graph', 'error', renderGithubReviewRetry('Grafo', error));
+                setPanelState(row, 'contributions', 'error', renderGithubReviewRetry('Percorso studente', error));
+            });
+
+            contributionsPromise.then(function (data) {
+                if (!isGithubReviewStateCurrent(row, state)) return;
+                if (data) {
+                    setPanelState(row, 'contributions', 'success', '<div class="text-success small"><i class="bi bi-check-circle"></i> Percorso dello studente aggiornato.</div>');
+                    if (graphContainer && metadataContainer && metadataContainer._metadataData) {
+                        renderWorktreeGraph(graphContainer, metadataContainer._metadataData, state.repoFull);
+                    }
+                    startStudentCommitDetails(row, state);
+                }
+            }).catch(function (error) {
+                if (error && error.name === 'AbortError' || !isGithubReviewStateCurrent(row, state)) return;
+                setPanelState(row, 'contributions', 'error', renderGithubReviewRetry('Percorso studente', error));
+            });
+
+            Promise.allSettled([locPromise, metadataPromise]).then(function () { return state; });
+            return {generation: state.generation, controller: state.controller, promises: state.promises};
+        }
+
+        document.querySelectorAll('.show-details-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                const cell = btn.closest('td');
+                if (!cell) return;
+                const row = btn.closest('tr');
                 const commitsToggleBtn = cell.querySelector('.commits-toggle-btn');
                 const commitsTarget = commitsToggleBtn ? (commitsToggleBtn.getAttribute('data-bs-target') || commitsToggleBtn.dataset.bsTarget || '') : '';
                 const commitsEl = commitsTarget ? document.querySelector(commitsTarget) : null;
-
-                const isOpen = (commitsEl && commitsEl.classList.contains('show'));
+                const isOpen = Boolean(commitsEl && commitsEl.classList.contains('show'));
                 if (isOpen) {
-                    if (commitsEl) {
-                        hideCollapseElement(commitsEl);
-                    }
+                    if (row._githubReviewLoadState && row._githubReviewLoadState.controller) row._githubReviewLoadState.controller.abort();
+                    if (commitsEl) hideCollapseElement(commitsEl);
                     const graphContainer = row.querySelector('.github-worktree-graph');
-                    if (graphContainer) {
-                        hideCollapseElement(graphContainer);
-                    }
+                    if (graphContainer) hideCollapseElement(graphContainer);
                     const locContainer = cell.querySelector('.repo-loc');
                     const locCollapse = locContainer ? locContainer.closest('.collapse') : null;
-                    if (locCollapse) {
-                        hideCollapseElement(locCollapse);
-                    }
+                    if (locCollapse) hideCollapseElement(locCollapse);
                     btn.innerHTML = '<i class="bi bi-eye"></i> Mostra dettagli';
                     return;
                 }
 
-                // Apri e carica (senza ricaricare se già caricato)
                 btn.innerHTML = '<i class="bi bi-eye-slash"></i> Nascondi dettagli';
-
-	                if (commitsEl) {
-	                    showCollapseElement(commitsEl);
-	                }
-
-                // La LOC è parte dei dettagli: si apre e si calcola per prima,
-                // senza un pulsante separato nella riga.
+                if (commitsEl) showCollapseElement(commitsEl);
                 const locContainer = cell.querySelector('.repo-loc');
-                if (locContainer) {
-                    const locCollapse = locContainer.closest('.collapse');
-                    if (locCollapse) showCollapseElement(locCollapse);
-                    if (locContainer.dataset.loaded !== '1') {
-                        await loadRepoLoc(locContainer, locContainer.dataset.repo || '', locContainer.dataset.ref || 'main', false);
-                    }
-                }
-
+                const locCollapse = locContainer ? locContainer.closest('.collapse') : null;
+                if (locCollapse) showCollapseElement(locCollapse);
                 const metadataContainer = cell.querySelector('.github-review-metadata');
                 const metadataRepo = metadataContainer ? (metadataContainer.dataset.repo || '') : '';
-                const studentId = btn.dataset.studentId || (metadataContainer ? metadataContainer.dataset.studentId : '') || '';
                 const graphContainer = row.querySelector('.github-worktree-graph');
-                if (graphContainer) {
-                    showCollapseElement(graphContainer);
-                }
-                if (metadataContainer && metadataRepo) {
-                    await loadRepoMetadata(metadataContainer, metadataRepo, studentId);
-                    await loadRepoContributions(metadataContainer, metadataRepo, studentId, locContainer);
-                    if (graphContainer && metadataContainer._metadataData) {
-                        renderWorktreeGraph(graphContainer, metadataContainer._metadataData, metadataRepo);
-                    }
-                }
-
-	                // Solo i commit attribuiti allo studente vengono espansi e
-	                // caricati automaticamente; gli altri restano compressi.
-	                const detailButtons = Array.from(cell.querySelectorAll('.commit-details-btn[data-student-owned="1"]')).slice(0, 20);
-	                for (const detailBtn of detailButtons) {
-                        const targetSelector = detailBtn.dataset.target || '';
-                        const collapseSelector = detailBtn.getAttribute('data-bs-target') || detailBtn.dataset.bsTarget || targetSelector;
-                        const collapseEl = collapseSelector ? document.querySelector(collapseSelector) : null;
-                        if (collapseEl) {
-                            showCollapseElement(collapseEl);
-                        }
-
-                        const container = targetSelector ? document.querySelector(targetSelector + ' .commit-details') : null;
-                        if (!container) continue;
-                        if (container.dataset.loaded === '1') continue;
-
-                        const repoFull = detailBtn.dataset.repo || '';
-                        const sha = detailBtn.dataset.sha || '';
-                        if (!repoFull || !sha) continue;
-
-                        try {
-                            await loadCommitDetails(container, repoFull, sha, false);
-                        } catch (e) {
-                            // continua con i successivi
-                        }
-	                }
- 	            });
- 	        });
+                if (graphContainer) showCollapseElement(graphContainer);
+                const contributionsContainer = cell.querySelector('[data-panel="contributions"]');
+                startGithubReviewLoads(row, {
+                    studentId: btn.dataset.studentId || (metadataContainer ? metadataContainer.dataset.studentId : '') || '',
+                    repoFull: metadataRepo,
+                    ref: locContainer ? (locContainer.dataset.ref || 'main') : 'main',
+                    locContainer,
+                    metadataContainer,
+                    graphContainer,
+                    contributionsContainer
+                });
+            });
+        });
 
 	        const RUBRIC_CTX = {
 	            test_id: <?= \App\Core\Security\OutputEncoder::json((string)$testId) ?>,

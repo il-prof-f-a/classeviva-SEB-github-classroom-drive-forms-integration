@@ -40,7 +40,8 @@ $require(str_contains($source, 'hop === 0'), 'LOC non limita il token OAuth al p
 $require(!str_contains($source, 'repo-loc-btn'), 'il pulsante LOC separato è ancora presente');
 $showDetailsStart = strpos($source, "document.querySelectorAll('.show-details-btn')");
 $showDetailsHandler = $showDetailsStart === false ? '' : substr($source, $showDetailsStart, 5200);
-$require(str_contains($showDetailsHandler, 'await loadRepoLoc('), 'LOC non viene caricata all’apertura dei dettagli');
+$require(str_contains($source, 'function startGithubReviewLoads'), 'coordinatore caricamento dettagli assente');
+$require(str_contains($source, 'loadRepoLoc(locContainer'), 'LOC non viene avviata dal coordinatore all’apertura dei dettagli');
 $require(str_contains($showDetailsHandler, 'const locContainer'), 'contenitore LOC non gestito da Mostra dettagli');
 $require(str_contains($source, 'function hideCollapseElement'), 'helper di chiusura dei pannelli collapse assente');
 $require(str_contains($showDetailsHandler, 'hideCollapseElement(locCollapse)'), 'chiusura dettagli non nasconde il pannello LOC');
