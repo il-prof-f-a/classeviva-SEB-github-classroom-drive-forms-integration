@@ -2474,6 +2474,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                                 </div>
                                                 <div class="github-review-contributions-status github-review-panel border rounded p-2 mb-2"
                                                      data-panel="contributions"
+                                                     data-contribution-state="idle"
                                                      aria-live="polite">
                                                     <div class="text-muted"><i class="bi bi-hourglass-split"></i> Il percorso dello studente verrà calcolato dopo i metadati.</div>
                                                 </div>
@@ -3048,8 +3049,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 return data;
             } catch (error) {
                 if (error && error.name === 'AbortError') throw error;
-                const warning = '<div class="alert alert-warning py-1 px-2 small mt-2 mb-0">Attribuzioni non disponibili: ' + escapeHtml(error.message || 'errore') + '</div>';
-                container.insertAdjacentHTML('beforeend', warning);
                 throw error;
             } finally {
                 delete container.dataset.contributionsLoading;
@@ -3330,6 +3329,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 ' <button type="button" class="btn btn-sm btn-link p-0 github-review-retry" data-retry-panel="' + escapeHtml(label) + '">Riprova</button></div>';
         }
 
+        function renderGithubReviewContributionStatus(data) {
+            const commits = data && Array.isArray(data.commits) ? data.commits : [];
+            const ownedCommits = commits.filter(function (commit) {
+                return commit && (commit.student_owned === true || commit.student_owned === 1 || commit.student_owned === '1');
+            }).length;
+            const loc = data && data.loc && data.loc.student_loc && data.loc.student_loc.student
+                ? data.loc.student_loc.student
+                : null;
+            const locLabel = loc && Number.isFinite(Number(loc.total)) ? ' · LOC attribuite: ' + escapeHtml(loc.total) : '';
+            const partial = data && data.partial ? ' <span class="text-warning">(parziale)</span>' : '';
+            return '<div class="small" data-contribution-state="success"><i class="bi bi-person-check text-success"></i> Percorso dello studente: ' +
+                '<strong>' + escapeHtml(ownedCommits) + '</strong> commit attribuiti' + locLabel + partial + '.</div>';
+        }
+
+        function getGithubReviewLoadContext(row) {
+            const btn = row ? row.querySelector('.show-details-btn') : null;
+            const metadataContainer = row ? row.querySelector('.github-review-metadata') : null;
+            const locContainer = row ? row.querySelector('.repo-loc') : null;
+            return {
+                studentId: btn?.dataset.studentId || metadataContainer?.dataset.studentId || '',
+                repoFull: metadataContainer?.dataset.repo || '',
+                ref: locContainer?.dataset.ref || 'main',
+                locContainer,
+                metadataContainer,
+                graphContainer: row ? row.querySelector('.github-worktree-graph') : null,
+                contributionsContainer: row ? row.querySelector('[data-panel="contributions"]') : null
+            };
+        }
+
+        function retryGithubReviewPanel(row, panelName) {
+            if (!row || !panelName) return;
+            const context = getGithubReviewLoadContext(row);
+            if (panelName === 'LOC' && context.locContainer) {
+                setPanelState(row, 'loc', 'loading', '<div class="text-muted">Calcolo LOC…</div>');
+                loadRepoLoc(context.locContainer, context.repoFull, context.ref, true, row._githubReviewLoadState?.controller?.signal)
+                    .then(function () { setPanelState(row, 'loc', 'success'); })
+                    .catch(function (error) {
+                        if (error && error.name === 'AbortError') return;
+                        setPanelState(row, 'loc', 'error', renderGithubReviewRetry('LOC', error));
+                    });
+                return;
+            }
+            startGithubReviewLoads(row, context);
+        }
+
         function startStudentCommitDetails(row, state) {
             const detailButtons = Array.from(row.querySelectorAll('.commit-details-btn[data-student-owned="1"]')).slice(0, 20);
             const promises = detailButtons.map(function (detailBtn) {
@@ -3412,7 +3456,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             contributionsPromise.then(function (data) {
                 if (!isGithubReviewStateCurrent(row, state)) return;
                 if (data) {
-                    setPanelState(row, 'contributions', 'success', '<div class="text-success small"><i class="bi bi-check-circle"></i> Percorso dello studente aggiornato.</div>');
+                    setPanelState(row, 'contributions', 'success', renderGithubReviewContributionStatus(data));
                     if (graphContainer && metadataContainer && metadataContainer._metadataData) {
                         renderWorktreeGraph(graphContainer, metadataContainer._metadataData, state.repoFull);
                     }
@@ -3426,6 +3470,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             Promise.allSettled([locPromise, metadataPromise]).then(function () { return state; });
             return {generation: state.generation, controller: state.controller, promises: state.promises};
         }
+
+        document.addEventListener('click', function (event) {
+            const retryButton = event.target.closest ? event.target.closest('.github-review-retry') : null;
+            if (!retryButton) return;
+            const row = retryButton.closest('tr');
+            if (!row) return;
+            event.preventDefault();
+            retryGithubReviewPanel(row, retryButton.dataset.retryPanel || '');
+        });
 
         document.querySelectorAll('.show-details-btn').forEach(function (btn) {
             btn.addEventListener('click', function () {

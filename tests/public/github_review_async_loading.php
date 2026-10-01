@@ -29,6 +29,9 @@ $require(str_contains($review, 'const locPromise =') && str_contains($review, 'l
 $require(str_contains($review, 'const metadataPromise =') && str_contains($review, 'loadRepoMetadata(metadataContainer'), 'metadati non partono dal coordinatore');
 $require(str_contains($review, 'Promise.allSettled([locPromise, metadataPromise])'), 'LOC e metadati non sono coordinati in parallelo');
 $require(str_contains($review, 'runWithConcurrency'), 'manca il pool per i dettagli commit');
+$require(str_contains($review, 'function renderGithubReviewContributionStatus'), 'manca il riepilogo dedicato del percorso studente');
+$require(str_contains($review, 'data-contribution-state'), 'manca lo stato dedicato del percorso studente');
+$require(str_contains($review, 'function retryGithubReviewPanel'), 'manca il retry mirato di un pannello');
 
 $showDetailsStart = strpos($review, "document.querySelectorAll('.show-details-btn')");
 $showDetailsHandler = $showDetailsStart === false ? '' : substr($review, $showDetailsStart, 7000);
