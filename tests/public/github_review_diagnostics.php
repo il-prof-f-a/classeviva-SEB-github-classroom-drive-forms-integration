@@ -28,6 +28,7 @@ $require(str_contains($integration, 'blame_snapshot_start'), 'inizio snapshot bl
 $require(str_contains($integration, 'blame_snapshot_result'), 'risultato snapshot blame non tracciato');
 $require(str_contains($logger, 'LOCK_EX'), 'scrittura log diagnostico senza lock');
 $require(str_contains($logger, '[redacted]'), 'sanitizzazione diagnostica assente');
+$require(str_contains($logger, 'configuredDirectory[2]') || str_contains($logger, "preg_match('~^[A-Za-z]:[\\\\/]~'"), 'rilevamento percorso Windows del logger può generare warning e contaminare le risposte JSON');
 $require(!str_contains($integration, "'accessToken'"), 'token GitHub incluso nel contesto diagnostico');
 
 if ($failures !== []) {

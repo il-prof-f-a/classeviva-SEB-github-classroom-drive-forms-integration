@@ -61,8 +61,11 @@ final class DiagnosticsLogger
         if ($configuredDirectory === '') {
             return $root . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'logs';
         }
-        $isAbsolute = str_starts_with($configuredDirectory, DIRECTORY_SEPARATOR)
-            || preg_match('/^[A-Za-z]:[\\\/]/', $configuredDirectory) === 1;
+        $isWindowsAbsolute = strlen($configuredDirectory) >= 3
+            && ctype_alpha($configuredDirectory[0])
+            && $configuredDirectory[1] === ':'
+            && ($configuredDirectory[2] === '/' || $configuredDirectory[2] === '\\');
+        $isAbsolute = str_starts_with($configuredDirectory, DIRECTORY_SEPARATOR) || $isWindowsAbsolute;
         return $isAbsolute
             ? $configuredDirectory
             : $root . DIRECTORY_SEPARATOR . ltrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $configuredDirectory), DIRECTORY_SEPARATOR);
