@@ -572,6 +572,7 @@ $architectureTests = [
     'github review commit loc' => __DIR__ . '/public/github_review_commit_loc.php',
     'github review metadata' => __DIR__ . '/public/github_review_metadata.php',
     'github review contributions' => __DIR__ . '/public/github_review_contributions.php',
+    'github review async loading' => __DIR__ . '/public/github_review_async_loading.php',
     'github review roster names' => __DIR__ . '/public/github_review_roster_names.php',
     'github review family note' => __DIR__ . '/public/github_assignment_review_family_note.php',
     'github review saved grades' => __DIR__ . '/public/github_assignment_review_saved_grades.php',
