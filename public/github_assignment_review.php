@@ -2872,7 +2872,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 ' data-student-owned="' + (studentOwned ? '1' : '0') + '" data-attribution-state="' + escapeHtml(attributionState) + '"' +
                 ' data-target="#' + escapeHtml(itemId) + '" data-bs-toggle="collapse" data-bs-target="#' + escapeHtml(itemId) + '">Dettagli</button>' : '';
             const details = sha ? '<div class="collapse mt-2" id="' + escapeHtml(itemId) + '">' +
-                '<div class="border rounded p-2 bg-light commit-details" data-loaded="0"><div class="text-muted">Clicca “Dettagli” per caricare stats/files.</div></div>' +
+                '<div class="border rounded p-2 bg-light commit-details" data-loaded="0" data-commit-state="' + (studentOwned ? 'loading' : 'collapsed') + '"><div class="text-muted">Clicca “Dettagli” per caricare stats/files.</div></div>' +
                 '</div>' : '';
             return '<li class="list-group-item px-0 ' + attributionClass + '" data-student-owned="' + (studentOwned ? '1' : '0') + '" data-attribution-state="' + escapeHtml(attributionState) + '">' +
                 '<button type="button" class="btn btn-link p-0 text-start fw-bold github-meta-toggle"' +
@@ -3055,17 +3055,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             }
         }
 
-        async function loadCommitDetails(container, repoFull, sha, withComments) {
+        async function loadCommitDetails(container, repoFull, sha, withComments, signal) {
             if (!container) return;
 
+            container.setAttribute('data-commit-state', 'loading');
             container.innerHTML = '<div class="text-muted">Caricamento…</div>';
 
             const body = new URLSearchParams({action: 'commit_details', repo: repoFull, sha, with_comments: withComments ? '1' : '0'});
-            const res = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body});
+            const res = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body, signal});
             const data = await res.json();
 
             if (!data.ok) {
                 container.innerHTML = '<div class="text-danger">Errore: ' + escapeHtml(data.error || 'Errore') + '</div>';
+                container.setAttribute('data-commit-state', 'error');
                 return;
             }
 
@@ -3120,6 +3122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
             container.innerHTML = html;
             container.dataset.loaded = '1';
+            container.setAttribute('data-commit-state', 'loaded');
             const forceBtn = container.querySelector('.repo-loc-force');
             if (forceBtn) {
                 forceBtn.addEventListener('click', function () {
@@ -3374,9 +3377,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             startGithubReviewLoads(row, context);
         }
 
-        function startStudentCommitDetails(row, state) {
-            const detailButtons = Array.from(row.querySelectorAll('.commit-details-btn[data-student-owned="1"]')).slice(0, 20);
-            const promises = detailButtons.map(function (detailBtn) {
+        const GITHUB_REVIEW_COMMIT_CONCURRENCY = 4;
+
+        function loadCommitDetailsProgressively(row, commits, context, state) {
+            const studentOwnedCommits = Array.isArray(commits) ? commits.filter(function (commit) {
+                return commit && (commit.student_owned === true || commit.student_owned === 1 || commit.student_owned === '1');
+            }) : [];
+            const commits = Array.from(row.querySelectorAll('.commit-details-btn[data-student-owned="1"]')).slice(0, studentOwnedCommits.length || 20);
+            return runWithConcurrency(commits, GITHUB_REVIEW_COMMIT_CONCURRENCY, function (detailBtn) {
                 const targetSelector = detailBtn.dataset.target || '';
                 const collapseSelector = detailBtn.getAttribute('data-bs-target') || detailBtn.dataset.bsTarget || targetSelector;
                 const collapseEl = collapseSelector ? document.querySelector(collapseSelector) : null;
@@ -3385,11 +3393,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 const repoFull = detailBtn.dataset.repo || '';
                 const sha = detailBtn.dataset.sha || '';
                 if (!container || container.dataset.loaded === '1' || !repoFull || !sha) return Promise.resolve();
-                return loadCommitDetails(container, repoFull, sha, false).catch(function () {
+                return loadCommitDetails(container, repoFull, sha, false, state.controller.signal).catch(function () {
                     // Il dettaglio del singolo commit non deve bloccare gli altri pannelli.
                 });
             });
-            return Promise.allSettled(promises).then(function () { return state; });
         }
 
         function startGithubReviewLoads(row, context) {
@@ -3460,7 +3467,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                     if (graphContainer && metadataContainer && metadataContainer._metadataData) {
                         renderWorktreeGraph(graphContainer, metadataContainer._metadataData, state.repoFull);
                     }
-                    startStudentCommitDetails(row, state);
+                    loadCommitDetailsProgressively(row, metadataContainer._metadataData?.commits || [], context, state)
+                        .catch(function () {
+                            // Il pool dei dettagli resta indipendente dagli altri pannelli.
+                        });
                 }
             }).catch(function (error) {
                 if (error && error.name === 'AbortError' || !isGithubReviewStateCurrent(row, state)) return;

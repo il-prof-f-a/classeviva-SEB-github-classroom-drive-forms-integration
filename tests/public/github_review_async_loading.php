@@ -32,6 +32,10 @@ $require(str_contains($review, 'runWithConcurrency'), 'manca il pool per i detta
 $require(str_contains($review, 'function renderGithubReviewContributionStatus'), 'manca il riepilogo dedicato del percorso studente');
 $require(str_contains($review, 'data-contribution-state'), 'manca lo stato dedicato del percorso studente');
 $require(str_contains($review, 'function retryGithubReviewPanel'), 'manca il retry mirato di un pannello');
+$require(str_contains($review, 'function loadCommitDetailsProgressively'), 'manca il caricamento progressivo dei dettagli commit');
+$require(str_contains($review, 'GITHUB_REVIEW_COMMIT_CONCURRENCY = 4'), 'il limite del pool non è esplicito');
+$require(str_contains($review, 'runWithConcurrency(commits'), 'i dettagli commit non usano il pool');
+$require(str_contains($review, "setAttribute('data-commit-state', 'loading')"), 'manca lo stato loading del singolo commit');
 
 $showDetailsStart = strpos($review, "document.querySelectorAll('.show-details-btn')");
 $showDetailsHandler = $showDetailsStart === false ? '' : substr($review, $showDetailsStart, 7000);
