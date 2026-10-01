@@ -39,6 +39,7 @@ $require(str_contains($review, "setAttribute('data-commit-state', 'loading')"), 
 $require(str_contains($review, 'function githubMetadataCacheKey'), 'manca la chiave cache metadata repository/ref');
 $require(str_contains($review, "repoFull + '@' + (ref || 'main')"), 'la cache metadata non include il ref');
 $require(substr_count($review, 'aria-live="polite"') >= 4, 'i quattro pannelli non hanno feedback ARIA indipendente');
+$require(!preg_match('/function loadCommitDetailsProgressively\(row, commits, context, state\).*?const commits =/s', $review), 'il coordinatore commit ridefinisce il parametro commits');
 
 $showDetailsStart = strpos($review, "document.querySelectorAll('.show-details-btn')");
 $showDetailsHandler = $showDetailsStart === false ? '' : substr($review, $showDetailsStart, 7000);

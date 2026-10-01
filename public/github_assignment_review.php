@@ -3386,8 +3386,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
         const GITHUB_REVIEW_COMMIT_CONCURRENCY = 4;
 
-        function loadCommitDetailsProgressively(row, commits, context, state) {
-            const studentOwnedCommits = Array.isArray(commits) ? commits.filter(function (commit) {
+        function loadCommitDetailsProgressively(row, commitRows, context, state) {
+            const studentOwnedCommits = Array.isArray(commitRows) ? commitRows.filter(function (commit) {
                 return commit && (commit.student_owned === true || commit.student_owned === 1 || commit.student_owned === '1');
             }) : [];
             const commits = Array.from(row.querySelectorAll('.commit-details-btn[data-student-owned="1"]')).slice(0, studentOwnedCommits.length || 20);
