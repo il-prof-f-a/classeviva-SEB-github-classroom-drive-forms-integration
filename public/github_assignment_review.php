@@ -656,6 +656,115 @@ if ($postAction === 'repo_metadata') {
             'truncated' => $commitTruncated,
         ]);
 
+        // Branch e issue non devono attendere l'analisi dell'origine di ogni
+        // commit: su repository grandi quella fase può richiedere molto
+        // tempo e lasciava il pannello vuoto per tutta la durata dello
+        // caricamento. Recuperiamo quindi i metadati ausiliari prima del
+        // ciclo costoso dei commit e li inviamo subito nello stream.
+        $branches = [];
+        $defaultBranch = '';
+        if ($stream) {
+            ghReviewStreamEmit(['type' => 'status', 'panel' => 'metadata', 'stage' => 'branches', 'message' => 'Caricamento branch…']);
+        }
+        try {
+            $repository = $github->getRepository($owner, $repo);
+            $defaultBranch = trim((string)($repository['default_branch'] ?? ''));
+            $branchResult = $github->listRepoBranchesAll($owner, $repo, 100, 10);
+            $branchItems = $branchResult['items'] ?? [];
+            $branchOriginLimit = 50;
+            foreach (array_values($branchItems) as $branchIndex => $branchItem) {
+                $branchName = is_array($branchItem)
+                    ? trim((string)($branchItem['name'] ?? ''))
+                    : trim((string)$branchItem);
+                if ($branchName === '') {
+                    continue;
+                }
+                $branchPayload = [
+                    'name' => $branchName,
+                    'head_sha' => is_array($branchItem) ? strtolower(trim((string)($branchItem['commit']['sha'] ?? ''))) : '',
+                    'origin_source' => $branchName !== '' && $branchName === $defaultBranch ? 'default_branch' : 'unknown',
+                    'first_unique_commit_sha' => null,
+                    'first_unique_commit_author_login' => null,
+                    'first_unique_commit_author_email' => null,
+                ];
+                if ($branchName !== $defaultBranch && $branchIndex < $branchOriginLimit && $defaultBranch !== '') {
+                    try {
+                        $comparison = $github->compareCommits($owner, $repo, $defaultBranch, $branchName);
+                        $comparisonCommits = is_array($comparison['commits'] ?? null) ? $comparison['commits'] : [];
+                        $firstUnique = $comparisonCommits[0] ?? null;
+                        if (is_array($firstUnique)) {
+                            $branchPayload['origin_source'] = 'first_unique_commit';
+                            $branchPayload['first_unique_commit_sha'] = trim((string)($firstUnique['sha'] ?? '')) ?: null;
+                            $branchPayload['first_unique_commit_author_login'] = trim((string)($firstUnique['author']['login'] ?? '')) ?: null;
+                            $branchPayload['first_unique_commit_author_email'] = trim((string)($firstUnique['commit']['author']['email'] ?? '')) ?: null;
+                        }
+                    } catch (Throwable $branchOriginError) {
+                        $warnings[] = 'Origine branch non disponibile per ' . $branchName . '.';
+                    }
+                } elseif ($branchName !== $defaultBranch && $branchIndex >= $branchOriginLimit) {
+                    $warnings[] = 'Origine branch parziale: raggiunto il limite di analisi.';
+                }
+                $branches[] = $branchPayload;
+            }
+        } catch (Throwable $branchError) {
+            $warnings[] = 'Branch non disponibili.';
+        }
+        $branches = GitHubContributionAttribution::attributeBranches($branches, $metadataIdentities);
+        if ($stream) {
+            foreach ($branches as $branchRow) {
+                ghReviewStreamEmit([
+                    'type' => 'metadata_item',
+                    'panel' => 'metadata',
+                    'kind' => 'branch',
+                    'data' => $branchRow,
+                ]);
+            }
+            ghReviewStreamEmit([
+                'type' => 'metadata_progress',
+                'panel' => 'metadata',
+                'kind' => 'branches',
+                'complete' => true,
+            ]);
+        }
+
+        $rawIssues = [];
+        $issueResult = [];
+        if ($stream) {
+            ghReviewStreamEmit(['type' => 'status', 'panel' => 'metadata', 'stage' => 'issues', 'message' => 'Caricamento issue…']);
+        }
+        try {
+            $issueResult = $github->listRepoIssuesAll($owner, $repo, 'all', 100, 10);
+            $rawIssues = $issueResult['items'] ?? [];
+            if (is_array($rawIssues)) {
+                usort($rawIssues, static function ($left, $right): int {
+                    $leftDate = is_array($left) ? (string)($left['created_at'] ?? '') : '';
+                    $rightDate = is_array($right) ? (string)($right['created_at'] ?? '') : '';
+                    $leftTime = $leftDate !== '' ? (strtotime($leftDate) ?: 0) : 0;
+                    $rightTime = $rightDate !== '' ? (strtotime($rightDate) ?: 0) : 0;
+                    return $leftTime <=> $rightTime
+                        ?: ((int)($left['number'] ?? 0) <=> (int)($right['number'] ?? 0));
+                });
+            }
+        } catch (Throwable $issueError) {
+            $warnings[] = 'Issue non disponibili.';
+        }
+
+        // Il titolo e lo stato dell'issue sono utili anche senza attendere la
+        // timeline dei commit collegati: emettiamo subito una prima versione
+        // e invieremo un issue_update quando la timeline sarà disponibile.
+        $issues = GitHubReviewMetadata::normalizeIssues($rawIssues, [], $owner, $repo);
+        $issues = GitHubContributionAttribution::attributeIssues($issues, $metadataIdentities);
+        if ($stream) {
+            foreach ($issues as $issueRow) {
+                ghReviewStreamEmit([
+                    'type' => 'metadata_item',
+                    'panel' => 'metadata',
+                    'kind' => 'issue',
+                    'data' => $issueRow,
+                ]);
+            }
+        }
+
         $commitPayload = [];
         $originFailures = 0;
         $originLimit = 250;
@@ -749,88 +858,17 @@ if ($postAction === 'repo_metadata') {
                     ],
                 ]);
             }
+            ghReviewStreamEmit([
+                'type' => 'metadata_progress',
+                'panel' => 'metadata',
+                'kind' => 'commits',
+                'complete' => true,
+            ]);
         }
 
-        $branches = [];
-        $defaultBranch = '';
-        if ($stream) {
-            ghReviewStreamEmit(['type' => 'status', 'panel' => 'metadata', 'stage' => 'branches', 'message' => 'Caricamento branch…']);
-        }
-        try {
-            $repository = $github->getRepository($owner, $repo);
-            $defaultBranch = trim((string)($repository['default_branch'] ?? ''));
-            $branchResult = $github->listRepoBranchesAll($owner, $repo, 100, 10);
-            $branchItems = $branchResult['items'] ?? [];
-            $branchOriginLimit = 50;
-            foreach (array_values($branchItems) as $branchIndex => $branchItem) {
-                $branchName = is_array($branchItem)
-                    ? trim((string)($branchItem['name'] ?? ''))
-                    : trim((string)$branchItem);
-                if ($branchName === '') {
-                    continue;
-                }
-                $branchPayload = [
-                    'name' => $branchName,
-                    'head_sha' => is_array($branchItem) ? strtolower(trim((string)($branchItem['commit']['sha'] ?? ''))) : '',
-                    'origin_source' => $branchName !== '' && $branchName === $defaultBranch ? 'default_branch' : 'unknown',
-                    'first_unique_commit_sha' => null,
-                    'first_unique_commit_author_login' => null,
-                    'first_unique_commit_author_email' => null,
-                ];
-                if ($branchName !== $defaultBranch && $branchIndex < $branchOriginLimit && $defaultBranch !== '') {
-                    try {
-                        $comparison = $github->compareCommits($owner, $repo, $defaultBranch, $branchName);
-                        $comparisonCommits = is_array($comparison['commits'] ?? null) ? $comparison['commits'] : [];
-                        $firstUnique = $comparisonCommits[0] ?? null;
-                        if (is_array($firstUnique)) {
-                            $branchPayload['origin_source'] = 'first_unique_commit';
-                            $branchPayload['first_unique_commit_sha'] = trim((string)($firstUnique['sha'] ?? '')) ?: null;
-                            $branchPayload['first_unique_commit_author_login'] = trim((string)($firstUnique['author']['login'] ?? '')) ?: null;
-                            $branchPayload['first_unique_commit_author_email'] = trim((string)($firstUnique['commit']['author']['email'] ?? '')) ?: null;
-                        }
-                    } catch (Throwable $branchOriginError) {
-                        $warnings[] = 'Origine branch non disponibile per ' . $branchName . '.';
-                    }
-                } elseif ($branchName !== $defaultBranch && $branchIndex >= $branchOriginLimit) {
-                    $warnings[] = 'Origine branch parziale: raggiunto il limite di analisi.';
-                }
-                $branches[] = $branchPayload;
-                if ($stream) {
-                    ghReviewStreamEmit([
-                        'type' => 'metadata_item',
-                        'panel' => 'metadata',
-                        'kind' => 'branch',
-                        'data' => $branchPayload,
-                    ]);
-                }
-            }
-        } catch (Throwable $branchError) {
-            $warnings[] = 'Branch non disponibili.';
-        }
-        $branches = GitHubContributionAttribution::attributeBranches($branches, $metadataIdentities);
-
-        $rawIssues = [];
-        $issueResult = [];
-        if ($stream) {
-            ghReviewStreamEmit(['type' => 'status', 'panel' => 'metadata', 'stage' => 'issues', 'message' => 'Caricamento issue…']);
-        }
-        try {
-            $issueResult = $github->listRepoIssuesAll($owner, $repo, 'all', 100, 10);
-            $rawIssues = $issueResult['items'] ?? [];
-            if (is_array($rawIssues)) {
-                usort($rawIssues, static function ($left, $right): int {
-                    $leftDate = is_array($left) ? (string)($left['created_at'] ?? '') : '';
-                    $rightDate = is_array($right) ? (string)($right['created_at'] ?? '') : '';
-                    $leftTime = $leftDate !== '' ? (strtotime($leftDate) ?: 0) : 0;
-                    $rightTime = $rightDate !== '' ? (strtotime($rightDate) ?: 0) : 0;
-                    return $leftTime <=> $rightTime
-                        ?: ((int)($left['number'] ?? 0) <=> (int)($right['number'] ?? 0));
-                });
-            }
-        } catch (Throwable $issueError) {
-            $warnings[] = 'Issue non disponibili.';
-        }
-
+        // Le timeline possono richiedere una chiamata per issue; vengono
+        // caricate dopo l'emissione iniziale così non bloccano la visualizza-
+        // zione di branch e issue durante l'analisi dei commit.
         $timelines = [];
         foreach ($rawIssues as $issue) {
             if (!is_array($issue) || isset($issue['pull_request'])) {
@@ -855,10 +893,16 @@ if ($postAction === 'repo_metadata') {
                 ghReviewStreamEmit([
                     'type' => 'metadata_item',
                     'panel' => 'metadata',
-                    'kind' => 'issue',
+                    'kind' => 'issue_update',
                     'data' => $issueRow,
                 ]);
             }
+            ghReviewStreamEmit([
+                'type' => 'metadata_progress',
+                'panel' => 'metadata',
+                'kind' => 'issues',
+                'complete' => true,
+            ]);
         }
 
         if ($commitTruncated) {
@@ -887,6 +931,11 @@ if ($postAction === 'repo_metadata') {
             'tags' => $tagsBySha,
             'truncated' => $commitTruncated,
             'warnings' => array_values(array_unique($warnings)),
+            'metadata_progress' => [
+                'commits' => true,
+                'branches' => true,
+                'issues' => true,
+            ],
         ];
         if ($streamStarted) {
             ghReviewStreamEmit(['type' => 'result', 'panel' => 'metadata', 'data' => $metadataResponse]);
@@ -2258,6 +2307,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            background-color: transparent;
 	            border-color: #f0c27b;
 	        }
+        @keyframes github-metadata-badge-pulse {
+            0%, 100% {
+                opacity: .72;
+                box-shadow: 0 0 0 0 rgba(214, 158, 46, .15);
+            }
+            50% {
+                opacity: 1;
+                box-shadow: 0 0 0 .22rem rgba(214, 158, 46, .34);
+            }
+        }
+        .github-metadata-loading {
+            border: 1px solid #d69e2e !important;
+            animation: github-metadata-badge-pulse 1.35s ease-in-out infinite;
+        }
         .github-issues .list-group-item.github-attribution-other,
         .github-issues .list-group-item.github-attribution-unknown,
         .github-issues .list-group-item.github-attribution-pending {
@@ -3270,9 +3333,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             const issues = Array.isArray(data.issues) ? data.issues : [];
             const commits = Array.isArray(data.commits) ? data.commits : [];
             const warnings = Array.isArray(data.warnings) ? data.warnings : [];
-            let html = '<div class="d-flex flex-wrap gap-2 mb-2"><span class="badge text-bg-secondary">Commit: ' + escapeHtml(commits.length) + '</span>' +
-                '<span class="badge text-bg-secondary">Branch: ' + escapeHtml(branches.length) + '</span>' +
-                '<span class="badge text-bg-secondary">Issue: ' + escapeHtml(issues.length) + '</span></div>';
+            const previousProgress = container && container._metadataProgress && typeof container._metadataProgress === 'object'
+                ? container._metadataProgress
+                : {};
+            const progress = Object.assign({commits: false, branches: false, issues: false}, previousProgress,
+                data && data.metadata_progress && typeof data.metadata_progress === 'object' ? data.metadata_progress : {});
+            if (container) container._metadataProgress = progress;
+            const badgeClass = function (key) {
+                return progress[key] === true ? 'badge text-bg-secondary' : 'badge text-bg-secondary github-metadata-loading';
+            };
+            let html = '<div class="d-flex flex-wrap gap-2 mb-2"><span class="' + badgeClass('commits') + '" data-metadata-badge="commits">Commit: ' + escapeHtml(commits.length) + '</span>' +
+                '<span class="' + badgeClass('branches') + '" data-metadata-badge="branches">Branch: ' + escapeHtml(branches.length) + '</span>' +
+                '<span class="' + badgeClass('issues') + '" data-metadata-badge="issues">Issue: ' + escapeHtml(issues.length) + '</span></div>';
 
             html += '<div class="github-branches mb-2"><strong><i class="bi bi-diagram-3"></i> Branch (' + escapeHtml(branches.length) + ')</strong>: ';
             html += branches.length ? branches.map(function (branch) {
@@ -3397,7 +3469,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         }
 
         function mergeGithubMetadataStreamItem(streamState, event) {
-            if (!streamState || !event || event.type !== 'metadata_item') return;
+            if (!streamState || !event) return;
+            if (event.type === 'metadata_progress') {
+                const progressKey = String(event.kind || '');
+                if (Object.prototype.hasOwnProperty.call(streamState.metadata_progress || {}, progressKey)) {
+                    streamState.metadata_progress[progressKey] = event.complete === true;
+                }
+                return;
+            }
+            if (event.type !== 'metadata_item') return;
             const data = event.data || {};
             if (event.kind === 'commit') {
                 streamState.commits.push(data);
@@ -3410,6 +3490,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 streamState.branches.push(data);
             } else if (event.kind === 'issue') {
                 streamState.issues.push(data);
+            } else if (event.kind === 'issue_update') {
+                const index = streamState.issues.findIndex(function (issue) {
+                    return String(issue.number || '') === String(data.number || '');
+                });
+                if (index >= 0) streamState.issues[index] = Object.assign({}, streamState.issues[index], data);
             }
         }
 
@@ -3449,10 +3534,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             container.innerHTML = '<div class="text-muted"><i class="bi bi-hourglass-split"></i> Caricamento issue, branch, tag e commit…</div>';
             try {
                 const body = new URLSearchParams({action: 'repo_metadata', repo: repoFull, student_id: studentId || '', csrf_token: REVIEW_CSRF_TOKEN, stream: '1'});
-                const streamState = {ok: true, repo: repoFull, ref: ref || 'main', commits: [], branches: [], issues: [], tags: {}, warnings: [], truncated: false};
+                const streamState = {ok: true, repo: repoFull, ref: ref || 'main', commits: [], branches: [], issues: [], tags: {}, warnings: [], truncated: false, metadata_progress: {commits: false, branches: false, issues: false}};
                 const handleStreamEvent = function (event) {
                     if (!isGithubReviewRequestCurrent(row, state, container, 'metadataRequestToken', requestToken)) return;
-                    if (event.type === 'metadata_item') {
+                    if (event.type === 'metadata_item' || event.type === 'metadata_progress') {
                         mergeGithubMetadataStreamItem(streamState, event);
                         renderRepoMetadata(container, streamState, repoFull);
                         container.dataset.loaded = '0';

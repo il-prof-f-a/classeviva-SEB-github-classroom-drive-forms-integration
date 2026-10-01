@@ -56,6 +56,17 @@ $require(str_contains($review, 'TextDecoder'), 'il parser streaming non gestisce
 $require(str_contains($review, "stream: '1'") || str_contains($review, "stream', '1'"), 'le richieste review non chiedono il formato streaming');
 $require(str_contains($review, "type' => 'result'") || str_contains($review, '"type":"result"'), 'manca l’evento finale result dello stream');
 $require(str_contains($review, 'metadata_item'), 'i metadati non hanno eventi incrementali per elemento');
+$require(str_contains($review, 'metadata_progress'), 'mancano gli eventi di completamento per i badge metadati');
+$require(str_contains($review, 'github-metadata-loading'), 'manca lo stato lampeggiante dei badge metadati');
+$require(str_contains($review, 'metadataProgress'), 'il client non conserva lo stato di completamento dei badge');
+$require(str_contains($review, "'kind' => 'branches'"), 'il server non segnala il completamento dei branch');
+$require(str_contains($review, "'kind' => 'issues'"), 'il server non segnala il completamento delle issue');
+$require(str_contains($review, "'kind' => 'commits'"), 'il server non segnala il completamento dei commit');
+$branchesLoadPos = strpos($review, "'stage' => 'branches'");
+$commitPayloadPos = strpos($review, '$commitPayload = []');
+$require($branchesLoadPos !== false && $commitPayloadPos !== false && $branchesLoadPos < $commitPayloadPos, 'branch e issue attendono ancora il ciclo costoso dei commit');
+$require(str_contains($review, "'kind' => 'issue_update'"), 'la timeline issue non aggiorna gli elementi già visualizzati');
+$require(str_contains($review, "event.kind === 'issue_update'"), 'il client non applica gli aggiornamenti della timeline issue');
 $require(str_contains($review, "'type' => 'contribution_item'"), 'il percorso studente non emette risultati parziali per elemento');
 $require(str_contains($review, 'mergeContributionItem'), 'il client non applica i risultati parziali del percorso studente');
 $require(str_contains($review, 'contribution_item'), 'il client non gestisce gli eventi parziali del percorso studente');
