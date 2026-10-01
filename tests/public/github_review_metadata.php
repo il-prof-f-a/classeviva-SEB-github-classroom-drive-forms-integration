@@ -79,6 +79,8 @@ $require(str_contains($review, 'githubMetadataCache'), 'cache globale repository
 $require(str_contains($review, 'compareCommits'), 'origine branch non analizzata');
 $require(str_contains($review, 'github-issue-toggle'), 'titolo issue non espandibile');
 $require(str_contains($review, 'github-issue-details'), 'dettagli issue collassabili assenti');
+$require(str_contains($review, 'data-metadata-collapse="issues"'), 'pannello issue senza contenitore collassabile');
+$require(str_contains($review, 'github-metadata-panel-loading'), 'pannello issue senza stato lampeggiante di caricamento');
 $require(str_contains($review, 'github-meta-toggle'), 'titolo commit non espandibile');
 $require(str_contains($review, 'github-meta-details'), 'dettagli commit collassabili assenti');
 $require(str_contains($review, "const expandedClass = studentOwned ? ' show' : '';"), 'stato iniziale commit non legato all\'attribuzione');

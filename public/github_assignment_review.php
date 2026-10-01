@@ -2321,6 +2321,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             border: 1px solid #d69e2e !important;
             animation: github-metadata-badge-pulse 1.35s ease-in-out infinite;
         }
+        @keyframes github-metadata-panel-pulse {
+            0%, 100% {
+                border-color: #f0c27b;
+                box-shadow: 0 3px 8px rgba(164, 81, 0, .14);
+            }
+            50% {
+                border-color: #d69e2e;
+                box-shadow: 0 0 0 .22rem rgba(214, 158, 46, .28), 0 3px 8px rgba(164, 81, 0, .18);
+            }
+        }
+        .github-metadata-panel-loading,
+        .github-commits-panel-loading {
+            animation: github-metadata-panel-pulse 1.35s ease-in-out infinite;
+        }
+        .github-commits-panel-loading {
+            border: 1px solid #d69e2e !important;
+            border-radius: .375rem;
+        }
         .github-issues .list-group-item.github-attribution-other,
         .github-issues .list-group-item.github-attribution-unknown,
         .github-issues .list-group-item.github-attribution-pending {
@@ -3333,12 +3351,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             const issues = Array.isArray(data.issues) ? data.issues : [];
             const commits = Array.isArray(data.commits) ? data.commits : [];
             const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+            const existingIssueCollapse = container ? container.querySelector('[data-metadata-collapse="issues"]') : null;
+            const issueExpanded = container && typeof container._issuesPanelExpanded === 'boolean'
+                ? container._issuesPanelExpanded
+                : (existingIssueCollapse ? existingIssueCollapse.classList.contains('show') : true);
             const previousProgress = container && container._metadataProgress && typeof container._metadataProgress === 'object'
                 ? container._metadataProgress
                 : {};
             const progress = Object.assign({commits: false, branches: false, issues: false}, previousProgress,
                 data && data.metadata_progress && typeof data.metadata_progress === 'object' ? data.metadata_progress : {});
             if (container) container._metadataProgress = progress;
+            if (container) container._issuesPanelExpanded = issueExpanded;
             const badgeClass = function (key) {
                 return progress[key] === true ? 'badge text-bg-secondary' : 'badge text-bg-secondary github-metadata-loading';
             };
@@ -3360,7 +3383,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             }).join('') : '<span class="text-muted">nessun branch disponibile</span>';
             html += '</div>';
 
-            html += '<div class="github-issues"><strong><i class="bi bi-exclamation-circle"></i> Issue</strong>';
+            const issuePanelId = 'github-meta-issues-' + (++githubMetadataCounter);
+            const issuePanelClass = progress.issues === true ? 'github-issues' : 'github-issues github-metadata-panel-loading';
+            const issueCollapseClass = issueExpanded ? 'collapse show mt-1' : 'collapse mt-1';
+            html += '<div class="' + issuePanelClass + '" data-metadata-panel="issues">' +
+                '<button type="button" class="btn btn-link p-0 text-start fw-semibold github-issue-panel-toggle"' +
+                ' data-bs-toggle="collapse" data-bs-target="#' + escapeHtml(issuePanelId) + '"' +
+                ' aria-controls="' + escapeHtml(issuePanelId) + '" aria-expanded="' + (issueExpanded ? 'true' : 'false') + '">' +
+                '<i class="bi bi-chevron-down me-1"></i><i class="bi bi-exclamation-circle"></i> Issue</button>' +
+                '<div class="' + issueCollapseClass + '" id="' + escapeHtml(issuePanelId) + '" data-metadata-collapse="issues">';
             if (!issues.length) {
                 html += ': <span class="text-muted">nessuna issue aperta o chiusa disponibile</span>';
             } else {
@@ -3394,13 +3425,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 });
                 html += '</div>';
             }
-            html += '</div>';
+            html += '</div></div>';
             if (warnings.length) {
                 html += '<div class="alert alert-warning py-1 px-2 small mt-2 mb-0">' + warnings.map(escapeHtml).join('<br>') + '</div>';
             }
             container.innerHTML = html;
             container.dataset.loaded = '1';
             container._metadataData = data;
+
+            const issueCollapse = container.querySelector('[data-metadata-collapse="issues"]');
+            if (issueCollapse) {
+                issueCollapse.addEventListener('shown.bs.collapse', function () {
+                    container._issuesPanelExpanded = true;
+                });
+                issueCollapse.addEventListener('hidden.bs.collapse', function () {
+                    container._issuesPanelExpanded = false;
+                });
+            }
 
             const list = container.parentElement ? container.parentElement.querySelector('.github-commits-list') : null;
             if (list) {
@@ -3410,6 +3451,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 list.classList.remove('d-none');
                 list.dataset.rendered = '1';
                 bindCommitDetailsButtons(list);
+                const commitPanelLoading = progress.commits !== true || container._contributionProgressDone !== true;
+                list.classList.toggle('github-commits-panel-loading', commitPanelLoading);
+                list.dataset.metadataCommitsLoading = commitPanelLoading ? '1' : '0';
             }
         }
 
@@ -4034,6 +4078,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             }
         }
 
+        function syncGithubReviewCommitLoadingState(row) {
+            if (!row) return;
+            const metadataContainer = row.querySelector('.github-review-metadata');
+            const commitList = row.querySelector('.github-commits-list');
+            if (!metadataContainer || !commitList) return;
+            const progress = metadataContainer._metadataProgress && typeof metadataContainer._metadataProgress === 'object'
+                ? metadataContainer._metadataProgress
+                : {};
+            const metadataComplete = progress.commits === true;
+            const contributionComplete = metadataContainer._contributionProgressDone === true;
+            const loading = !metadataComplete || !contributionComplete;
+            commitList.classList.toggle('github-commits-panel-loading', loading);
+            commitList.dataset.metadataCommitsLoading = loading ? '1' : '0';
+        }
+
         function renderGithubReviewRetry(label, error) {
             const message = error && error.message ? error.message : 'Errore nel caricamento';
             return '<div class="alert alert-warning py-1 px-2 small mb-0" role="status">' +
@@ -4139,6 +4198,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             const metadataContainer = context.metadataContainer;
             const graphContainer = context.graphContainer;
             const contributionsContainer = context.contributionsContainer;
+            const contributionRequested = Boolean(metadataContainer && state.repoFull && context.studentId);
+            if (metadataContainer) {
+                metadataContainer._contributionProgressDone = !contributionRequested;
+            }
+            syncGithubReviewCommitLoadingState(row);
             if (locContainer && locContainer.dataset.loaded !== '1') {
                 setPanelState(row, 'loc', 'loading', '<div class="text-muted">Calcolo LOC…</div>');
             }
@@ -4164,6 +4228,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                     if (event && event.type === 'metadata_item' && contributionsContainer) {
                         setPanelState(row, 'contributions', 'loading', renderGithubReviewContributionPreview(partial, null));
                     }
+                    syncGithubReviewCommitLoadingState(row);
                 })
                 : Promise.resolve(null);
             const studentLocPromise = metadataContainer && state.repoFull && context.studentId
@@ -4221,6 +4286,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                             : renderGithubReviewContributionPreview(metadata, null)
                     );
                 }
+                syncGithubReviewCommitLoadingState(row);
                 loadCommitDetailsProgressively(row, metadataContainer._metadataData?.commits || [], context, state)
                     .catch(function () {
                         // Il pool dei dettagli resta indipendente dagli altri pannelli.
@@ -4230,10 +4296,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 setPanelState(row, 'metadata', 'error', renderGithubReviewRetry('Metadati', error));
                 setPanelState(row, 'graph', 'error', renderGithubReviewRetry('Grafo', error));
                 setPanelState(row, 'contributions', 'error', renderGithubReviewRetry('Percorso studente', error));
+                if (metadataContainer) {
+                    metadataContainer._contributionProgressDone = true;
+                    syncGithubReviewCommitLoadingState(row);
+                }
             });
 
             studentLocPromise.then(function (data) {
                 if (!isGithubReviewStateCurrent(row, state)) return;
+                if (metadataContainer) metadataContainer._contributionProgressDone = true;
+                syncGithubReviewCommitLoadingState(row);
                 if (data) {
                     const metadata = metadataContainer ? metadataContainer._metadataData : null;
                     if (contributionsContainer) {
@@ -4249,6 +4321,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 }
             }).catch(function (error) {
                 if (error && error.name === 'AbortError' || !isGithubReviewStateCurrent(row, state)) return;
+                if (metadataContainer) metadataContainer._contributionProgressDone = true;
+                syncGithubReviewCommitLoadingState(row);
                 setPanelState(row, 'contributions', 'error', renderGithubReviewRetry('Percorso studente', error));
             });
 

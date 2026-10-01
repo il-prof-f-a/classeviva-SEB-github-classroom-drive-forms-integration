@@ -58,6 +58,9 @@ $require(str_contains($review, "type' => 'result'") || str_contains($review, '"t
 $require(str_contains($review, 'metadata_item'), 'i metadati non hanno eventi incrementali per elemento');
 $require(str_contains($review, 'metadata_progress'), 'mancano gli eventi di completamento per i badge metadati');
 $require(str_contains($review, 'github-metadata-loading'), 'manca lo stato lampeggiante dei badge metadati');
+$require(str_contains($review, 'github-commits-panel-loading'), 'manca lo stato lampeggiante del pannello commit');
+$require(str_contains($review, 'syncGithubReviewCommitLoadingState'), 'manca il coordinamento del caricamento pannello commit');
+$require(str_contains($review, 'contributionProgressDone'), 'manca lo stato di completamento del percorso studente');
 $require(str_contains($review, 'metadataProgress'), 'il client non conserva lo stato di completamento dei badge');
 $require(str_contains($review, "'kind' => 'branches'"), 'il server non segnala il completamento dei branch');
 $require(str_contains($review, "'kind' => 'issues'"), 'il server non segnala il completamento delle issue');
