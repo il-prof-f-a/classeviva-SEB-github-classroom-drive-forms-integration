@@ -47,6 +47,14 @@ $require(!str_contains($review, "container.dataset.loading === '1'"), 'la guardi
 $require(!str_contains($review, "container.dataset.contributionsLoading === '1'"), 'la guardia contributionsLoading impedisce il riavvio della generazione corrente');
 $require(preg_match('/loadCommitDetails\(container, repoFull, sha, false[^;]*\)\.catch/s', $review) === 1, 'il caricamento manuale dei dettagli commit non gestisce il rifiuto della promise');
 $require(preg_match('/loadCommitDetails\(container, repoFull, sha, true[^;]*\)\.catch/s', $review) === 1, 'il caricamento dei commenti commit non gestisce il rifiuto della promise');
+$require(str_contains($review, 'application/x-ndjson'), 'manca il content type dello stream NDJSON');
+$require(str_contains($review, 'function ghReviewStreamEmit'), 'manca l’emissione server-side degli eventi streaming');
+$require(str_contains($review, 'function fetchGithubReviewStream'), 'manca il parser client-side dello stream');
+$require(str_contains($review, 'TextDecoder'), 'il parser streaming non gestisce i chunk UTF-8');
+$require(str_contains($review, "stream: '1'") || str_contains($review, "stream', '1'"), 'le richieste review non chiedono il formato streaming');
+$require(str_contains($review, "type' => 'result'") || str_contains($review, '"type":"result"'), 'manca l’evento finale result dello stream');
+$require(str_contains($review, 'metadata_item'), 'i metadati non hanno eventi incrementali per elemento');
+$require(str_contains($review, 'function ghReviewReleaseSessionLock'), 'manca il rilascio del lock sessione per richieste parallele');
 $require(substr_count($review, 'aria-live="polite"') >= 4, 'i quattro pannelli non hanno feedback ARIA indipendente');
 $require(!preg_match('/function loadCommitDetailsProgressively\(row, commits, context, state\).*?const commits =/s', $review), 'il coordinatore commit ridefinisce il parametro commits');
 

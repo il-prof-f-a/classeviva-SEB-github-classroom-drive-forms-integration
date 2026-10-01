@@ -47,7 +47,7 @@ $require(str_contains($source, 'function hideCollapseElement'), 'helper di chius
 $require(str_contains($showDetailsHandler, 'hideCollapseElement(locCollapse)'), 'chiusura dettagli non nasconde il pannello LOC');
 $require(str_contains($source, "function_exists('shell_exec')"), 'LOC chiama shell_exec senza verificare la disponibilità');
 $require(str_contains($source, 'catch (Throwable $e)'), 'handler LOC non intercetta errori PHP non-Exception');
-$require(str_contains($source, 'responseText') && str_contains($source, 'JSON.parse(responseText)'), 'client LOC non gestisce risposte vuote o non JSON');
+$require(str_contains($source, 'fetchGithubReviewStream') && str_contains($source, 'TextDecoder'), 'client LOC non gestisce risposte streaming o fallback JSON');
 
 if ($failures !== []) {
     foreach ($failures as $failure) {

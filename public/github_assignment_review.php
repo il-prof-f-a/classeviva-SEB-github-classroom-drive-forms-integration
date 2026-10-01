@@ -52,6 +52,56 @@ function jsonResponse($data, $status = 200, bool $noStore = false)
     exit;
 }
 
+/**
+ * Streaming NDJSON per le richieste lunghe della review GitHub.
+ * Ogni riga è un evento JSON completo: il client può quindi renderizzare
+ * l'elemento ricevuto senza attendere la risposta finale dell'endpoint.
+ */
+function ghReviewStreamStart(): void
+{
+    http_response_code(200);
+    header('Content-Type: application/x-ndjson; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+    header('X-Accel-Buffering: no');
+    header('Content-Encoding: identity');
+    @ini_set('output_buffering', 'off');
+    @ini_set('zlib.output_compression', '0');
+    ob_implicit_flush(true);
+}
+
+function ghReviewStreamEmit(array $event): void
+{
+    $encoded = json_encode($event, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($encoded === false) {
+        $encoded = json_encode([
+            'type' => 'error',
+            'ok' => false,
+            'error' => 'Risposta streaming non serializzabile.'
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+    echo (string)$encoded . "\n";
+    if (function_exists('ob_flush')) {
+        @ob_flush();
+    }
+    flush();
+}
+
+function ghReviewStreamFinish(): void
+{
+    ghReviewStreamEmit(['type' => 'done']);
+}
+
+function ghReviewReleaseSessionLock(): void
+{
+    // Le richieste LOC, metadati e contributi partono in parallelo: il lock
+    // della sessione PHP non deve serializzarle mentre leggono il token.
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        @session_write_close();
+    }
+}
+
 function ghReviewDiagnosticHash(string $value): string
 {
     return substr(hash('sha256', $value), 0, 16);
@@ -536,6 +586,8 @@ if (!$isAuthenticated) {
 // Metadati repository: endpoint read-only caricato dalla UI solo quando
 // l'utente apre i dettagli. Nessun dato viene scritto nel database.
 if ($postAction === 'repo_metadata') {
+    $stream = (string)($_POST['stream'] ?? $jsonRequest['stream'] ?? '0') === '1';
+    $streamStarted = false;
     try {
         Csrf::assertValid($_SESSION, $_POST['csrf_token'] ?? $jsonRequest['csrf_token'] ?? null);
 
@@ -557,12 +609,25 @@ if ($postAction === 'repo_metadata') {
         }
 
         set_time_limit(180);
+        ghReviewReleaseSessionLock();
+        if ($stream) {
+            ghReviewStreamStart();
+            $streamStarted = true;
+            ghReviewStreamEmit([
+                'type' => 'start',
+                'panel' => 'metadata',
+                'repo' => $repoFull,
+            ]);
+        }
         $warnings = [];
         DiagnosticsLogger::log('github_review', 'metadata_phase_start', [
             'request_id' => $diagnosticRequestId,
             'repo_hash' => ghReviewDiagnosticHash($repoFull),
         ]);
 
+        if ($stream) {
+            ghReviewStreamEmit(['type' => 'status', 'panel' => 'metadata', 'stage' => 'commits', 'message' => 'Caricamento commit…']);
+        }
         $commitResult = $github->listRepoCommitsAll($owner, $repo, 100, 20);
         $rawCommits = $commitResult['items'] ?? [];
         $commitTruncated = (bool)($commitResult['truncated'] ?? false);
@@ -625,6 +690,14 @@ if ($postAction === 'repo_metadata') {
                 'issue_refs' => GitHubReviewMetadata::extractIssueReferences($message, $owner, $repo),
                 'branch_origin' => $origin,
             ];
+            if ($stream) {
+                ghReviewStreamEmit([
+                    'type' => 'metadata_item',
+                    'panel' => 'metadata',
+                    'kind' => 'commit',
+                    'data' => $commitPayload[array_key_last($commitPayload)],
+                ]);
+            }
         }
 
         $tagResult = [];
@@ -638,9 +711,25 @@ if ($postAction === 'repo_metadata') {
             $commitRow['tags'] = $tagsBySha[$commitRow['sha']] ?? [];
         }
         unset($commitRow);
+        if ($stream) {
+            foreach ($commitPayload as $commitRow) {
+                ghReviewStreamEmit([
+                    'type' => 'metadata_item',
+                    'panel' => 'metadata',
+                    'kind' => 'commit_update',
+                    'data' => [
+                        'sha' => $commitRow['sha'],
+                        'tags' => $commitRow['tags'],
+                    ],
+                ]);
+            }
+        }
 
         $branches = [];
         $defaultBranch = '';
+        if ($stream) {
+            ghReviewStreamEmit(['type' => 'status', 'panel' => 'metadata', 'stage' => 'branches', 'message' => 'Caricamento branch…']);
+        }
         try {
             $repository = $github->getRepository($owner, $repo);
             $defaultBranch = trim((string)($repository['default_branch'] ?? ''));
@@ -680,6 +769,14 @@ if ($postAction === 'repo_metadata') {
                     $warnings[] = 'Origine branch parziale: raggiunto il limite di analisi.';
                 }
                 $branches[] = $branchPayload;
+                if ($stream) {
+                    ghReviewStreamEmit([
+                        'type' => 'metadata_item',
+                        'panel' => 'metadata',
+                        'kind' => 'branch',
+                        'data' => $branchPayload,
+                    ]);
+                }
             }
         } catch (Throwable $branchError) {
             $warnings[] = 'Branch non disponibili.';
@@ -687,6 +784,9 @@ if ($postAction === 'repo_metadata') {
 
         $rawIssues = [];
         $issueResult = [];
+        if ($stream) {
+            ghReviewStreamEmit(['type' => 'status', 'panel' => 'metadata', 'stage' => 'issues', 'message' => 'Caricamento issue…']);
+        }
         try {
             $issueResult = $github->listRepoIssuesAll($owner, $repo, 'all', 100, 10);
             $rawIssues = $issueResult['items'] ?? [];
@@ -712,6 +812,16 @@ if ($postAction === 'repo_metadata') {
             }
         }
         $issues = GitHubReviewMetadata::normalizeIssues($rawIssues, $timelines, $owner, $repo);
+        if ($stream) {
+            foreach ($issues as $issueRow) {
+                ghReviewStreamEmit([
+                    'type' => 'metadata_item',
+                    'panel' => 'metadata',
+                    'kind' => 'issue',
+                    'data' => $issueRow,
+                ]);
+            }
+        }
 
         if ($commitTruncated) {
             $warnings[] = 'Elenco commit parziale: raggiunto il limite di paginazione.';
@@ -729,7 +839,7 @@ if ($postAction === 'repo_metadata') {
             'truncated' => $commitTruncated,
         ]);
 
-        jsonResponse([
+        $metadataResponse = [
             'ok' => true,
             'repo' => $repoFull,
             'ref' => $defaultBranch,
@@ -739,7 +849,13 @@ if ($postAction === 'repo_metadata') {
             'tags' => $tagsBySha,
             'truncated' => $commitTruncated,
             'warnings' => array_values(array_unique($warnings)),
-        ], 200, true);
+        ];
+        if ($streamStarted) {
+            ghReviewStreamEmit(['type' => 'result', 'panel' => 'metadata', 'data' => $metadataResponse]);
+            ghReviewStreamFinish();
+            exit;
+        }
+        jsonResponse($metadataResponse, 200, true);
     } catch (Throwable $e) {
         $publicError = \App\Core\Security\PublicError::message($e, 'github_repo_metadata');
         DiagnosticsLogger::exception('github_review', 'request_error', $e, [
@@ -747,6 +863,11 @@ if ($postAction === 'repo_metadata') {
             'action' => 'repo_metadata',
             'public_error' => $publicError,
         ]);
+        if ($streamStarted) {
+            ghReviewStreamEmit(['type' => 'error', 'ok' => false, 'panel' => 'metadata', 'error' => $publicError]);
+            ghReviewStreamFinish();
+            exit;
+        }
         jsonResponse([
             'ok' => false,
             'error' => $publicError
@@ -758,6 +879,8 @@ if ($postAction === 'repo_metadata') {
 // sessione, verifica nuovamente identità e assignment lato server e recupera
 // da GitHub le statistiche dei soli commit potenzialmente attribuibili.
 if ($postAction === 'repo_contributions') {
+    $stream = (string)($_POST['stream'] ?? $jsonRequest['stream'] ?? '0') === '1';
+    $streamStarted = false;
     try {
         if (!$isAuthenticated) {
             throw new Exception('Non autenticato su GitHub');
@@ -795,6 +918,24 @@ if ($postAction === 'repo_contributions') {
             jsonResponse(['ok' => false, 'error' => 'Troppe richieste di attribuzione. Riprova tra alcuni minuti.'], 429, true);
         }
 
+        ghReviewReleaseSessionLock();
+        if ($stream) {
+            ghReviewStreamStart();
+            $streamStarted = true;
+            ghReviewStreamEmit([
+                'type' => 'start',
+                'panel' => 'contributions',
+                'repo' => $repoFull,
+                'student_id' => $studentId,
+            ]);
+            ghReviewStreamEmit([
+                'type' => 'status',
+                'panel' => 'contributions',
+                'stage' => 'commits',
+                'message' => 'Analisi dei contributi dello studente…',
+            ]);
+        }
+
         [$owner, $repo] = explode('/', $repoFull, 2);
         $partial = (bool)($metadata['truncated'] ?? false);
         $warnings = [];
@@ -804,6 +945,15 @@ if ($postAction === 'repo_contributions') {
             $rawCommitRows = array_slice($rawCommitRows, 0, $maxCommitDetails);
             $partial = true;
             $warnings[] = 'Attribuzione commit parziale: raggiunto il limite di analisi.';
+        }
+        if ($stream) {
+            ghReviewStreamEmit([
+                'type' => 'status',
+                'panel' => 'contributions',
+                'stage' => 'commits',
+                'total' => count($rawCommitRows),
+                'message' => 'Analisi di ' . count($rawCommitRows) . ' commit…',
+            ]);
         }
 
         $commitRows = [];
@@ -851,6 +1001,16 @@ if ($postAction === 'repo_contributions') {
             }
             $normalised['url'] = GitHubReviewMetadata::commitUrl($owner, $repo, $sha);
             $commitRows[] = $normalised;
+            if ($stream) {
+                ghReviewStreamEmit([
+                    'type' => 'contribution_progress',
+                    'panel' => 'contributions',
+                    'index' => count($commitRows),
+                    'total' => count($rawCommitRows),
+                    'sha' => $sha,
+                    'message' => 'Commit analizzati: ' . count($commitRows) . '/' . count($rawCommitRows),
+                ]);
+            }
         }
 
         $globalLoc = is_array($metadata['global_loc'] ?? null) ? $metadata['global_loc'] : [];
@@ -936,7 +1096,7 @@ if ($postAction === 'repo_contributions') {
                 ]);
             }
         }
-        jsonResponse([
+        $contributionResponse = [
             'ok' => true,
             'repo' => $repoFull,
             'student_id' => $studentId,
@@ -952,7 +1112,13 @@ if ($postAction === 'repo_contributions') {
             'student_loc_disabled' => !($studentLoc['enabled'] ?? false),
             'partial' => $partial,
             'warnings' => $warnings,
-        ], 200, true);
+        ];
+        if ($streamStarted) {
+            ghReviewStreamEmit(['type' => 'result', 'panel' => 'contributions', 'data' => $contributionResponse]);
+            ghReviewStreamFinish();
+            exit;
+        }
+        jsonResponse($contributionResponse, 200, true);
     } catch (Throwable $e) {
         $publicError = \App\Core\Security\PublicError::message($e, 'github_repo_contributions');
         DiagnosticsLogger::exception('github_review', 'request_error', $e, [
@@ -960,6 +1126,11 @@ if ($postAction === 'repo_contributions') {
             'action' => 'repo_contributions',
             'public_error' => $publicError,
         ]);
+        if ($streamStarted) {
+            ghReviewStreamEmit(['type' => 'error', 'ok' => false, 'panel' => 'contributions', 'error' => $publicError]);
+            ghReviewStreamFinish();
+            exit;
+        }
         jsonResponse([
             'ok' => false,
             'error' => $publicError
@@ -1197,6 +1368,8 @@ function ghComputeLocWithClocIfAvailable($rootDir)
 }
 
 if ($postAction === 'repo_loc') {
+    $stream = (string)($_POST['stream'] ?? $jsonRequest['stream'] ?? '0') === '1';
+    $streamStarted = false;
     try {
         if (!$isAuthenticated) {
             throw new Exception('Non autenticato su GitHub');
@@ -1221,6 +1394,18 @@ if ($postAction === 'repo_loc') {
             throw new Exception('Ref non valido');
         }
 
+        ghReviewReleaseSessionLock();
+        if ($stream) {
+            ghReviewStreamStart();
+            $streamStarted = true;
+            ghReviewStreamEmit([
+                'type' => 'start',
+                'panel' => 'loc',
+                'repo' => $repoFull,
+                'ref' => $ref,
+            ]);
+        }
+
         $userId = (string)($_SESSION['user_id'] ?? '');
 
         if (!$force) {
@@ -1241,7 +1426,7 @@ if ($postAction === 'repo_loc') {
                 }
                 if ($latest && $latestTs > 0 && (time() - $latestTs) < 86400) {
                     $json = json_decode((string)($latest['loc_json'] ?? ''), true);
-                    jsonResponse([
+                    $locResponse = [
                         'ok' => true,
                         'cached' => true,
                         'repo' => $repoFull,
@@ -1250,7 +1435,14 @@ if ($postAction === 'repo_loc') {
                         'data_creazione' => $latest['data_creazione'] ?? null,
                         'totals' => $json['totals'] ?? null,
                         'by_language' => $json['by_language'] ?? null
-                    ]);
+                    ];
+                    if ($streamStarted) {
+                        ghReviewStreamEmit(['type' => 'status', 'panel' => 'loc', 'stage' => 'cache', 'message' => 'LOC recuperate dalla cache.']);
+                        ghReviewStreamEmit(['type' => 'result', 'panel' => 'loc', 'data' => $locResponse]);
+                        ghReviewStreamFinish();
+                        exit;
+                    }
+                    jsonResponse($locResponse);
                 }
             } catch (Exception $e) {
                 // continua
@@ -1270,6 +1462,10 @@ if ($postAction === 'repo_loc') {
         }
 
         $url = "https://api.github.com/repos/{$owner}/{$repo}/zipball/{$ref}";
+
+        if ($stream) {
+            ghReviewStreamEmit(['type' => 'status', 'panel' => 'loc', 'stage' => 'download', 'message' => 'Download del repository…']);
+        }
 
         $headers = [
             'Authorization: Bearer ' . $token,
@@ -1369,6 +1565,10 @@ if ($postAction === 'repo_loc') {
         }
         @unlink($tmpZip);
 
+        if ($stream) {
+            ghReviewStreamEmit(['type' => 'status', 'panel' => 'loc', 'stage' => 'extract', 'message' => 'Archivio estratto, calcolo LOC…']);
+        }
+
         $dirs = glob($extractDir . DIRECTORY_SEPARATOR . '*', GLOB_ONLYDIR);
         $rootDir = (is_array($dirs) && !empty($dirs)) ? $dirs[0] : $extractDir;
 
@@ -1377,6 +1577,10 @@ if ($postAction === 'repo_loc') {
         if (!$result) {
             $result = ghComputeLocInternal($rootDir);
             $source = 'INTERNAL';
+        }
+
+        if ($stream) {
+            ghReviewStreamEmit(['type' => 'status', 'panel' => 'loc', 'stage' => 'count', 'message' => 'LOC calcolate.']);
         }
 
         ghRemoveDirRecursive($extractDir);
@@ -1409,7 +1613,7 @@ if ($postAction === 'repo_loc') {
             // non bloccare
         }
 
-        jsonResponse([
+        $locResponse = [
             'ok' => true,
             'cached' => false,
             'repo' => $repoFull,
@@ -1418,11 +1622,23 @@ if ($postAction === 'repo_loc') {
             'data_creazione' => date('Y-m-d H:i:s'),
             'totals' => $payload['totals'],
             'by_language' => $payload['by_language']
-        ]);
+        ];
+        if ($streamStarted) {
+            ghReviewStreamEmit(['type' => 'result', 'panel' => 'loc', 'data' => $locResponse]);
+            ghReviewStreamFinish();
+            exit;
+        }
+        jsonResponse($locResponse);
     } catch (Throwable $e) {
+        $publicError = \App\Core\Security\PublicError::message($e, 'github_repo_loc');
+        if ($streamStarted) {
+            ghReviewStreamEmit(['type' => 'error', 'ok' => false, 'panel' => 'loc', 'error' => $publicError]);
+            ghReviewStreamFinish();
+            exit;
+        }
         jsonResponse([
             'ok' => false,
-            'error' => \App\Core\Security\PublicError::message($e, 'github_repo_loc')
+            'error' => $publicError
         ], 400);
     }
 }
@@ -2969,6 +3185,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             return repoFull + '@' + (ref || 'main');
         }
 
+        async function fetchGithubReviewStream(url, options, onEvent) {
+            const response = await fetch(url, options);
+            const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+            if (!response.ok && !contentType.includes('application/x-ndjson')) {
+                let payload = null;
+                try { payload = await response.json(); } catch (ignore) {}
+                throw new Error(payload && payload.error ? payload.error : 'Risposta server non valida');
+            }
+
+            if (!response.body || !contentType.includes('application/x-ndjson')) {
+                const data = await response.json();
+                if (typeof onEvent === 'function') onEvent({type: 'result', data});
+                if (!data || data.ok !== true) throw new Error(data?.error || 'Risposta server non valida');
+                return data;
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let buffer = '';
+            let result = null;
+            const consumeLine = async function (line) {
+                const trimmed = line.trim();
+                if (!trimmed) return;
+                let event;
+                try {
+                    event = JSON.parse(trimmed);
+                } catch (error) {
+                    throw new Error('Evento streaming non valido');
+                }
+                if (typeof onEvent === 'function') await onEvent(event);
+                if (event.type === 'error' || event.ok === false) {
+                    throw new Error(event.error || 'Errore nel caricamento streaming');
+                }
+                if (event.type === 'result') result = event.data || null;
+            };
+
+            while (true) {
+                const chunk = await reader.read();
+                if (chunk.done) break;
+                buffer += decoder.decode(chunk.value, {stream: true});
+                const lines = buffer.split(/\r?\n/);
+                buffer = lines.pop() || '';
+                for (const line of lines) await consumeLine(line);
+            }
+            buffer += decoder.decode();
+            if (buffer.trim()) await consumeLine(buffer);
+            if (!result || result.ok !== true) throw new Error('Risposta streaming incompleta');
+            return result;
+        }
+
+        function mergeGithubMetadataStreamItem(streamState, event) {
+            if (!streamState || !event || event.type !== 'metadata_item') return;
+            const data = event.data || {};
+            if (event.kind === 'commit') {
+                streamState.commits.push(data);
+            } else if (event.kind === 'commit_update') {
+                const index = streamState.commits.findIndex(function (commit) {
+                    return String(commit.sha || '').toLowerCase() === String(data.sha || '').toLowerCase();
+                });
+                if (index >= 0) streamState.commits[index] = Object.assign({}, streamState.commits[index], data);
+            } else if (event.kind === 'branch') {
+                streamState.branches.push(data);
+            } else if (event.kind === 'issue') {
+                streamState.issues.push(data);
+            }
+        }
+
         function githubReviewRequestToken(state, prefix) {
             if (state && Number.isFinite(Number(state.generation))) {
                 return prefix + '-' + String(state.generation);
@@ -2982,7 +3265,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             return true;
         }
 
-        async function loadRepoMetadata(container, repoFull, studentId, signal, ref, row, state) {
+        async function loadRepoMetadata(container, repoFull, studentId, signal, ref, row, state, onStreamEvent) {
             if (!container || !repoFull || (row && state && !isGithubReviewStateCurrent(row, state)) || container.dataset.loaded === '1') {
                 return container?._metadataData || null;
             }
@@ -3004,9 +3287,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             }
             container.innerHTML = '<div class="text-muted"><i class="bi bi-hourglass-split"></i> Caricamento issue, branch, tag e commit…</div>';
             try {
-                const body = new URLSearchParams({action: 'repo_metadata', repo: repoFull, student_id: studentId || '', csrf_token: REVIEW_CSRF_TOKEN});
-                const response = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body, signal});
-                const data = await response.json();
+                const body = new URLSearchParams({action: 'repo_metadata', repo: repoFull, student_id: studentId || '', csrf_token: REVIEW_CSRF_TOKEN, stream: '1'});
+                const streamState = {ok: true, repo: repoFull, ref: ref || 'main', commits: [], branches: [], issues: [], tags: {}, warnings: [], truncated: false};
+                const handleStreamEvent = function (event) {
+                    if (!isGithubReviewRequestCurrent(row, state, container, 'metadataRequestToken', requestToken)) return;
+                    if (event.type === 'metadata_item') {
+                        mergeGithubMetadataStreamItem(streamState, event);
+                        renderRepoMetadata(container, streamState, repoFull);
+                        container.dataset.loaded = '0';
+                    } else if (event.type === 'status') {
+                        container.dataset.streamStage = String(event.message || event.stage || '');
+                        if (!streamState.commits.length && !streamState.branches.length && !streamState.issues.length) {
+                            container.innerHTML = '<div class="text-muted"><i class="bi bi-hourglass-split"></i> ' + escapeHtml(event.message || 'Caricamento metadati…') + '</div>';
+                        }
+                    } else if (event.type === 'result' && event.data) {
+                        Object.assign(streamState, event.data);
+                    }
+                    if (typeof onStreamEvent === 'function') onStreamEvent(event, streamState);
+                };
+                const data = await fetchGithubReviewStream(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body, signal}, handleStreamEvent);
                 if (!data.ok) throw new Error(data.error || 'Metadati non disponibili');
                 githubMetadataCache.set(cacheKey, data);
                 if (!isGithubReviewRequestCurrent(row, state, container, 'metadataRequestToken', requestToken)) return null;
@@ -3025,7 +3324,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             }
         }
 
-        async function loadRepoContributions(container, repoFull, studentId, locContainer, signal, row, state) {
+        async function loadRepoContributions(container, repoFull, studentId, locContainer, signal, row, state, onStreamEvent) {
             if (!container || !repoFull || !studentId || (row && state && !isGithubReviewStateCurrent(row, state))) return null;
             const metadata = container._metadataData;
             if (!metadata) return null;
@@ -3049,10 +3348,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                     repo: repoFull,
                     student_id: studentId,
                     metadata: JSON.stringify(requestMetadata),
-                    csrf_token: REVIEW_CSRF_TOKEN
+                    csrf_token: REVIEW_CSRF_TOKEN,
+                    stream: '1'
                 });
-                const response = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body, signal});
-                const data = await response.json();
+                const data = await fetchGithubReviewStream(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body, signal}, function (event) {
+                    if (!isGithubReviewRequestCurrent(row, state, container, 'contributionsRequestToken', requestToken)) return;
+                    if (typeof onStreamEvent === 'function') onStreamEvent(event);
+                });
                 if (!data.ok) throw new Error(data.error || 'Attribuzioni non disponibili');
                 if (!isGithubReviewRequestCurrent(row, state, container, 'contributionsRequestToken', requestToken)) return null;
 
@@ -3304,18 +3606,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             container.dataset.locLoading = '1';
             container.innerHTML = '<div class="text-muted">Calcolo LOC...</div>';
 
-            const body = new URLSearchParams({action: 'repo_loc', repo: repoFull, ref, force: force ? '1' : '0'});
-            let res = null;
+            const body = new URLSearchParams({action: 'repo_loc', repo: repoFull, ref, force: force ? '1' : '0', stream: '1'});
             let data = null;
             try {
-                res = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body, signal});
-                const responseText = await res.text();
-                data = JSON.parse(responseText);
+                data = await fetchGithubReviewStream(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body, signal}, function (event) {
+                    if (!isGithubReviewRequestCurrent(row, state, container, 'locRequestToken', requestToken)) return;
+                    if (event.type === 'status') {
+                        container.dataset.streamStage = String(event.message || event.stage || '');
+                        container.innerHTML = '<div class="text-muted">' + escapeHtml(event.message || 'Calcolo LOC…') + '</div>';
+                    }
+                });
                 if (!isGithubReviewRequestCurrent(row, state, container, 'locRequestToken', requestToken)) return null;
             } catch (error) {
                 if ((error && error.name === 'AbortError') || !isGithubReviewRequestCurrent(row, state, container, 'locRequestToken', requestToken)) return null;
-                const status = res && res.status ? ` (HTTP ${res.status})` : '';
-                container.innerHTML = '<div class="text-danger">Errore: risposta LOC non valida dal server' + status + '.</div>';
+                container.innerHTML = '<div class="text-danger">Errore: ' + escapeHtml(error.message || 'risposta LOC non valida dal server') + '.</div>';
                 if (container.dataset.locRequestToken === requestToken) {
                     delete container.dataset.locRequestToken;
                     delete container.dataset.locLoading;
@@ -3524,7 +3828,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 ? Promise.resolve(locContainer._locData || null)
                 : loadRepoLoc(locContainer, state.repoFull, state.ref, false, state.controller.signal, row, state);
             const metadataPromise = metadataContainer && state.repoFull
-                ? loadRepoMetadata(metadataContainer, state.repoFull, context.studentId || '', state.controller.signal, state.ref, row, state)
+                ? loadRepoMetadata(metadataContainer, state.repoFull, context.studentId || '', state.controller.signal, state.ref, row, state, function (event, partial) {
+                    if (!isGithubReviewStateCurrent(row, state)) return;
+                    if (event && event.type === 'metadata_item' && graphContainer) {
+                        renderWorktreeGraph(graphContainer, partial, state.repoFull);
+                    }
+                })
                 : Promise.resolve(null);
             state.promises = [locPromise, metadataPromise];
 
@@ -3544,7 +3853,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                     setPanelState(row, 'graph', 'success');
                 }
                 setPanelState(row, 'metadata', 'success');
-                return loadRepoContributions(metadataContainer, state.repoFull, context.studentId || '', locContainer, state.controller.signal, row, state);
+                return loadRepoContributions(metadataContainer, state.repoFull, context.studentId || '', locContainer, state.controller.signal, row, state, function (event) {
+                    if (!isGithubReviewStateCurrent(row, state) || !event || event.type !== 'contribution_progress') return;
+                    setPanelState(row, 'contributions', 'loading', '<div class="small"><i class="bi bi-person-check"></i> ' + escapeHtml(event.message || 'Analisi contributi…') + '</div>');
+                });
             });
             state.promises.push(contributionsPromise);
 
