@@ -24,6 +24,7 @@ use App\Core\NotificationManager;
 use App\Core\GitHubContributionAttribution;
 use App\Core\RuntimeStudentNameService;
 use App\Core\Security\Csrf;
+use App\Core\Security\DiagnosticsLogger;
 use App\Core\StudentIdentityRepository;
 use App\Core\TeachingGroupIntegrationRepository;
 use App\Core\TeachingGroupStudentService;
@@ -51,6 +52,11 @@ function jsonResponse($data, $status = 200, bool $noStore = false)
     exit;
 }
 
+function ghReviewDiagnosticHash(string $value): string
+{
+    return substr(hash('sha256', $value), 0, 16);
+}
+
 $requestMethod = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 $getAction = $requestMethod === 'GET' ? ($_GET['action'] ?? null) : null;
 $jsonRequest = [];
@@ -59,6 +65,19 @@ if ($requestMethod === 'POST' && str_contains(strtolower((string)($_SERVER['CONT
     $jsonRequest = is_array($decodedRequest) ? $decodedRequest : [];
 }
 $postAction = $requestMethod === 'POST' ? ($_POST['action'] ?? $jsonRequest['action'] ?? null) : null;
+$diagnosticRequestId = bin2hex(random_bytes(8));
+if (is_string($postAction) && $postAction !== '') {
+    $github->setDiagnosticsContext($diagnosticRequestId, $postAction, [
+        'test_hash' => ghReviewDiagnosticHash((string)($_GET['test_id'] ?? '')),
+        'user_hash' => ghReviewDiagnosticHash($userId),
+    ]);
+    DiagnosticsLogger::log('github_review', 'request_start', [
+        'request_id' => $diagnosticRequestId,
+        'action' => $postAction,
+        'test_hash' => ghReviewDiagnosticHash((string)($_GET['test_id'] ?? '')),
+        'user_hash' => ghReviewDiagnosticHash($userId),
+    ]);
+}
 if ($postAction === 'commit_details') {
     try {
         if (!$isAuthenticated) {
@@ -107,9 +126,15 @@ if ($postAction === 'commit_details') {
             'comments' => $comments
         ]);
     } catch (Exception $e) {
+        $publicError = \App\Core\Security\PublicError::message($e, 'github_commit_details');
+        DiagnosticsLogger::exception('github_review', 'request_error', $e, [
+            'request_id' => $diagnosticRequestId,
+            'action' => 'commit_details',
+            'public_error' => $publicError,
+        ]);
         jsonResponse([
             'ok' => false,
-            'error' => \App\Core\Security\PublicError::message($e, 'github_commit_details')
+            'error' => $publicError
         ], 400);
     }
 }
@@ -533,10 +558,19 @@ if ($postAction === 'repo_metadata') {
 
         set_time_limit(180);
         $warnings = [];
+        DiagnosticsLogger::log('github_review', 'metadata_phase_start', [
+            'request_id' => $diagnosticRequestId,
+            'repo_hash' => ghReviewDiagnosticHash($repoFull),
+        ]);
 
         $commitResult = $github->listRepoCommitsAll($owner, $repo, 100, 20);
         $rawCommits = $commitResult['items'] ?? [];
         $commitTruncated = (bool)($commitResult['truncated'] ?? false);
+        DiagnosticsLogger::log('github_review', 'metadata_commits_loaded', [
+            'request_id' => $diagnosticRequestId,
+            'count' => is_array($rawCommits) ? count($rawCommits) : 0,
+            'truncated' => $commitTruncated,
+        ]);
 
         $commitPayload = [];
         $originFailures = 0;
@@ -686,6 +720,15 @@ if ($postAction === 'repo_metadata') {
             $warnings[] = 'Branch di origine determinati solo per i primi ' . $originLimit . ' commit; per gli altri l’origine può non essere determinabile.';
         }
 
+        DiagnosticsLogger::log('github_review', 'metadata_phase_result', [
+            'request_id' => $diagnosticRequestId,
+            'commits' => count($commitPayload),
+            'branches' => count($branches),
+            'issues' => count($issues),
+            'warnings' => count($warnings),
+            'truncated' => $commitTruncated,
+        ]);
+
         jsonResponse([
             'ok' => true,
             'repo' => $repoFull,
@@ -698,9 +741,15 @@ if ($postAction === 'repo_metadata') {
             'warnings' => array_values(array_unique($warnings)),
         ], 200, true);
     } catch (Throwable $e) {
+        $publicError = \App\Core\Security\PublicError::message($e, 'github_repo_metadata');
+        DiagnosticsLogger::exception('github_review', 'request_error', $e, [
+            'request_id' => $diagnosticRequestId,
+            'action' => 'repo_metadata',
+            'public_error' => $publicError,
+        ]);
         jsonResponse([
             'ok' => false,
-            'error' => \App\Core\Security\PublicError::message($e, 'github_repo_metadata')
+            'error' => $publicError
         ], 400, true);
     }
 }
@@ -731,6 +780,12 @@ if ($postAction === 'repo_contributions') {
         if (!is_array($metadata)) {
             throw new Exception('Metadati repository non decodificabili');
         }
+        DiagnosticsLogger::log('github_review', 'contributions_phase_start', [
+            'request_id' => $diagnosticRequestId,
+            'repo_hash' => ghReviewDiagnosticHash($repoFull),
+            'metadata_bytes' => strlen($metadataJson),
+            'commit_count' => is_array($metadata['commits'] ?? null) ? count($metadata['commits']) : 0,
+        ]);
         $assignmentLink = gh_review_assert_assignment_repo((string)$testId, $studentId, $repoFull);
         $identities = gh_review_student_identities($studentId, $assignmentLink);
 
@@ -824,6 +879,14 @@ if ($postAction === 'repo_contributions') {
                 $ref = 'main';
             }
             $blameStartedAt = microtime(true);
+            DiagnosticsLogger::log('github_review', 'blame_phase_start', [
+                'request_id' => $diagnosticRequestId,
+                'repo_hash' => ghReviewDiagnosticHash($repoFull),
+                'ref_hash' => ghReviewDiagnosticHash($ref),
+                'max_ms' => $studentLocConfig['max_ms'],
+                'max_files' => $studentLocConfig['max_files'],
+                'max_bytes' => $studentLocConfig['max_bytes'],
+            ]);
             try {
                 $blameSnapshot = $github->getRepositoryBlameSnapshot(
                     $owner,
@@ -856,10 +919,21 @@ if ($postAction === 'repo_contributions') {
                     $studentLoc['cached'] = (bool)($blameSnapshot['cached'] ?? false);
                 }
                 $studentLoc['elapsed_ms'] = $elapsedMs;
+                DiagnosticsLogger::log('github_review', 'blame_phase_result', [
+                    'request_id' => $diagnosticRequestId,
+                    'enabled' => (bool)($studentLoc['enabled'] ?? false),
+                    'reason' => (string)($studentLoc['reason'] ?? ''),
+                    'elapsed_ms' => $elapsedMs,
+                    'cached' => (bool)($studentLoc['cached'] ?? false),
+                ]);
             } catch (Throwable $blameError) {
                 $studentLoc = GitHubBlameLocAttributor::disabled('error');
                 $studentLoc['elapsed_ms'] = (int)round((microtime(true) - $blameStartedAt) * 1000);
                 $warnings[] = 'Attribuzione LOC studente non disponibile.';
+                DiagnosticsLogger::exception('github_review', 'blame_phase_error', $blameError, [
+                    'request_id' => $diagnosticRequestId,
+                    'elapsed_ms' => $studentLoc['elapsed_ms'],
+                ]);
             }
         }
         jsonResponse([
@@ -880,9 +954,15 @@ if ($postAction === 'repo_contributions') {
             'warnings' => $warnings,
         ], 200, true);
     } catch (Throwable $e) {
+        $publicError = \App\Core\Security\PublicError::message($e, 'github_repo_contributions');
+        DiagnosticsLogger::exception('github_review', 'request_error', $e, [
+            'request_id' => $diagnosticRequestId,
+            'action' => 'repo_contributions',
+            'public_error' => $publicError,
+        ]);
         jsonResponse([
             'ok' => false,
-            'error' => \App\Core\Security\PublicError::message($e, 'github_repo_contributions')
+            'error' => $publicError
         ], 400, true);
     }
 }

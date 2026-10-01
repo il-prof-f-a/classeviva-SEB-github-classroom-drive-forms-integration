@@ -4,6 +4,7 @@ namespace App\Integration;
 
 use App\Core\GitHubProjectGatewayInterface;
 use App\Core\GitHubBlameLocAttributor;
+use App\Core\Security\DiagnosticsLogger;
 
 /**
  * GitHub Integration
@@ -16,6 +17,8 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
     private $clientSecret;
     private $redirectUri;
     private $accessToken;
+    /** @var array<string,mixed>|null */
+    private ?array $diagnosticsContext = null;
 
     public function __construct($config)
     {
@@ -85,6 +88,33 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
     public function setAccessToken($token)
     {
         $this->accessToken = $token;
+    }
+
+    /**
+     * Attiva il tracciamento strutturato solo per la richiesta corrente della
+     * review. Il contesto non contiene mai il token GitHub.
+     *
+     * @param array<string,mixed> $context
+     */
+    public function setDiagnosticsContext(string $requestId, string $action, array $context = []): void
+    {
+        $this->diagnosticsContext = array_merge([
+            'request_id' => $requestId,
+            'action' => $action,
+        ], $context);
+    }
+
+    /** @param array<string,mixed> $context */
+    private function diagnosticLog(string $event, array $context = []): void
+    {
+        if ($this->diagnosticsContext === null) {
+            return;
+        }
+        DiagnosticsLogger::log(
+            'github_review',
+            $event,
+            array_merge($this->diagnosticsContext, $context)
+        );
     }
 
     /**
@@ -669,6 +699,11 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
         ];
         $lastError = 'risposta non valida';
         for ($attempt = 1; $attempt <= 3; $attempt++) {
+            $startedAt = microtime(true);
+            $this->diagnosticLog('graphql_request_start', [
+                'attempt' => $attempt,
+                'query_bytes' => strlen($payload),
+            ]);
             $ch = curl_init('https://api.github.com/graphql');
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true,
@@ -683,6 +718,14 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
             $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
             $curlError = curl_error($ch);
             curl_close($ch);
+
+            $this->diagnosticLog('graphql_request_result', [
+                'attempt' => $attempt,
+                'http_status' => $httpCode,
+                'elapsed_ms' => (int)round((microtime(true) - $startedAt) * 1000),
+                'response_bytes' => is_string($response) ? strlen($response) : 0,
+                'curl_error' => $curlError !== '' ? $curlError : null,
+            ]);
 
             if ($response === false) {
                 $lastError = $curlError !== '' ? $curlError : 'errore di rete';
@@ -733,12 +776,25 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
         $ref = $this->validatedBranch($ref);
         $maxFiles = max(1, min(1000, $maxFiles));
         $maxBytes = max(100_000, min(50_000_000, $maxBytes));
+        $blameStartedAt = microtime(true);
+        $this->diagnosticLog('blame_snapshot_start', [
+            'owner_hash' => substr(hash('sha256', $owner), 0, 16),
+            'repo_hash' => substr(hash('sha256', $repo), 0, 16),
+            'ref_hash' => substr(hash('sha256', $rawRef), 0, 16),
+            'max_files' => $maxFiles,
+            'max_bytes' => $maxBytes,
+        ]);
 
         $tree = $this->apiRequest('GET', "/repos/{$owner}/{$repo}/git/trees/{$ref}", null, ['recursive' => '1']);
         if (!is_array($tree)) {
             throw new \RuntimeException('Albero GitHub non disponibile.');
         }
         if (!empty($tree['truncated'])) {
+            $this->diagnosticLog('blame_snapshot_result', [
+                'enabled' => false,
+                'reason' => 'tree_truncated',
+                'elapsed_ms' => (int)round((microtime(true) - $blameStartedAt) * 1000),
+            ]);
             return [
                 'enabled' => false,
                 'reason' => 'tree_truncated',
@@ -765,9 +821,21 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
             $size = max(0, (int)($entry['size'] ?? 0));
             $bytes += $size;
             if (count($files) >= $maxFiles) {
+                $this->diagnosticLog('blame_snapshot_result', [
+                    'enabled' => false,
+                    'reason' => 'file_limit',
+                    'files' => count($files) + 1,
+                    'elapsed_ms' => (int)round((microtime(true) - $blameStartedAt) * 1000),
+                ]);
                 return ['enabled' => false, 'reason' => 'file_limit', 'details' => ['files' => count($files) + 1, 'max_files' => $maxFiles]];
             }
             if ($bytes > $maxBytes) {
+                $this->diagnosticLog('blame_snapshot_result', [
+                    'enabled' => false,
+                    'reason' => 'byte_limit',
+                    'bytes' => $bytes,
+                    'elapsed_ms' => (int)round((microtime(true) - $blameStartedAt) * 1000),
+                ]);
                 return ['enabled' => false, 'reason' => 'byte_limit', 'details' => ['bytes' => $bytes, 'max_bytes' => $maxBytes]];
             }
             $files[] = ['path' => $path, 'bytes' => $size];
@@ -783,6 +851,12 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
             if (is_file($cacheFile)) {
                 $cached = json_decode((string)@file_get_contents($cacheFile), true);
                 if (is_array($cached) && ($cached['tree_sha'] ?? '') === $treeSha && ($cached['enabled'] ?? false) === true) {
+                    $this->diagnosticLog('blame_snapshot_result', [
+                        'enabled' => true,
+                        'cached' => true,
+                        'files' => count((array)($cached['files'] ?? [])),
+                        'elapsed_ms' => (int)round((microtime(true) - $blameStartedAt) * 1000),
+                    ]);
                     return array_merge($cached, ['cached' => true]);
                 }
             }
@@ -851,6 +925,13 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
             @file_put_contents($cacheFile, json_encode($snapshot, JSON_THROW_ON_ERROR), LOCK_EX);
             @chmod($cacheFile, 0600);
         }
+        $this->diagnosticLog('blame_snapshot_result', [
+            'enabled' => true,
+            'cached' => false,
+            'files' => count($snapshotFiles),
+            'tree_sha' => $treeSha,
+            'elapsed_ms' => (int)round((microtime(true) - $blameStartedAt) * 1000),
+        ]);
         return $snapshot;
     }
 
@@ -895,6 +976,12 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
 
         while ($attempts < $maxAttempts) {
             $attempts++;
+            $startedAt = microtime(true);
+            $this->diagnosticLog('api_request_start', [
+                'method' => $method,
+                'endpoint' => $endpoint,
+                'attempt' => $attempts,
+            ]);
             $ch = curl_init($url);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
@@ -921,7 +1008,18 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
 
             $response = curl_exec($ch);
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlError = curl_error($ch);
             curl_close($ch);
+
+            $this->diagnosticLog('api_request_result', [
+                'method' => $method,
+                'endpoint' => $endpoint,
+                'attempt' => $attempts,
+                'http_status' => $httpCode,
+                'elapsed_ms' => (int)round((microtime(true) - $startedAt) * 1000),
+                'response_bytes' => is_string($response) ? strlen($response) : 0,
+                'curl_error' => $curlError !== '' ? $curlError : null,
+            ]);
 
             if ($httpCode >= 200 && $httpCode < 300) {
                 return json_decode($response, true);
