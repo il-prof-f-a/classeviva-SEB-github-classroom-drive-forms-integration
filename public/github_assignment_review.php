@@ -2332,7 +2332,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             }
         }
         .github-metadata-panel-loading,
-        .github-commits-panel-loading {
+        .github-commits-panel-loading,
+        .github-worktree-panel-loading {
             animation: github-metadata-panel-pulse 1.35s ease-in-out infinite;
         }
         .github-commits-panel-loading {
@@ -4082,15 +4083,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             if (!row) return;
             const metadataContainer = row.querySelector('.github-review-metadata');
             const commitList = row.querySelector('.github-commits-list');
-            if (!metadataContainer || !commitList) return;
+            const graphContainer = row.querySelector('.github-worktree-graph');
+            if (!metadataContainer) return;
             const progress = metadataContainer._metadataProgress && typeof metadataContainer._metadataProgress === 'object'
                 ? metadataContainer._metadataProgress
                 : {};
             const metadataComplete = progress.commits === true;
             const contributionComplete = metadataContainer._contributionProgressDone === true;
             const loading = !metadataComplete || !contributionComplete;
-            commitList.classList.toggle('github-commits-panel-loading', loading);
-            commitList.dataset.metadataCommitsLoading = loading ? '1' : '0';
+            if (commitList) {
+                commitList.classList.toggle('github-commits-panel-loading', loading);
+                commitList.dataset.metadataCommitsLoading = loading ? '1' : '0';
+            }
+            if (graphContainer) {
+                graphContainer.classList.toggle('github-worktree-panel-loading', loading);
+                graphContainer.dataset.metadataGraphLoading = loading ? '1' : '0';
+            }
         }
 
         function renderGithubReviewRetry(label, error) {
