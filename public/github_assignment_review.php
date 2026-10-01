@@ -2416,6 +2416,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                                      data-repo="<?= htmlspecialchars($repoFullRow) ?>"
                                                      data-student-id="<?= htmlspecialchars((string)$studentId) ?>"
                                                      data-loaded="0"
+                                                     aria-live="polite"
                                                      aria-label="Grafico branch, tag e commit della repository">
                                                     <div class="text-muted small"><i class="bi bi-diagram-3"></i> Il grafico del worktree viene caricato insieme ai dettagli.</div>
                                                 </div>
@@ -2455,7 +2456,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                                      data-loaded="0"
                                                      data-repo="<?= htmlspecialchars($repoFullRow) ?>"
                                                      data-ref="<?= htmlspecialchars($locRef) ?>"
-                                                     data-student-id="<?= htmlspecialchars((string)$studentId) ?>">
+                                                     data-student-id="<?= htmlspecialchars((string)$studentId) ?>"
+                                                     aria-live="polite">
 	                                                    <div class="text-muted">La sezione LOC viene calcolata all’apertura dei dettagli.</div>
 	                                                </div>
 	                                            </div>
@@ -2469,7 +2471,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                                      data-panel="metadata"
                                                      data-repo="<?= htmlspecialchars($repoFullRow) ?>"
                                                      data-student-id="<?= htmlspecialchars((string)$studentId) ?>"
-                                                     data-loaded="0">
+                                                     data-loaded="0"
+                                                     aria-live="polite">
                                                     <div class="text-muted"><i class="bi bi-hourglass-split"></i> Metadati GitHub non ancora caricati.</div>
                                                 </div>
                                                 <div class="github-review-contributions-status github-review-panel border rounded p-2 mb-2"
@@ -2962,14 +2965,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         }
 
         const githubMetadataCache = new Map();
+        function githubMetadataCacheKey(repoFull, ref) {
+            return repoFull + '@' + (ref || 'main');
+        }
 
-        async function loadRepoMetadata(container, repoFull, studentId, signal) {
+        async function loadRepoMetadata(container, repoFull, studentId, signal, ref) {
             if (!container || !repoFull || container.dataset.loaded === '1' || container.dataset.loading === '1') {
                 return container?._metadataData || null;
             }
             container.dataset.studentId = studentId || container.dataset.studentId || '';
-            if (githubMetadataCache.has(repoFull)) {
-                const cached = githubMetadataCache.get(repoFull);
+            const cacheKey = githubMetadataCacheKey(repoFull, ref);
+            if (githubMetadataCache.has(cacheKey)) {
+                const cached = githubMetadataCache.get(cacheKey);
                 renderRepoMetadata(container, cached, repoFull);
                 return cached;
             }
@@ -2980,7 +2987,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 const response = await fetch(window.location.href, {method: 'POST', headers: {'Accept': 'application/json'}, body, signal});
                 const data = await response.json();
                 if (!data.ok) throw new Error(data.error || 'Metadati non disponibili');
-                githubMetadataCache.set(repoFull, data);
+                githubMetadataCache.set(cacheKey, data);
                 renderRepoMetadata(container, data, repoFull);
                 return data;
             } catch (error) {
@@ -3426,7 +3433,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 ? Promise.resolve(locContainer._locData || null)
                 : loadRepoLoc(locContainer, state.repoFull, state.ref, false, state.controller.signal);
             const metadataPromise = metadataContainer && state.repoFull
-                ? loadRepoMetadata(metadataContainer, state.repoFull, context.studentId || '', state.controller.signal)
+                ? loadRepoMetadata(metadataContainer, state.repoFull, context.studentId || '', state.controller.signal, state.ref)
                 : Promise.resolve(null);
             state.promises = [locPromise, metadataPromise];
 

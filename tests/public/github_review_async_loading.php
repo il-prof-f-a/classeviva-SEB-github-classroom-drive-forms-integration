@@ -36,6 +36,9 @@ $require(str_contains($review, 'function loadCommitDetailsProgressively'), 'manc
 $require(str_contains($review, 'GITHUB_REVIEW_COMMIT_CONCURRENCY = 4'), 'il limite del pool non è esplicito');
 $require(str_contains($review, 'runWithConcurrency(commits'), 'i dettagli commit non usano il pool');
 $require(str_contains($review, "setAttribute('data-commit-state', 'loading')"), 'manca lo stato loading del singolo commit');
+$require(str_contains($review, 'function githubMetadataCacheKey'), 'manca la chiave cache metadata repository/ref');
+$require(str_contains($review, "repoFull + '@' + (ref || 'main')"), 'la cache metadata non include il ref');
+$require(substr_count($review, 'aria-live="polite"') >= 4, 'i quattro pannelli non hanno feedback ARIA indipendente');
 
 $showDetailsStart = strpos($review, "document.querySelectorAll('.show-details-btn')");
 $showDetailsHandler = $showDetailsStart === false ? '' : substr($review, $showDetailsStart, 7000);
