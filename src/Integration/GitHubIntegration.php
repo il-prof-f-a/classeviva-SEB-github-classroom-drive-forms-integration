@@ -759,7 +759,9 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
     /**
      * Recupera una snapshot lineare della repository corrente: contenuto
      * testuale classificato per riga e intervalli GitHub blame. Il cache
-     * contiene solo metadati LOC, mai il sorgente dei file.
+     * contiene solo metadati LOC, mai il sorgente dei file. Quando presente,
+     * il callback riceve ogni file elaborato come chunk: file, indice 1-based
+     * e totale.
      *
      * @return array<string,mixed>
      */
@@ -769,7 +771,8 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
         string $ref,
         int $maxFiles = 250,
         int $maxBytes = 8_000_000,
-        ?string $cacheDir = null
+        ?string $cacheDir = null,
+        ?callable $onFile = null
     ): array {
         [$owner, $repo] = $this->validatedRepository($owner, $repo);
         $rawRef = trim($ref);
@@ -851,10 +854,18 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
             if (is_file($cacheFile)) {
                 $cached = json_decode((string)@file_get_contents($cacheFile), true);
                 if (is_array($cached) && ($cached['tree_sha'] ?? '') === $treeSha && ($cached['enabled'] ?? false) === true) {
+                    $cachedFiles = is_array($cached['files'] ?? null) ? array_values($cached['files']) : [];
+                    if ($onFile !== null) {
+                        foreach ($cachedFiles as $cachedIndex => $cachedFile) {
+                            if (is_array($cachedFile)) {
+                                $onFile($cachedFile, $cachedIndex + 1, count($cachedFiles));
+                            }
+                        }
+                    }
                     $this->diagnosticLog('blame_snapshot_result', [
                         'enabled' => true,
                         'cached' => true,
-                        'files' => count((array)($cached['files'] ?? [])),
+                        'files' => count($cachedFiles),
                         'elapsed_ms' => (int)round((microtime(true) - $blameStartedAt) * 1000),
                     ]);
                     return array_merge($cached, ['cached' => true]);
@@ -905,13 +916,17 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
                     ],
                 ];
             }
-            $snapshotFiles[] = [
+            $snapshotFile = [
                 'path' => $file['path'],
                 'bytes' => strlen($text),
                 'language' => GitHubBlameLocAttributor::languageForPath((string)$file['path']),
                 'line_types' => GitHubBlameLocAttributor::lineTypesForText((string)$file['path'], $text),
                 'ranges' => $ranges,
             ];
+            $snapshotFiles[] = $snapshotFile;
+            if ($onFile !== null) {
+                $onFile($snapshotFile, count($snapshotFiles), count($files));
+            }
         }
 
         $snapshot = [

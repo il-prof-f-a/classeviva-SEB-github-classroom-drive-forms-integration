@@ -61,6 +61,13 @@ foreach ([
 $require(str_contains($integration, '/issues/{$issueNumber}/timeline'), 'endpoint timeline issue non corretto');
 $require(str_contains($integration, '/branches-where-head'), 'endpoint branch HEAD non corretto');
 $require(str_contains($review, "listRepoIssuesAll(\$owner, \$repo, 'all'"), 'issue non richieste con stato all');
+$require(str_contains($review, 'usort($rawCommits'), 'commit non ordinati cronologicamente lato server');
+$require(str_contains($review, 'usort($rawIssues'), 'issue non ordinate cronologicamente lato server');
+$require(str_contains($review, 'strtotime($leftDate)'), 'ordinamento cronologico non basato sulla data');
+$require(str_contains($review, 'metadataIdentities'), 'metadati review senza attribuzione anticipata dello studente');
+$require(str_contains($review, 'attributeCommits'), 'commit metadati non colorati prima del rendering');
+$require(str_contains($review, 'attributeBranches'), 'branch metadati non colorati prima del rendering');
+$require(str_contains($review, 'attributeIssues'), 'issue metadati non colorate prima del rendering');
 $require(str_contains($normalizer, 'extractIssueReferences'), 'parser riferimenti issue assente');
 $require(str_contains($normalizer, 'mapTagsBySha'), 'mapping tag SHA assente');
 $require(str_contains($review, 'formatContributionMetric'), 'formatter n di m assente');
@@ -79,10 +86,12 @@ $require(str_contains($review, "const issueExpandedClass = issueOwned ? ' show' 
 $require(str_contains($review, 'github-worktree-graph'), 'contenitore grafo worktree assente');
 $require(str_contains($review, 'renderWorktreeGraph'), 'renderer grafo worktree assente');
 $require(str_contains($review, 'github-graph-node'), 'nodo grafo worktree assente');
+$require(str_contains($review, 'github-graph-node-pending'), 'nodi DAG senza attribuzione non marcati come in corso');
 $require(str_contains($review, "row.querySelector('.github-worktree-graph')"), 'il grafo non viene cercato sulla riga della tabella');
 $require(str_contains($review, 'buildWorktreeGraphSvg'), 'renderer SVG DAG assente');
 $require(str_contains($review, 'github-worktree-graph-svg'), 'SVG worktree assente');
 $require(str_contains($review, 'github-graph-edge'), 'archi DAG assenti');
+$require(str_contains($review, 'github-graph-edge-pending'), 'archi DAG senza attribuzione non marcati come in corso');
 $require(str_contains($review, 'github-graph-lane-main'), 'corsia main assente');
 $require(!str_contains($review, 'max-height: 26rem'), 'altezza fissa del pannello worktree ancora presente');
 $require(str_contains($review, "'parents'"), 'parent commit non incluso nei metadati');

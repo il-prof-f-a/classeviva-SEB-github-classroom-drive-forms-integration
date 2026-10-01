@@ -130,6 +130,22 @@ $require($blameLoc['student']['code'] === 1, 'LOC codice studente blame errate')
 $require($blameLoc['student']['comment'] === 1, 'commenti studente blame errati');
 $require($blameLoc['student']['blank'] === 0, 'righe blank studente blame errate');
 $require($blameLoc['by_language']['Java']['student']['total'] === 2, 'riepilogo linguaggio blame errato');
+$blameLocChunk = GitHubBlameLocAttributor::aggregate([
+    [
+        'path' => 'src/Other.java',
+        'language' => 'Java',
+        'line_types' => ['code', 'blank'],
+        'ranges' => [[
+            'starting_line' => 1,
+            'ending_line' => 1,
+            'commit' => ['author_login' => 'student'],
+        ]],
+    ],
+], $identities);
+$blameLocMerged = GitHubBlameLocAttributor::mergeAggregates($blameLoc, $blameLocChunk);
+$require($blameLocMerged['totals']['total'] === 6, 'merge LOC a chunk: totale righe errato');
+$require($blameLocMerged['student']['total'] === 3, 'merge LOC a chunk: LOC studente errate');
+$require($blameLocMerged['by_language']['Java']['student']['total'] === 3, 'merge LOC a chunk: riepilogo linguaggio errato');
 $require(
     GitHubBlameLocAttributor::lineTypesForText('Main.java', "// comment\n\nint x = 1;\n") === ['comment', 'blank', 'code'],
     'classificazione righe blame errata'

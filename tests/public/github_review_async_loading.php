@@ -27,7 +27,9 @@ $require(str_contains($review, 'data-panel="contributions"'), 'manca il placehol
 $require(str_contains($review, 'setPanelState'), 'manca uno stato indipendente per pannello');
 $require(str_contains($review, 'const locPromise =') && str_contains($review, 'loadRepoLoc(locContainer'), 'LOC non parte dal coordinatore');
 $require(str_contains($review, 'const metadataPromise =') && str_contains($review, 'loadRepoMetadata(metadataContainer'), 'metadati non partono dal coordinatore');
-$require(str_contains($review, 'Promise.allSettled([locPromise, metadataPromise])'), 'LOC e metadati non sono coordinati in parallelo');
+$require(str_contains($review, 'Promise.allSettled([locPromise, metadataPromise, studentLocPromise])'), 'LOC, metadati e percorso studente non sono coordinati in parallelo');
+$require(str_contains($review, 'const studentLocPromise ='), 'percorso studente non parte insieme agli altri pannelli');
+$require(str_contains($review, 'locOnly: true'), 'flusso parallelo non limitato al calcolo LOC studente');
 $require(str_contains($review, 'runWithConcurrency'), 'manca il pool per i dettagli commit');
 $require(str_contains($review, 'function renderGithubReviewContributionStatus'), 'manca il riepilogo dedicato del percorso studente');
 $require(str_contains($review, 'data-contribution-state'), 'manca lo stato dedicato del percorso studente');
@@ -54,6 +56,15 @@ $require(str_contains($review, 'TextDecoder'), 'il parser streaming non gestisce
 $require(str_contains($review, "stream: '1'") || str_contains($review, "stream', '1'"), 'le richieste review non chiedono il formato streaming');
 $require(str_contains($review, "type' => 'result'") || str_contains($review, '"type":"result"'), 'manca l’evento finale result dello stream');
 $require(str_contains($review, 'metadata_item'), 'i metadati non hanno eventi incrementali per elemento');
+$require(str_contains($review, "'type' => 'contribution_item'"), 'il percorso studente non emette risultati parziali per elemento');
+$require(str_contains($review, 'mergeContributionItem'), 'il client non applica i risultati parziali del percorso studente');
+$require(str_contains($review, 'contribution_item'), 'il client non gestisce gli eventi parziali del percorso studente');
+$require(str_contains($review, 'contribution_loc_progress'), 'LOC studente non viene inviata a chunk');
+$require(str_contains($review, 'studentLocPartial'), 'il client non mantiene lo stato parziale delle LOC studente');
+$require(str_contains($review, 'github-attribution-pending'), 'manca lo stato visivo di attribuzione in corso');
+$require(str_contains($review, 'github-attribution-pulse'), 'manca l’animazione dello stato di attribuzione in corso');
+$require(str_contains($review, 'repo-loc-attribution-pending'), 'LOC senza attribuzione non marcate come in corso');
+$require(str_contains($review, 'github-worktree-attribution-pending'), 'grafo worktree senza attribuzione non marcato come in corso');
 $require(str_contains($review, 'function ghReviewReleaseSessionLock'), 'manca il rilascio del lock sessione per richieste parallele');
 $require(substr_count($review, 'aria-live="polite"') >= 4, 'i quattro pannelli non hanno feedback ARIA indipendente');
 $require(!preg_match('/function loadCommitDetailsProgressively\(row, commits, context, state\).*?const commits =/s', $review), 'il coordinatore commit ridefinisce il parametro commits');

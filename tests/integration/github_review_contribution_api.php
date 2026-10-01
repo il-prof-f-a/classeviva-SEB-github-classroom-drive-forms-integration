@@ -22,6 +22,9 @@ $require(str_contains($integration, 'validatedRepository'), 'metodi review senza
 $require(str_contains($integration, 'validatedBranch'), 'metodi review senza validazione branch');
 $require(str_contains($integration, 'function getRepositoryBlameSnapshot'), 'snapshot blame repository mancante');
 $require(str_contains($integration, 'graphqlRequest'), 'snapshot blame senza API GraphQL');
+$require(str_contains($integration, '?callable $onFile = null'), 'snapshot blame senza callback per streaming a chunk');
+$require(str_contains($integration, '$onFile($snapshotFile'), 'snapshot blame non emette i file elaborati');
+$require(str_contains($integration, '$onFile($cachedFile'), 'cache blame non emette i file a chunk');
 
 if ($failures !== []) {
     foreach ($failures as $failure) {

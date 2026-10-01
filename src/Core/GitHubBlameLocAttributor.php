@@ -108,6 +108,53 @@ final class GitHubBlameLocAttributor
     }
 
     /**
+     * Unisce due aggregati LOC compatibili. Serve agli endpoint streaming per
+     * aggiornare il riepilogo dopo ogni file senza ricalcolare i file già
+     * elaborati.
+     *
+     * @param array<string,mixed> $base
+     * @param array<string,mixed> $next
+     * @return array<string,mixed>
+     */
+    public static function mergeAggregates(array $base, array $next): array
+    {
+        if (($base['enabled'] ?? false) !== true) {
+            return $next;
+        }
+        if (($next['enabled'] ?? false) !== true) {
+            return $base;
+        }
+
+        $merged = $base;
+        foreach (['totals', 'student'] as $section) {
+            $merged[$section] = is_array($merged[$section] ?? null) ? $merged[$section] : self::zeroMetrics(0);
+            foreach (['total', 'code', 'comment', 'blank', 'files'] as $key) {
+                $merged[$section][$key] = (int)($merged[$section][$key] ?? 0) + (int)($next[$section][$key] ?? 0);
+            }
+        }
+        $merged['by_language'] = is_array($merged['by_language'] ?? null) ? $merged['by_language'] : [];
+        foreach ((array)($next['by_language'] ?? []) as $language => $languageRow) {
+            if (!is_array($languageRow)) {
+                continue;
+            }
+            if (!isset($merged['by_language'][$language]) || !is_array($merged['by_language'][$language])) {
+                $merged['by_language'][$language] = [
+                    'total' => self::zeroMetrics(0),
+                    'student' => self::zeroMetrics(0),
+                ];
+            }
+            foreach (['total', 'student'] as $section) {
+                foreach (['total', 'code', 'comment', 'blank', 'files'] as $key) {
+                    $merged['by_language'][$language][$section][$key] = (int)($merged['by_language'][$language][$section][$key] ?? 0)
+                        + (int)($languageRow[$section][$key] ?? 0);
+                }
+            }
+        }
+        ksort($merged['by_language']);
+        return $merged;
+    }
+
+    /**
      * @param array<string,int> $details
      * @return array<string,mixed>
      */
