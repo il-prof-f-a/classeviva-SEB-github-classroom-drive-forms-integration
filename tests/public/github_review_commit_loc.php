@@ -66,6 +66,9 @@ $require(str_contains($locHandler, "loc_download_complete"), 'diagnostica comple
 $require(str_contains($locHandler, 'ghReviewComputeLocViaGitHubApi'), 'fallback LOC via API GitHub assente');
 $require(str_contains($locHandler, 'loc_archive_extract_fallback'), 'fallback LOC dopo errore di estrazione archivio assente');
 $require(str_contains($locHandler, "'Archivio GitHub troppo grande; analisi tramite API…'"), 'messaggio fallback estrazione archivio assente');
+$require(str_contains($source, "'m4a'") && str_contains($source, "'flac'"), 'filtro LOC API senza estensioni audio comuni');
+$require(str_contains($source, '$estimatedBytes + $size > $maxBytes'), 'LOC API interrompe ancora la richiesta per la stima dei blob');
+$require(str_contains($source, '$loadedBytes + $contentBytes > $maxBytes'), 'LOC API non limita il caricamento dei blob oltre il budget');
 $require(str_contains($source, "'GITHUB_API'"), 'sorgente LOC via API GitHub assente');
 $require(is_string($integrationSource) && str_contains($integrationSource, 'function getRepositoryTree'), 'metodo API git tree assente');
 $require(is_string($integrationSource) && str_contains($integrationSource, 'function getRepositoryBlob'), 'metodo API git blob assente');

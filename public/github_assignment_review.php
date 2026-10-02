@@ -1587,7 +1587,10 @@ function ghReviewComputeLocViaGitHubApi(
         '7z', 'avi', 'bmp', 'class', 'dll', 'doc', 'docx', 'gif', 'gz', 'ico',
         'jar', 'jpeg', 'jpg', 'mov', 'mp3', 'mp4', 'pdf', 'png', 'ppt', 'pptx',
         'so', 'tar', 'wav', 'webp', 'xls', 'xlsx', 'zip', 'woff', 'woff2', 'ttf',
-        'eot', 'ico', 'webm', 'ogg', 'avi', 'mkv', 'exe', 'bin'
+        'eot', 'ico', 'webm', 'ogg', 'avi', 'mkv', 'exe', 'bin', 'aac', 'flac',
+        'm4a', 'm4v', 'opus', '3gp', '3g2', 'amr', 'caf', 'aiff', 'iso', 'img',
+        'dmg', 'apk', 'ipa', 'msi', 'deb', 'rpm', 'psd', 'ai', 'eps', 'blend',
+        'obj', 'stl', 'fbx', 'glb', 'gltf', 'sqlite', 'sqlite3', 'db', 'dat', 'raw'
     ];
     $entries = is_array($tree['tree'] ?? null) ? $tree['tree'] : [];
     $selected = [];
@@ -1611,10 +1614,14 @@ function ghReviewComputeLocViaGitHubApi(
             continue;
         }
         $size = max(0, (int)($entry['size'] ?? 0));
-        $estimatedBytes += $size;
-        if (count($selected) >= $maxFiles || $estimatedBytes > $maxBytes) {
-            throw new RuntimeException('Repository troppo grande per il calcolo LOC via API.');
+        // Un albero GitHub può contenere media o artefatti con estensione
+        // sconosciuta. Non scarichiamo singoli blob sproporzionati: il filtro
+        // protegge il processo PHP ma lascia analizzabili tutti i sorgenti
+        // normali della repository.
+        if ($size > 5_000_000 || count($selected) >= $maxFiles || $estimatedBytes + $size > $maxBytes) {
+            continue;
         }
+        $estimatedBytes += $size;
         $selected[] = ['path' => $path, 'sha' => $sha, 'size' => $size];
     }
 
@@ -1632,10 +1639,11 @@ function ghReviewComputeLocViaGitHubApi(
             if (str_contains($content, "\0")) {
                 continue;
             }
-            $loadedBytes += strlen($content);
-            if ($loadedBytes > $maxBytes) {
-                throw new RuntimeException('Repository troppo grande per il calcolo LOC via API.');
+            $contentBytes = strlen($content);
+            if ($loadedBytes + $contentBytes > $maxBytes) {
+                continue;
             }
+            $loadedBytes += $contentBytes;
             $target = $extractDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $file['path']);
             $parent = dirname($target);
             if (!is_dir($parent) && !mkdir($parent, 0700, true) && !is_dir($parent)) {
