@@ -49,6 +49,14 @@ $require(str_contains($source, "function_exists('shell_exec')"), 'LOC chiama she
 $require(str_contains($source, 'catch (Throwable $e)'), 'handler LOC non intercetta errori PHP non-Exception');
 $require(str_contains($source, 'fetchGithubReviewStream') && str_contains($source, 'TextDecoder'), 'client LOC non gestisce risposte streaming o fallback JSON');
 
+// LOC: il ref iniziale può essere solo un fallback. Il branch predefinito reale
+// della repository deve essere risolto lato server prima del download ZIP.
+$locHandlerStart = strpos($source, "if (\$postAction === 'repo_loc')");
+$locHandler = $locHandlerStart === false ? '' : substr($source, $locHandlerStart, 12000);
+$require(str_contains($source, 'function ghReviewResolveRepositoryRef'), 'manca la risoluzione del default branch GitHub per la LOC');
+$require(str_contains($source, "['default_branch']"), 'la LOC non legge default_branch dai metadati repository');
+$require(str_contains($locHandler, '$ref = ghReviewResolveRepositoryRef($github, $owner, $repo, $ref);'), 'handler LOC non applica il branch risolto prima del download');
+
 if ($failures !== []) {
     foreach ($failures as $failure) {
         fwrite(STDERR, "FAIL: {$failure}

@@ -1508,6 +1508,41 @@ function ghComputeLocWithClocIfAvailable($rootDir)
     return ['totals' => $totals, 'by_language' => $byLang, 'raw' => $data];
 }
 
+/**
+ * Risolve il branch predefinito usato dal calcolo LOC.
+ *
+ * La pagina può inizializzare il ref a "main" prima che i metadati asincroni
+ * della repository siano disponibili. GitHub, però, consente repository con un
+ * branch predefinito diverso: in quel caso usare sempre "main" produce un
+ * 404 sullo zipball e la LOC fallisce pur con API funzionanti.
+ */
+function ghReviewResolveRepositoryRef(
+    GitHubIntegration $github,
+    string $owner,
+    string $repo,
+    string $requestedRef
+): string {
+    $fallback = $requestedRef !== '' ? $requestedRef : 'main';
+
+    // Un ref diverso da "main" è già stato esplicitamente fornito dal caller.
+    if ($requestedRef !== '' && $requestedRef !== 'main') {
+        return $requestedRef;
+    }
+
+    try {
+        $repository = $github->getRepository($owner, $repo);
+        $defaultBranch = trim((string)($repository['default_branch'] ?? ''));
+        if ($defaultBranch !== '' && preg_match('~^[A-Za-z0-9_.\-/]+$~', $defaultBranch)) {
+            return $defaultBranch;
+        }
+    } catch (Throwable $e) {
+        // Manteniamo il fallback per non trasformare un problema transitorio
+        // dei metadati in un errore diverso dal calcolo LOC.
+    }
+
+    return $fallback;
+}
+
 if ($postAction === 'repo_loc') {
     $stream = (string)($_POST['stream'] ?? $jsonRequest['stream'] ?? '0') === '1';
     $streamStarted = false;
@@ -1591,6 +1626,7 @@ if ($postAction === 'repo_loc') {
         }
 
         [$owner, $repo] = explode('/', $repoFull, 2);
+        $ref = ghReviewResolveRepositoryRef($github, $owner, $repo, $ref);
         // L'autenticazione GitHub usa esclusivamente il token OAuth di sessione.
         $token = $_SESSION['github_access_token'] ?? null;
         if (!$token) {
