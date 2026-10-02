@@ -279,6 +279,45 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
         );
     }
 
+    /** Albero completo della repository per un ref. */
+    public function getRepositoryTree(string $owner, string $repo, string $ref): array
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        $ref = $this->validatedBranch($ref);
+        return (array)$this->apiRequest(
+            'GET',
+            "/repos/{$owner}/{$repo}/git/trees/{$ref}",
+            null,
+            ['recursive' => '1']
+        );
+    }
+
+    /**
+     * Contenuto testuale di un blob GitHub.
+     *
+     * L'endpoint Git Data usa base64 per i blob; la decodifica resta qui così
+     * i chiamanti non devono conoscere il formato di trasporto dell'API.
+     */
+    public function getRepositoryBlob(string $owner, string $repo, string $sha): string
+    {
+        [$owner, $repo] = $this->validatedRepository($owner, $repo);
+        $sha = $this->validatedSha($sha);
+        $blob = (array)$this->apiRequest('GET', "/repos/{$owner}/{$repo}/git/blobs/{$sha}");
+        $encoding = strtolower(trim((string)($blob['encoding'] ?? '')));
+        $content = (string)($blob['content'] ?? '');
+        if ($encoding === 'base64') {
+            $decoded = base64_decode((string)preg_replace('/\s+/', '', $content), true);
+            if ($decoded === false) {
+                throw new \RuntimeException('Blob GitHub non decodificabile.');
+            }
+            return $decoded;
+        }
+        if ($encoding === 'utf-8' || $encoding === '') {
+            return $content;
+        }
+        throw new \RuntimeException('Encoding blob GitHub non supportato.');
+    }
+
     /** Tag della repository con lo SHA del commit puntato. */
     public function listRepoTags($owner, $repo, $perPage = 100, $page = 1): array
     {

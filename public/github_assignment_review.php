@@ -1543,6 +1543,130 @@ function ghReviewResolveRepositoryRef(
     return $fallback;
 }
 
+/**
+ * Timeout del download dell'archivio usato dal calcolo LOC.
+ *
+ * Le repository GitHub con materiali multimediali o molte risorse possono
+ * superare i 120 secondi anche quando le API restituiscono immediatamente i
+ * metadati. Il limite resta comunque bounded per evitare richieste bloccate
+ * indefinitamente sull'hosting condiviso.
+ */
+function ghReviewLocDownloadTimeout(): int
+{
+    $configured = (int)env('GITHUB_LOC_DOWNLOAD_TIMEOUT', '300');
+    return max(30, min(900, $configured));
+}
+
+/**
+ * Calcola le LOC senza passare dal dominio codeload.github.com.
+ *
+ * Alcuni hosting condivisi consentono le API GitHub ma filtrano il redirect
+ * verso il servizio degli archivi. In quel caso l'albero e i blob vengono
+ * letti dalla stessa API autenticata e composti in una directory temporanea.
+ * I limiti impediscono che una repository con materiali non testuali saturi
+ * memoria, disco o quota API.
+ *
+ * @return array{totals:array<string,int>,by_language:array<string,array<string,int>>}
+ */
+function ghReviewComputeLocViaGitHubApi(
+    GitHubIntegration $github,
+    string $owner,
+    string $repo,
+    string $ref,
+    bool $stream,
+    string $requestId
+): array {
+    $tree = $github->getRepositoryTree($owner, $repo, $ref);
+    if (!empty($tree['truncated'])) {
+        throw new RuntimeException('Albero GitHub troncato: impossibile calcolare tutte le LOC.');
+    }
+
+    $maxFiles = max(1, min(5000, (int)env('GITHUB_LOC_API_MAX_FILES', '1500')));
+    $maxBytes = max(100_000, min(100_000_000, (int)env('GITHUB_LOC_API_MAX_BYTES', '50000000')));
+    $binaryExtensions = [
+        '7z', 'avi', 'bmp', 'class', 'dll', 'doc', 'docx', 'gif', 'gz', 'ico',
+        'jar', 'jpeg', 'jpg', 'mov', 'mp3', 'mp4', 'pdf', 'png', 'ppt', 'pptx',
+        'so', 'tar', 'wav', 'webp', 'xls', 'xlsx', 'zip', 'woff', 'woff2', 'ttf',
+        'eot', 'ico', 'webm', 'ogg', 'avi', 'mkv', 'exe', 'bin'
+    ];
+    $entries = is_array($tree['tree'] ?? null) ? $tree['tree'] : [];
+    $selected = [];
+    $estimatedBytes = 0;
+    foreach ($entries as $entry) {
+        if (!is_array($entry) || ($entry['type'] ?? '') !== 'blob') {
+            continue;
+        }
+        $path = trim((string)($entry['path'] ?? ''));
+        $sha = strtolower(trim((string)($entry['sha'] ?? '')));
+        if ($path === '' || preg_match('~^[^\x00]+$~', $path) !== 1
+            || str_starts_with($path, '/')
+            || preg_match('~^[A-Za-z]:/~', $path)
+            || preg_match('#(^|/)(?:\.git|vendor|node_modules|storage)(?:/|$)#i', $path)
+            || preg_match('#(^|/)\.\.?(/|$)#', $path)
+            || preg_match('~^[0-9a-f]{40}$~', $sha) !== 1) {
+            continue;
+        }
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        if ($extension !== '' && in_array($extension, $binaryExtensions, true)) {
+            continue;
+        }
+        $size = max(0, (int)($entry['size'] ?? 0));
+        $estimatedBytes += $size;
+        if (count($selected) >= $maxFiles || $estimatedBytes > $maxBytes) {
+            throw new RuntimeException('Repository troppo grande per il calcolo LOC via API.');
+        }
+        $selected[] = ['path' => $path, 'sha' => $sha, 'size' => $size];
+    }
+
+    $extractDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'uda-ghloc-api-' . uniqid();
+    if (!@mkdir($extractDir, 0700, true) && !is_dir($extractDir)) {
+        throw new RuntimeException('Impossibile creare cartella temporanea LOC API.');
+    }
+
+    try {
+        $loadedBytes = 0;
+        foreach ($selected as $index => $file) {
+            $content = $github->getRepositoryBlob($owner, $repo, $file['sha']);
+            // Il conteggio interno scarta i file binari tramite NUL: evitiamo
+            // quindi di scrivere sull'albero temporaneo dati non analizzabili.
+            if (str_contains($content, "\0")) {
+                continue;
+            }
+            $loadedBytes += strlen($content);
+            if ($loadedBytes > $maxBytes) {
+                throw new RuntimeException('Repository troppo grande per il calcolo LOC via API.');
+            }
+            $target = $extractDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $file['path']);
+            $parent = dirname($target);
+            if (!is_dir($parent) && !mkdir($parent, 0700, true) && !is_dir($parent)) {
+                throw new RuntimeException('Creazione file temporaneo LOC API fallita.');
+            }
+            if (@file_put_contents($target, $content, LOCK_EX) === false) {
+                throw new RuntimeException('Scrittura file temporaneo LOC API fallita.');
+            }
+            if ($stream && ($index === 0 || (($index + 1) % 10) === 0 || $index + 1 === count($selected))) {
+                ghReviewStreamEmit([
+                    'type' => 'status',
+                    'panel' => 'loc',
+                    'stage' => 'api_blobs',
+                    'message' => 'Analisi LOC via API: ' . ($index + 1) . '/' . count($selected) . ' file…',
+                ]);
+            }
+        }
+
+        $result = ghComputeLocWithClocIfAvailable($extractDir);
+        if (!$result) {
+            $result = ghComputeLocInternal($extractDir);
+        }
+        return [
+            'totals' => $result['totals'],
+            'by_language' => $result['by_language'],
+        ];
+    } finally {
+        ghRemoveDirRecursive($extractDir);
+    }
+}
+
 if ($postAction === 'repo_loc') {
     $stream = (string)($_POST['stream'] ?? $jsonRequest['stream'] ?? '0') === '1';
     $streamStarted = false;
@@ -1557,7 +1681,10 @@ if ($postAction === 'repo_loc') {
             jsonResponse(['ok' => false, 'error' => 'Troppe analisi richieste. Riprova tra alcuni minuti.'], 429);
         }
 
-        set_time_limit(180);
+        $downloadTimeout = ghReviewLocDownloadTimeout();
+        // Lasciamo al processo PHP un piccolo margine oltre il timeout cURL
+        // per chiudere il file temporaneo e serializzare l'errore/risultato.
+        set_time_limit(max(180, min(900, $downloadTimeout + 30)));
 
         $repoFull = trim((string)($_POST['repo'] ?? ''));
         $ref = trim((string)($_POST['ref'] ?? ''));
@@ -1640,6 +1767,13 @@ if ($postAction === 'repo_loc') {
 
         $url = "https://api.github.com/repos/{$owner}/{$repo}/zipball/{$ref}";
 
+        DiagnosticsLogger::log('github_review', 'loc_download_start', [
+            'request_id' => $diagnosticRequestId,
+            'repo_hash' => ghReviewDiagnosticHash($repoFull),
+            'ref_hash' => ghReviewDiagnosticHash($ref),
+            'timeout_seconds' => $downloadTimeout,
+        ]);
+
         if ($stream) {
             ghReviewStreamEmit(['type' => 'status', 'panel' => 'loc', 'stage' => 'download', 'message' => 'Download del repository…']);
         }
@@ -1654,35 +1788,75 @@ if ($postAction === 'repo_loc') {
         // Seguiamo i redirect manualmente: il token OAuth viene inviato solo alla
         // prima richiesta (api.github.com) e non è mai inoltrato ai domini di
         // download. Accettiamo un piccolo numero di hop HTTPS.
+        $zipFailed = false;
+        $result = null;
+        $source = '';
+        try {
         $redirectUrl = $url;
         $downloaded = false;
         $httpCode = 0;
         $curlErr = '';
         for ($hop = 0; $hop <= 5; $hop++) {
             $redirectLocation = '';
+            $hopStartedAt = microtime(true);
+            $hopUrl = $redirectUrl;
             $fh = fopen($tmpZip, 'wb');
             if (!$fh) {
                 throw new Exception('Impossibile scrivere zip temporaneo');
             }
             $ch = curl_init($redirectUrl);
-            curl_setopt($ch, CURLOPT_FILE, $fh);
-            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, $hop === 0
-                ? $headers
-                : ['Accept: application/vnd.github+json', 'User-Agent: Sistema-UDA-PHP']);
-            curl_setopt($ch, CURLOPT_HEADERFUNCTION, static function ($curl, string $header) use (&$redirectLocation): int {
-                if (stripos($header, 'Location:') === 0) {
-                    $redirectLocation = trim(substr($header, 9));
+            try {
+                curl_setopt($ch, CURLOPT_FILE, $fh);
+                curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+                curl_setopt($ch, CURLOPT_HTTPHEADER, $hop === 0
+                    ? $headers
+                    : ['Accept: application/vnd.github+json', 'User-Agent: Sistema-UDA-PHP']);
+                curl_setopt($ch, CURLOPT_HEADERFUNCTION, static function ($curl, string $header) use (&$redirectLocation): int {
+                    if (stripos($header, 'Location:') === 0) {
+                        $redirectLocation = trim(substr($header, 9));
+                    }
+                    return strlen($header);
+                });
+                curl_setopt($ch, CURLOPT_TIMEOUT, $downloadTimeout);
+                curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 30);
+                if (defined('CURLOPT_TCP_KEEPALIVE')) {
+                    curl_setopt($ch, CURLOPT_TCP_KEEPALIVE, 1);
                 }
-                return strlen($header);
-            });
-            curl_setopt($ch, CURLOPT_TIMEOUT, 120);
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 20);
-            $ok = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $curlErr = curl_error($ch);
-            curl_close($ch);
-            fclose($fh);
+                if (defined('CURLOPT_TCP_KEEPIDLE')) {
+                    curl_setopt($ch, CURLOPT_TCP_KEEPIDLE, 30);
+                }
+                if (defined('CURLOPT_TCP_KEEPINTVL')) {
+                    curl_setopt($ch, CURLOPT_TCP_KEEPINTVL, 15);
+                }
+                if (defined('CURLOPT_BUFFERSIZE')) {
+                    curl_setopt($ch, CURLOPT_BUFFERSIZE, 131072);
+                }
+                $ok = curl_exec($ch);
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $curlErr = curl_error($ch);
+                $downloadedBytes = function_exists('curl_getinfo')
+                    ? (int)curl_getinfo($ch, CURLINFO_SIZE_DOWNLOAD_T)
+                    : 0;
+            } finally {
+                if ($ch !== false && $ch !== null) {
+                    curl_close($ch);
+                }
+                fclose($fh);
+            }
+
+            $fileBytes = is_file($tmpZip) ? (int)@filesize($tmpZip) : 0;
+            DiagnosticsLogger::log('github_review', 'loc_download_hop', [
+                'request_id' => $diagnosticRequestId,
+                'hop' => $hop,
+                'host_hash' => ghReviewDiagnosticHash((string)(parse_url($hopUrl, PHP_URL_HOST) ?: '')),
+                'http_status' => $httpCode,
+                'ok' => (bool)$ok,
+                'elapsed_ms' => (int)round((microtime(true) - $hopStartedAt) * 1000),
+                'download_bytes' => $downloadedBytes,
+                'file_bytes' => $fileBytes,
+                'curl_error' => $curlErr !== '' ? $curlErr : null,
+                'redirect_host_hash' => ghReviewDiagnosticHash((string)(parse_url($redirectLocation, PHP_URL_HOST) ?: '')),
+            ]);
 
             if (!$ok) {
                 break;
@@ -1722,45 +1896,78 @@ if ($postAction === 'repo_loc') {
             throw new Exception('Download zip fallito: ' . ($curlErr ?: "HTTP {$httpCode}") . $bodySnippet);
         }
 
-        if (!class_exists('ZipArchive')) {
+        DiagnosticsLogger::log('github_review', 'loc_download_complete', [
+            'request_id' => $diagnosticRequestId,
+            'repo_hash' => ghReviewDiagnosticHash($repoFull),
+            'ref_hash' => ghReviewDiagnosticHash($ref),
+            'file_bytes' => is_file($tmpZip) ? (int)@filesize($tmpZip) : 0,
+            'http_status' => $httpCode,
+        ]);
+        } catch (Throwable $downloadError) {
+            // Su alcuni hosting condivisi api.github.com è raggiungibile ma il
+            // redirect verso codeload.github.com viene filtrato. In tal caso
+            // ricostruiamo l'albero dai blob GitHub, senza esporre il token a
+            // un dominio diverso dalle API.
+            $zipFailed = true;
+            @unlink($tmpZip);
+            DiagnosticsLogger::exception('github_review', 'loc_archive_fallback', $downloadError, [
+                'request_id' => $diagnosticRequestId,
+                'repo_hash' => ghReviewDiagnosticHash($repoFull),
+                'ref_hash' => ghReviewDiagnosticHash($ref),
+            ]);
+            if ($stream) {
+                ghReviewStreamEmit([
+                    'type' => 'status',
+                    'panel' => 'loc',
+                    'stage' => 'api_fallback',
+                    'message' => 'Archivio GitHub non disponibile; analisi tramite API…',
+                ]);
+            }
+            $result = ghReviewComputeLocViaGitHubApi($github, $owner, $repo, $ref, $stream, $diagnosticRequestId);
+            $source = 'GITHUB_API';
+        }
+
+        if (!$zipFailed && !class_exists('ZipArchive')) {
             @unlink($tmpZip);
             throw new Exception('ZipArchive non disponibile su PHP');
         }
 
-        $extractDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'uda-ghloc-' . uniqid();
-        if (!@mkdir($extractDir, 0777, true) && !is_dir($extractDir)) {
-            @unlink($tmpZip);
-            throw new Exception('Impossibile creare cartella temporanea');
-        }
+        if (!$zipFailed) {
+            $extractDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'uda-ghloc-' . uniqid();
+            if (!@mkdir($extractDir, 0777, true) && !is_dir($extractDir)) {
+                @unlink($tmpZip);
+                throw new Exception('Impossibile creare cartella temporanea');
+            }
 
-        try {
-            \App\Core\Security\GitHubArchiveExtractor::extract($tmpZip, $extractDir);
-        } catch (\Throwable $archiveError) {
+            try {
+                \App\Core\Security\GitHubArchiveExtractor::extract($tmpZip, $extractDir);
+            } catch (\Throwable $archiveError) {
+                @unlink($tmpZip);
+                ghRemoveDirRecursive($extractDir);
+                throw new Exception($archiveError->getMessage(), 0, $archiveError);
+            }
             @unlink($tmpZip);
+
+            if ($stream) {
+                ghReviewStreamEmit(['type' => 'status', 'panel' => 'loc', 'stage' => 'extract', 'message' => 'Archivio estratto, calcolo LOC…']);
+            }
+
+            $dirs = glob($extractDir . DIRECTORY_SEPARATOR . '*', GLOB_ONLYDIR);
+            $rootDir = (is_array($dirs) && !empty($dirs)) ? $dirs[0] : $extractDir;
+
+            $result = ghComputeLocWithClocIfAvailable($rootDir);
+            $source = 'CLOC';
+            if (!$result) {
+                $result = ghComputeLocInternal($rootDir);
+                $source = 'INTERNAL';
+            }
+
+            if ($stream) {
+                ghReviewStreamEmit(['type' => 'status', 'panel' => 'loc', 'stage' => 'count', 'message' => 'LOC calcolate.']);
+            }
+
             ghRemoveDirRecursive($extractDir);
-            throw new Exception($archiveError->getMessage(), 0, $archiveError);
         }
-        @unlink($tmpZip);
-
-        if ($stream) {
-            ghReviewStreamEmit(['type' => 'status', 'panel' => 'loc', 'stage' => 'extract', 'message' => 'Archivio estratto, calcolo LOC…']);
-        }
-
-        $dirs = glob($extractDir . DIRECTORY_SEPARATOR . '*', GLOB_ONLYDIR);
-        $rootDir = (is_array($dirs) && !empty($dirs)) ? $dirs[0] : $extractDir;
-
-        $result = ghComputeLocWithClocIfAvailable($rootDir);
-        $source = 'CLOC';
-        if (!$result) {
-            $result = ghComputeLocInternal($rootDir);
-            $source = 'INTERNAL';
-        }
-
-        if ($stream) {
-            ghReviewStreamEmit(['type' => 'status', 'panel' => 'loc', 'stage' => 'count', 'message' => 'LOC calcolate.']);
-        }
-
-        ghRemoveDirRecursive($extractDir);
 
         $payload = [
             'totals' => $result['totals'],
@@ -1808,6 +2015,11 @@ if ($postAction === 'repo_loc') {
         jsonResponse($locResponse);
     } catch (Throwable $e) {
         $publicError = \App\Core\Security\PublicError::message($e, 'github_repo_loc');
+        DiagnosticsLogger::exception('github_review', 'loc_phase_error', $e, [
+            'request_id' => $diagnosticRequestId,
+            'repo_hash' => ghReviewDiagnosticHash((string)($_POST['repo'] ?? $jsonRequest['repo'] ?? '')),
+            'ref_hash' => ghReviewDiagnosticHash((string)($_POST['ref'] ?? $jsonRequest['ref'] ?? '')),
+        ]);
         if ($streamStarted) {
             ghReviewStreamEmit(['type' => 'error', 'ok' => false, 'panel' => 'loc', 'error' => $publicError]);
             ghReviewStreamFinish();

@@ -9,6 +9,9 @@ declare(strict_types=1);
 //    inoltri il token OAuth solo alla prima richiesta (api.github.com).
 $file = dirname(__DIR__, 2) . '/public/github_assignment_review.php';
 $source = file_get_contents($file);
+$integrationSource = file_get_contents(dirname(__DIR__, 2) . '/src/Integration/GitHubIntegration.php');
+$envExample = file_get_contents(dirname(__DIR__, 2) . '/.env.example');
+$configEnvExample = file_get_contents(dirname(__DIR__, 2) . '/config/.env.example');
 if ($source === false) {
     fwrite(STDERR, "FAIL: impossibile leggere github_assignment_review.php
 ");
@@ -30,7 +33,6 @@ $require(!str_contains($source, "getAction === 'commit_details'"), 'handler comm
 $require(str_contains($source, "action: 'commit_details'"), 'JS commit_details non invia il body POST');
 
 // LOC: nessuna allowlist host rigida e multi-hop HTTPS con auth solo al primo hop.
-$require(!str_contains($source, 'codeload.github.com'), 'LOC ancora con allowlist host rigida');
 $require(str_contains($source, 'hop <= 5'), 'LOC senza loop multi-hop');
 $require(str_contains($source, 'hop === 0'), 'LOC non limita il token OAuth al primo hop');
 
@@ -53,9 +55,20 @@ $require(str_contains($source, 'fetchGithubReviewStream') && str_contains($sourc
 // della repository deve essere risolto lato server prima del download ZIP.
 $locHandlerStart = strpos($source, "if (\$postAction === 'repo_loc')");
 $locHandler = $locHandlerStart === false ? '' : substr($source, $locHandlerStart, 12000);
+$require(!str_contains($locHandler, 'in_array($redirectParts'), 'LOC ancora con allowlist host rigida');
 $require(str_contains($source, 'function ghReviewResolveRepositoryRef'), 'manca la risoluzione del default branch GitHub per la LOC');
 $require(str_contains($source, "['default_branch']"), 'la LOC non legge default_branch dai metadati repository');
 $require(str_contains($locHandler, '$ref = ghReviewResolveRepositoryRef($github, $owner, $repo, $ref);'), 'handler LOC non applica il branch risolto prima del download');
+$require(str_contains($source, 'function ghReviewLocDownloadTimeout'), 'timeout download LOC non configurabile');
+$require(str_contains($locHandler, 'ghReviewLocDownloadTimeout()'), 'handler LOC non usa il timeout configurabile');
+$require(str_contains($locHandler, "loc_download_hop"), 'diagnostica hop download LOC assente');
+$require(str_contains($locHandler, "loc_download_complete"), 'diagnostica completamento download LOC assente');
+$require(str_contains($locHandler, 'ghReviewComputeLocViaGitHubApi'), 'fallback LOC via API GitHub assente');
+$require(str_contains($source, "'GITHUB_API'"), 'sorgente LOC via API GitHub assente');
+$require(is_string($integrationSource) && str_contains($integrationSource, 'function getRepositoryTree'), 'metodo API git tree assente');
+$require(is_string($integrationSource) && str_contains($integrationSource, 'function getRepositoryBlob'), 'metodo API git blob assente');
+$require(is_string($envExample) && str_contains($envExample, 'GITHUB_LOC_DOWNLOAD_TIMEOUT=300'), '.env.example senza timeout download LOC');
+$require(is_string($configEnvExample) && str_contains($configEnvExample, 'GITHUB_LOC_DOWNLOAD_TIMEOUT=300'), 'config/.env.example senza timeout download LOC');
 
 if ($failures !== []) {
     foreach ($failures as $failure) {
