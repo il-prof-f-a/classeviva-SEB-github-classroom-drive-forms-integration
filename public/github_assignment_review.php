@@ -1944,29 +1944,51 @@ if ($postAction === 'repo_loc') {
             } catch (\Throwable $archiveError) {
                 @unlink($tmpZip);
                 ghRemoveDirRecursive($extractDir);
-                throw new Exception($archiveError->getMessage(), 0, $archiveError);
+                // Il download può riuscire anche quando l'archivio è troppo
+                // grande o contiene un numero di entry oltre i limiti sicuri
+                // dell'estrattore. In questo caso il fallback API deve essere
+                // applicato anche all'errore di estrazione, non solo a quello
+                // di rete/download.
+                $zipFailed = true;
+                DiagnosticsLogger::exception('github_review', 'loc_archive_extract_fallback', $archiveError, [
+                    'request_id' => $diagnosticRequestId,
+                    'repo_hash' => ghReviewDiagnosticHash($repoFull),
+                    'ref_hash' => ghReviewDiagnosticHash($ref),
+                ]);
+                if ($stream) {
+                    ghReviewStreamEmit([
+                        'type' => 'status',
+                        'panel' => 'loc',
+                        'stage' => 'api_fallback',
+                        'message' => 'Archivio GitHub troppo grande; analisi tramite API…',
+                    ]);
+                }
+                $result = ghReviewComputeLocViaGitHubApi($github, $owner, $repo, $ref, $stream, $diagnosticRequestId);
+                $source = 'GITHUB_API';
             }
-            @unlink($tmpZip);
+            if (!$zipFailed) {
+                @unlink($tmpZip);
 
-            if ($stream) {
-                ghReviewStreamEmit(['type' => 'status', 'panel' => 'loc', 'stage' => 'extract', 'message' => 'Archivio estratto, calcolo LOC…']);
+                if ($stream) {
+                    ghReviewStreamEmit(['type' => 'status', 'panel' => 'loc', 'stage' => 'extract', 'message' => 'Archivio estratto, calcolo LOC…']);
+                }
+
+                $dirs = glob($extractDir . DIRECTORY_SEPARATOR . '*', GLOB_ONLYDIR);
+                $rootDir = (is_array($dirs) && !empty($dirs)) ? $dirs[0] : $extractDir;
+
+                $result = ghComputeLocWithClocIfAvailable($rootDir);
+                $source = 'CLOC';
+                if (!$result) {
+                    $result = ghComputeLocInternal($rootDir);
+                    $source = 'INTERNAL';
+                }
+
+                if ($stream) {
+                    ghReviewStreamEmit(['type' => 'status', 'panel' => 'loc', 'stage' => 'count', 'message' => 'LOC calcolate.']);
+                }
+
+                ghRemoveDirRecursive($extractDir);
             }
-
-            $dirs = glob($extractDir . DIRECTORY_SEPARATOR . '*', GLOB_ONLYDIR);
-            $rootDir = (is_array($dirs) && !empty($dirs)) ? $dirs[0] : $extractDir;
-
-            $result = ghComputeLocWithClocIfAvailable($rootDir);
-            $source = 'CLOC';
-            if (!$result) {
-                $result = ghComputeLocInternal($rootDir);
-                $source = 'INTERNAL';
-            }
-
-            if ($stream) {
-                ghReviewStreamEmit(['type' => 'status', 'panel' => 'loc', 'stage' => 'count', 'message' => 'LOC calcolate.']);
-            }
-
-            ghRemoveDirRecursive($extractDir);
         }
 
         $payload = [

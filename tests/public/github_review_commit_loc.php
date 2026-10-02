@@ -54,7 +54,7 @@ $require(str_contains($source, 'fetchGithubReviewStream') && str_contains($sourc
 // LOC: il ref iniziale può essere solo un fallback. Il branch predefinito reale
 // della repository deve essere risolto lato server prima del download ZIP.
 $locHandlerStart = strpos($source, "if (\$postAction === 'repo_loc')");
-$locHandler = $locHandlerStart === false ? '' : substr($source, $locHandlerStart, 12000);
+$locHandler = $locHandlerStart === false ? '' : substr($source, $locHandlerStart, 16000);
 $require(!str_contains($locHandler, 'in_array($redirectParts'), 'LOC ancora con allowlist host rigida');
 $require(str_contains($source, 'function ghReviewResolveRepositoryRef'), 'manca la risoluzione del default branch GitHub per la LOC');
 $require(str_contains($source, "['default_branch']"), 'la LOC non legge default_branch dai metadati repository');
@@ -64,6 +64,8 @@ $require(str_contains($locHandler, 'ghReviewLocDownloadTimeout()'), 'handler LOC
 $require(str_contains($locHandler, "loc_download_hop"), 'diagnostica hop download LOC assente');
 $require(str_contains($locHandler, "loc_download_complete"), 'diagnostica completamento download LOC assente');
 $require(str_contains($locHandler, 'ghReviewComputeLocViaGitHubApi'), 'fallback LOC via API GitHub assente');
+$require(str_contains($locHandler, 'loc_archive_extract_fallback'), 'fallback LOC dopo errore di estrazione archivio assente');
+$require(str_contains($locHandler, "'Archivio GitHub troppo grande; analisi tramite API…'"), 'messaggio fallback estrazione archivio assente');
 $require(str_contains($source, "'GITHUB_API'"), 'sorgente LOC via API GitHub assente');
 $require(is_string($integrationSource) && str_contains($integrationSource, 'function getRepositoryTree'), 'metodo API git tree assente');
 $require(is_string($integrationSource) && str_contains($integrationSource, 'function getRepositoryBlob'), 'metodo API git blob assente');
