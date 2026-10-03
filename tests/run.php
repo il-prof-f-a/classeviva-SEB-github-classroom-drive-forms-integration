@@ -571,6 +571,7 @@ $architectureTests = [
     'github review provider-neutral' => __DIR__ . '/public/github_review_provider_neutral.php',
     'github review commit loc' => __DIR__ . '/public/github_review_commit_loc.php',
     'github review metadata' => __DIR__ . '/public/github_review_metadata.php',
+    'github review sorting' => __DIR__ . '/public/github_review_sorting.php',
     'github review contributions' => __DIR__ . '/public/github_review_contributions.php',
     'github review async loading' => __DIR__ . '/public/github_review_async_loading.php',
     'github review roster names' => __DIR__ . '/public/github_review_roster_names.php',

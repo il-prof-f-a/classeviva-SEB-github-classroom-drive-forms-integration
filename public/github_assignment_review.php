@@ -2565,6 +2565,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	        body.rubric-panel-open table.github-grades-table th.student-vote-col,
 	        body.rubric-panel-open table.github-grades-table td.student-vote-col { width: 14%; }
 	        table.github-grades-table td.student-vote-col select { width: 100% !important; }
+	        table.github-grades-table th.github-review-sort { padding: 0; }
+	        table.github-grades-table .github-review-sort-button {
+	            display: flex;
+	            align-items: center;
+	            justify-content: space-between;
+	            gap: .35rem;
+	            width: 100%;
+	            min-height: 2.5rem;
+	            padding: .5rem;
+	            border: 0;
+	            background: transparent;
+	            color: inherit;
+	            font: inherit;
+	            font-weight: 600;
+	            text-align: left;
+	            cursor: pointer;
+	        }
+	        table.github-grades-table .github-review-sort-button:hover,
+	        table.github-grades-table .github-review-sort-button:focus-visible {
+	            background: rgba(13, 110, 253, .08);
+	            outline: 2px solid rgba(13, 110, 253, .35);
+	            outline-offset: -2px;
+	        }
+	        table.github-grades-table .github-review-sort-indicator {
+	            flex: 0 0 auto;
+	            opacity: .55;
+	            font-size: .8em;
+	        }
+	        table.github-grades-table th[aria-sort="ascending"] .github-review-sort-indicator,
+	        table.github-grades-table th[aria-sort="descending"] .github-review-sort-indicator {
+	            opacity: 1;
+	        }
 	        .commit-message-body { white-space: pre-wrap; }
 	        .rubric-modal-table th.weight-col,
 	        .rubric-modal-table td.weight-col { width: 40px; min-width: 40px; }
@@ -3051,8 +3083,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	                        </colgroup>
 	                        <thead>
 	                            <tr>
-	                                <th class="student-vote-col">Studente/Voto</th>
-	                                <th>Repo</th>
+	                                <th class="student-vote-col github-review-sort" data-sort-key="student" aria-sort="none">
+	                                    <button type="button" class="github-review-sort-button" data-sort-key="student" aria-label="Ordina per studente o voto">
+	                                        <span>Studente/Voto</span><span class="github-review-sort-indicator" aria-hidden="true"><i class="bi bi-arrow-down-up"></i></span>
+	                                    </button>
+	                                </th>
+	                                <th class="github-review-sort" data-sort-key="repo" aria-sort="none">
+	                                    <button type="button" class="github-review-sort-button" data-sort-key="repo" aria-label="Ordina per repository">
+	                                        <span>Repo</span><span class="github-review-sort-indicator" aria-hidden="true"><i class="bi bi-arrow-down-up"></i></span>
+	                                    </button>
+	                                </th>
 	                                <th class="comment-col" aria-hidden="true"></th>
                             </tr>
                         </thead>
@@ -3085,7 +3125,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                                 // Identificativo anonimo stabile nella pagina: non espone username o repository.
                                 $githubIdDisplay = (string)($idx + 1);
                                 ?>
-                                <tr data-github-review-generation="0">
+	                                <?php
+	                                $studentSortName = trim((string)($studentName !== '' ? $studentName : ($uname !== '' ? $uname : $githubIdDisplay)));
+	                                $studentSortBlind = 'studente ' . $githubIdDisplay;
+	                                $repoSortValue = trim((string)($repoFullRow !== '' ? $repoFullRow : $repoUrl));
+	                                ?>
+	                                <tr data-github-review-row="1"
+	                                    data-github-review-generation="0"
+                                    data-sort-student="<?= htmlspecialchars(function_exists('mb_strtolower') ? mb_strtolower($studentSortName, 'UTF-8') : strtolower($studentSortName)) ?>"
+                                    data-sort-student-blind="<?= htmlspecialchars(function_exists('mb_strtolower') ? mb_strtolower($studentSortBlind, 'UTF-8') : strtolower($studentSortBlind)) ?>"
+                                    data-sort-repo="<?= htmlspecialchars(function_exists('mb_strtolower') ? mb_strtolower($repoSortValue, 'UTF-8') : strtolower($repoSortValue)) ?>"
+	                                    data-sort-index="<?= htmlspecialchars((string)$idx) ?>">
                                     <td class="student-vote-col">
                                         <input type="hidden" name="github_username[<?= $idx ?>]" value="<?= htmlspecialchars($uname) ?>">
                                         <input type="hidden" name="id_studente[<?= $idx ?>]" value="<?= htmlspecialchars($studentId) ?>">
@@ -4708,6 +4758,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             Promise.allSettled([locPromise, metadataPromise, studentLocPromise]).then(function () { return state; });
             return {generation: state.generation, controller: state.controller, promises: state.promises};
         }
+
+        const githubReviewSortState = {key: '', direction: 1};
+
+        function sortGithubReviewRows(sortKey) {
+            const table = document.querySelector('table.github-grades-table');
+            const tbody = table ? table.querySelector('tbody') : null;
+            if (!tbody || (sortKey !== 'student' && sortKey !== 'repo')) return;
+
+            githubReviewSortState.direction = githubReviewSortState.key === sortKey
+                ? githubReviewSortState.direction * -1
+                : 1;
+            githubReviewSortState.key = sortKey;
+
+            const showNamesToggle = document.getElementById('review-show-names');
+            const showNames = !showNamesToggle || showNamesToggle.checked;
+            const collator = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
+            const rows = Array.from(tbody.querySelectorAll(':scope > tr[data-github-review-row="1"]'));
+            rows.sort(function (left, right) {
+                let leftValue;
+                let rightValue;
+                if (sortKey === 'repo') {
+                    leftValue = left.dataset.sortRepo || '';
+                    rightValue = right.dataset.sortRepo || '';
+                } else {
+                    leftValue = showNames ? (left.dataset.sortStudent || '') : (left.dataset.sortStudentBlind || '');
+                    rightValue = showNames ? (right.dataset.sortStudent || '') : (right.dataset.sortStudentBlind || '');
+                }
+                const result = collator.compare(leftValue, rightValue);
+                if (result !== 0) return result * githubReviewSortState.direction;
+                return Number(left.dataset.sortIndex || 0) - Number(right.dataset.sortIndex || 0);
+            });
+
+            rows.forEach(function (row) { tbody.appendChild(row); });
+            table.querySelectorAll('th.github-review-sort').forEach(function (header) {
+                const active = header.dataset.sortKey === sortKey;
+                header.setAttribute('aria-sort', active
+                    ? (githubReviewSortState.direction === 1 ? 'ascending' : 'descending')
+                    : 'none');
+                const indicator = header.querySelector('.github-review-sort-indicator');
+                if (indicator) {
+                    indicator.innerHTML = active
+                        ? (githubReviewSortState.direction === 1
+                            ? '<i class="bi bi-sort-alpha-down"></i>'
+                            : '<i class="bi bi-sort-alpha-up"></i>')
+                        : '<i class="bi bi-arrow-down-up"></i>';
+                }
+            });
+        }
+
+        document.querySelectorAll('.github-review-sort-button').forEach(function (button) {
+            button.addEventListener('click', function () {
+                sortGithubReviewRows(button.dataset.sortKey || '');
+            });
+        });
 
         document.addEventListener('click', function (event) {
             const forceButton = event.target.closest ? event.target.closest('.repo-loc-force') : null;

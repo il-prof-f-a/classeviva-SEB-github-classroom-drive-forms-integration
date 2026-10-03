@@ -34,7 +34,7 @@ $require(str_contains($review, 'rubric-panel-open'), 'layout dinamico della colo
 $require(str_contains($review, 'comment-col" aria-hidden="true"'), 'colonna commento non mantenuta vuota');
 $require(!str_contains($review, 'name="commento['), 'input commento ancora presente nella Review');
 $require(str_contains($review, 'col-student-vote'), 'colonna accorpata Studente/Voto assente');
-$require(str_contains($review, '<th class="student-vote-col">Studente/Voto</th>'), 'intestazione Studente/Voto non rinominata');
+$require(str_contains($review, 'data-sort-key="student"') && str_contains($review, 'Studente/Voto'), 'intestazione Studente/Voto non predisposta all’ordinamento');
 $require(!str_contains($review, '<td class="vote-col">'), 'vecchia colonna voto ancora presente');
 $require(substr_count($review, 'name="id_studente[') === 1, 'campo id studente duplicato dopo l’accorpamento');
 $require(str_contains($review, 'col.col-student-vote { width: 14%; }'), 'larghezza colonna Studente/Voto non impostata');
