@@ -13,6 +13,52 @@ final class GitHubBlameLocAttributor
     private const KINDS = ['code', 'comment', 'blank'];
 
     /**
+     * Seleziona i blob testuali che possono entrare nella snapshot blame.
+     *
+     * I limiti sono volutamente applicati per file e non come condizione
+     * "tutto o niente": una repository grande può quindi produrre una
+     * attribuzione parziale, mantenendo utilizzabili i file entro soglia.
+     *
+     * @param array<int,array<string,mixed>> $entries
+     * @return array{files:array<int,array{path:string,bytes:int}>,bytes:int,partial:bool,skipped_files:int,skipped_bytes:int}
+     */
+    public static function selectSnapshotFiles(array $entries, int $maxFiles = 250, int $maxBytes = 8_000_000): array
+    {
+        $maxFiles = max(1, $maxFiles);
+        $maxBytes = max(1, $maxBytes);
+        $files = [];
+        $bytes = 0;
+        $skippedFiles = 0;
+        $skippedBytes = 0;
+
+        foreach ($entries as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $path = trim((string)($entry['path'] ?? ''));
+            if ($path === '') {
+                continue;
+            }
+            $size = max(0, (int)($entry['size'] ?? $entry['bytes'] ?? 0));
+            if (count($files) >= $maxFiles || ($size > 0 && $bytes + $size > $maxBytes)) {
+                $skippedFiles++;
+                $skippedBytes += $size;
+                continue;
+            }
+            $files[] = ['path' => $path, 'bytes' => $size];
+            $bytes += $size;
+        }
+
+        return [
+            'files' => $files,
+            'bytes' => $bytes,
+            'partial' => $skippedFiles > 0,
+            'skipped_files' => $skippedFiles,
+            'skipped_bytes' => $skippedBytes,
+        ];
+    }
+
+    /**
      * @param array<int,array<string,mixed>> $files
      * @param array{logins?:array<int,string>,emails?:array<int,string>} $identities
      * @param array{max_files?:int,max_lines?:int,max_bytes?:int} $limits

@@ -79,6 +79,8 @@ $require(str_contains($review, 'studentLocPartial'), 'il client non mantiene lo 
 $require(str_contains($review, 'github-attribution-pending'), 'manca lo stato visivo di attribuzione in corso');
 $require(str_contains($review, 'github-attribution-pulse'), 'manca l’animazione dello stato di attribuzione in corso');
 $require(str_contains($review, 'repo-loc-attribution-pending'), 'LOC senza attribuzione non marcate come in corso');
+$require(str_contains($review, 'recalculateGithubReviewLoc'), 'ricalcolo LOC non riavvia il percorso studente');
+$require(str_contains($review, "closest('.repo-loc-force')"), 'pulsante Ricalcola non gestito con listener delegato');
 $require(str_contains($review, 'github-worktree-attribution-pending'), 'grafo worktree senza attribuzione non marcato come in corso');
 $require(str_contains($review, 'function ghReviewReleaseSessionLock'), 'manca il rilascio del lock sessione per richieste parallele');
 $require(substr_count($review, 'aria-live="polite"') >= 4, 'i quattro pannelli non hanno feedback ARIA indipendente');

@@ -25,6 +25,9 @@ $require(str_contains($integration, 'graphqlRequest'), 'snapshot blame senza API
 $require(str_contains($integration, '?callable $onFile = null'), 'snapshot blame senza callback per streaming a chunk');
 $require(str_contains($integration, '$onFile($snapshotFile'), 'snapshot blame non emette i file elaborati');
 $require(str_contains($integration, '$onFile($cachedFile'), 'cache blame non emette i file a chunk');
+$require(str_contains($integration, 'selectSnapshotFiles'), 'snapshot blame non seleziona i file parzialmente');
+$require(str_contains($integration, "'skipped_files'"), 'snapshot blame non conserva i file saltati');
+$require(str_contains($integration, "'partial' => \$partial"), 'snapshot blame non espone lo stato parziale');
 
 if ($failures !== []) {
     foreach ($failures as $failure) {

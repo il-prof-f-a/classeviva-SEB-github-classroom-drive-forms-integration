@@ -1170,6 +1170,8 @@ if ($postAction === 'repo_contributions') {
             ]);
             try {
                 $studentLocAccumulator = null;
+                $studentLocSkippedFiles = 0;
+                $studentLocSkippedBytes = 0;
                 $blameSnapshot = $github->getRepositoryBlameSnapshot(
                     $owner,
                     $repo,
@@ -1177,7 +1179,7 @@ if ($postAction === 'repo_contributions') {
                     $studentLocConfig['max_files'],
                     $studentLocConfig['max_bytes'],
                     ROOT_PATH . '/storage/cache/github_blame',
-                    static function (array $file, int $index, int $total) use (&$studentLocAccumulator, $identities, $studentLocConfig, $stream): void {
+                    static function (array $file, int $index, int $total) use (&$studentLocAccumulator, &$studentLocSkippedFiles, &$studentLocSkippedBytes, $identities, $studentLocConfig, $stream): void {
                         $chunk = GitHubBlameLocAttributor::aggregate(
                             [$file],
                             $identities,
@@ -1186,6 +1188,11 @@ if ($postAction === 'repo_contributions') {
                                 'max_bytes' => $studentLocConfig['max_bytes'],
                             ]
                         );
+                        if (($chunk['enabled'] ?? false) !== true) {
+                            $studentLocSkippedFiles++;
+                            $studentLocSkippedBytes += (int)($file['bytes'] ?? 0);
+                            return;
+                        }
                         $studentLocAccumulator = $studentLocAccumulator === null
                             ? $chunk
                             : GitHubBlameLocAttributor::mergeAggregates($studentLocAccumulator, $chunk);
@@ -1213,17 +1220,34 @@ if ($postAction === 'repo_contributions') {
                         is_array($blameSnapshot['details'] ?? null) ? $blameSnapshot['details'] : []
                     );
                 } else {
-                    $studentLoc = $studentLocAccumulator ?? GitHubBlameLocAttributor::aggregate([], $identities, [
-                        'max_files' => $studentLocConfig['max_files'],
-                        'max_bytes' => $studentLocConfig['max_bytes'],
-                    ]);
+                    $studentLoc = $studentLocAccumulator;
+                    if ($studentLoc === null) {
+                        $studentLoc = $studentLocSkippedFiles > 0
+                            ? GitHubBlameLocAttributor::disabled('line_limit', [
+                                'skipped_files' => $studentLocSkippedFiles,
+                                'skipped_bytes' => $studentLocSkippedBytes,
+                            ])
+                            : GitHubBlameLocAttributor::aggregate([], $identities, [
+                                'max_files' => $studentLocConfig['max_files'],
+                                'max_bytes' => $studentLocConfig['max_bytes'],
+                            ]);
+                    }
                     $studentLoc['cached'] = (bool)($blameSnapshot['cached'] ?? false);
+                    $studentLoc['partial'] = (bool)($blameSnapshot['partial'] ?? false) || $studentLocSkippedFiles > 0;
+                    $studentLoc['skipped_files'] = (int)($blameSnapshot['skipped_files'] ?? 0) + $studentLocSkippedFiles;
+                    $studentLoc['skipped_bytes'] = (int)($blameSnapshot['skipped_bytes'] ?? 0) + $studentLocSkippedBytes;
+                    if ($studentLoc['partial']) {
+                        $warnings[] = 'Attribuzione LOC parziale: alcuni file sono stati saltati per i limiti di analisi.';
+                    }
                 }
                 $studentLoc['elapsed_ms'] = $elapsedMs;
                 DiagnosticsLogger::log('github_review', 'blame_phase_result', [
                     'request_id' => $diagnosticRequestId,
                     'enabled' => (bool)($studentLoc['enabled'] ?? false),
                     'reason' => (string)($studentLoc['reason'] ?? ''),
+                    'partial' => (bool)($studentLoc['partial'] ?? false),
+                    'skipped_files' => (int)($studentLoc['skipped_files'] ?? 0),
+                    'skipped_bytes' => (int)($studentLoc['skipped_bytes'] ?? 0),
                     'elapsed_ms' => $elapsedMs,
                     'cached' => (bool)($studentLoc['cached'] ?? false),
                 ]);
@@ -1248,9 +1272,11 @@ if ($postAction === 'repo_contributions') {
                 'student_additions' => $studentAdditions,
                 'student_loc' => $studentLoc,
                 'student_loc_disabled' => !($studentLoc['enabled'] ?? false),
+                'student_loc_partial' => (bool)($studentLoc['partial'] ?? false),
                 'partial' => $partial,
             ],
             'student_loc_disabled' => !($studentLoc['enabled'] ?? false),
+            'student_loc_partial' => (bool)($studentLoc['partial'] ?? false),
             'partial' => $partial,
             'warnings' => $warnings,
         ];
@@ -3982,6 +4008,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                         locContainer._studentLoc = data.loc.student_loc || null;
                         locContainer.dataset.studentLocPartial = '0';
                         locContainer.dataset.studentLocDisabled = data.loc.student_loc_disabled ? '1' : '0';
+                        locContainer.dataset.studentLocPartialDetails = data.loc.student_loc_partial ? '1' : '0';
                         locContainer.dataset.contributionPartial = data.partial ? '1' : '0';
                         if (locContainer._locData) renderRepoLoc(locContainer, locContainer._locData);
                     }
@@ -4009,6 +4036,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                     locContainer._studentLoc = data.loc.student_loc || null;
                     locContainer.dataset.studentLocDisabled = data.loc.student_loc_disabled ? '1' : '0';
                     locContainer.dataset.studentLocPartial = '0';
+                    locContainer.dataset.studentLocPartialDetails = data.loc.student_loc_partial ? '1' : '0';
                     locContainer.dataset.contributionPartial = data.partial ? '1' : '0';
                     if (locContainer._locData) {
                         renderRepoLoc(locContainer, locContainer._locData);
@@ -4099,16 +4127,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 container.innerHTML = html;
                 container.dataset.loaded = '1';
                 container.setAttribute('data-commit-state', 'loaded');
-                const forceBtn = container.querySelector('.repo-loc-force');
-                if (forceBtn) {
-                    forceBtn.addEventListener('click', function () {
-                        const forceRow = container.closest('tr');
-                        const forceState = forceRow?._githubReviewLoadState || null;
-                        loadRepoLoc(container, container.dataset.repo || '', container.dataset.ref || 'main', true, forceState?.controller?.signal, forceRow, forceState).catch(function () {
-                            // L'errore viene già mostrato nel pannello LOC.
-                        });
-                    });
-                }
                 container.dataset.repo = repoFull;
                 container.dataset.sha = sha;
                 container.dataset.withComments = withComments ? '1' : '0';
@@ -4181,6 +4199,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             const attributionPending = !studentLoc || container.dataset.studentLocPartial === '1';
             container.classList.toggle('repo-loc-attribution-pending', attributionPending);
             const hasContribution = Boolean(studentLoc && studentLoc.enabled === true);
+            const studentLocPartial = hasContribution && (
+                studentLoc.partial === true ||
+                container.dataset.studentLocPartialDetails === '1'
+            );
             const studentMetrics = hasContribution && studentLoc.student && typeof studentLoc.student === 'object'
                 ? studentLoc.student
                 : {};
@@ -4204,8 +4226,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                     : (studentLoc.reason === 'timeout' ? 'tempo massimo superato' : 'non disponibile');
                 html += '<div class="alert alert-secondary py-1 px-2 small">Attribuzione LOC per studente ' + reason + '; visualizzato il totale della repository.</div>';
             }
-            if (hasContribution && (data.partial || container.dataset.contributionPartial === '1')) {
-                html += '<div class="alert alert-warning py-1 px-2 small">Attribuzione LOC parziale: alcuni commit non sono stati analizzati.</div>';
+            if (hasContribution && (studentLocPartial || data.partial || container.dataset.contributionPartial === '1')) {
+                const partialMessage = studentLocPartial
+                    ? 'Attribuzione LOC parziale: alcuni file sono stati saltati per i limiti di analisi.'
+                    : 'Attribuzione LOC parziale: alcuni commit non sono stati analizzati.';
+                html += '<div class="alert alert-warning py-1 px-2 small">' + escapeHtml(partialMessage) + '</div>';
             }
 
             const entries = Object.entries(byLang || {});
@@ -4284,6 +4309,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 delete container.dataset.locLoading;
             }
             return data;
+        }
+
+        async function recalculateGithubReviewLoc(row, context, state) {
+            if (!row || !context || !context.locContainer || !context.repoFull) return null;
+            if (!state || !isGithubReviewStateCurrent(row, state)) {
+                startGithubReviewLoads(row, context);
+                return null;
+            }
+
+            const locContainer = context.locContainer;
+            const metadataContainer = context.metadataContainer;
+            const studentId = context.studentId || '';
+            locContainer._studentLoc = null;
+            locContainer.dataset.studentLocPartial = '1';
+            locContainer.dataset.studentLocPartialDetails = '0';
+            locContainer.dataset.studentLocDisabled = '0';
+            locContainer.dataset.contributionPartial = '0';
+            setPanelState(row, 'loc', 'loading', '<div class="text-muted">Ricalcolo LOC…</div>');
+
+            const locData = await loadRepoLoc(
+                locContainer,
+                context.repoFull,
+                context.ref || state.ref || 'main',
+                true,
+                state.controller.signal,
+                row,
+                state
+            );
+            if (!studentId || !metadataContainer || !metadataContainer._metadataData) {
+                return locData;
+            }
+
+            if (metadataContainer) metadataContainer._contributionProgressDone = false;
+            syncGithubReviewCommitLoadingState(row);
+            await loadRepoContributions(
+                metadataContainer,
+                context.repoFull,
+                studentId,
+                locContainer,
+                state.controller.signal,
+                row,
+                state,
+                function (event) {
+                    if (!isGithubReviewStateCurrent(row, state) || !event) return;
+                    if (event.type === 'contribution_loc_progress' && context.contributionsContainer) {
+                        setPanelState(
+                            row,
+                            'contributions',
+                            'loading',
+                            renderGithubReviewContributionPreview(metadataContainer._metadataData, event.data)
+                        );
+                    }
+                },
+                {
+                    locOnly: true,
+                    metadataOverride: {
+                        truncated: false,
+                        ref: context.ref || state.ref || 'main',
+                        commits: [],
+                        branches: [],
+                        issues: [],
+                        global_loc: locData && locData.totals ? locData.totals : {}
+                    }
+                }
+            );
+            if (metadataContainer) metadataContainer._contributionProgressDone = true;
+            syncGithubReviewCommitLoadingState(row);
+            return locData;
         }
 
 	        function showCollapseElement(el) {
@@ -4439,7 +4532,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                     return;
                 }
                 setPanelState(row, 'loc', 'loading', '<div class="text-muted">Calcolo LOC…</div>');
-                loadRepoLoc(context.locContainer, context.repoFull, context.ref, true, state.controller.signal, row, state)
+                recalculateGithubReviewLoc(row, context, state)
                     .then(function () {
                         if (isGithubReviewStateCurrent(row, state)) setPanelState(row, 'loc', 'success');
                     })
@@ -4617,6 +4710,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         }
 
         document.addEventListener('click', function (event) {
+            const forceButton = event.target.closest ? event.target.closest('.repo-loc-force') : null;
+            if (forceButton) {
+                const row = forceButton.closest('tr');
+                if (!row) return;
+                event.preventDefault();
+                const context = getGithubReviewLoadContext(row);
+                const state = row._githubReviewLoadState || null;
+                recalculateGithubReviewLoc(row, context, state).then(function () {
+                    if (isGithubReviewStateCurrent(row, state)) setPanelState(row, 'loc', 'success');
+                }).catch(function (error) {
+                    if ((error && error.name === 'AbortError') || !isGithubReviewStateCurrent(row, state)) return;
+                    setPanelState(row, 'loc', 'error', renderGithubReviewRetry('LOC', error));
+                });
+                return;
+            }
             const retryButton = event.target.closest ? event.target.closest('.github-review-retry') : null;
             if (!retryButton) return;
             const row = retryButton.closest('tr');

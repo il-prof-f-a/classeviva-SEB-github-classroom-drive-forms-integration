@@ -37,6 +37,9 @@ $require(str_contains($review, "env('GITHUB_STUDENT_LOC_MAX_MS', '20000')"), 'so
 $require(str_contains($envExample, 'GITHUB_STUDENT_LOC_MAX_MS=20000'), '.env.example non allineato a 20 secondi');
 $require(str_contains($configEnvExample, 'GITHUB_STUDENT_LOC_MAX_MS=20000'), 'config/.env.example non allineato a 20 secondi');
 $require(str_contains($review, 'GITHUB_STUDENT_LOC_MAX_FILES'), 'limite file LOC studente assente');
+$require(str_contains($review, 'student_loc_partial'), 'flag LOC studente parziale assente');
+$require(str_contains($review, 'Ricalcola'), 'pulsante ricalcolo LOC assente');
+$require(str_contains($review, 'recalculateGithubReviewLoc'), 'ricalcolo LOC non coordina attribuzione studente');
 
 if ($failures !== []) {
     foreach ($failures as $failure) {

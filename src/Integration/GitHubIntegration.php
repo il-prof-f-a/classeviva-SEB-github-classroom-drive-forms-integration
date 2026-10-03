@@ -845,8 +845,7 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
         }
 
         $entries = is_array($tree['tree'] ?? null) ? $tree['tree'] : [];
-        $files = [];
-        $bytes = 0;
+        $eligibleEntries = [];
         $binaryExtensions = ['7z', 'avi', 'bmp', 'class', 'dll', 'doc', 'docx', 'gif', 'gz', 'ico', 'jar', 'jpeg', 'jpg', 'mov', 'mp3', 'mp4', 'pdf', 'png', 'ppt', 'pptx', 'so', 'tar', 'wav', 'webp', 'xls', 'xlsx', 'zip'];
         foreach ($entries as $entry) {
             if (!is_array($entry) || ($entry['type'] ?? '') !== 'blob') {
@@ -861,26 +860,32 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
                 continue;
             }
             $size = max(0, (int)($entry['size'] ?? 0));
-            $bytes += $size;
-            if (count($files) >= $maxFiles) {
-                $this->diagnosticLog('blame_snapshot_result', [
-                    'enabled' => false,
-                    'reason' => 'file_limit',
-                    'files' => count($files) + 1,
-                    'elapsed_ms' => (int)round((microtime(true) - $blameStartedAt) * 1000),
-                ]);
-                return ['enabled' => false, 'reason' => 'file_limit', 'details' => ['files' => count($files) + 1, 'max_files' => $maxFiles]];
-            }
-            if ($bytes > $maxBytes) {
-                $this->diagnosticLog('blame_snapshot_result', [
-                    'enabled' => false,
-                    'reason' => 'byte_limit',
-                    'bytes' => $bytes,
-                    'elapsed_ms' => (int)round((microtime(true) - $blameStartedAt) * 1000),
-                ]);
-                return ['enabled' => false, 'reason' => 'byte_limit', 'details' => ['bytes' => $bytes, 'max_bytes' => $maxBytes]];
-            }
-            $files[] = ['path' => $path, 'bytes' => $size];
+            $eligibleEntries[] = ['path' => $path, 'size' => $size];
+        }
+
+        $selection = GitHubBlameLocAttributor::selectSnapshotFiles($eligibleEntries, $maxFiles, $maxBytes);
+        $files = $selection['files'];
+        $bytes = (int)$selection['bytes'];
+        $partial = (bool)$selection['partial'];
+        $skippedFiles = (int)$selection['skipped_files'];
+        $skippedBytes = (int)$selection['skipped_bytes'];
+        if ($files === [] && $eligibleEntries !== [] && $skippedFiles > 0) {
+            $reason = count($eligibleEntries) > $maxFiles ? 'file_limit' : 'byte_limit';
+            $details = [
+                'files' => count($eligibleEntries),
+                'bytes' => array_sum(array_map(static fn(array $entry): int => (int)($entry['size'] ?? 0), $eligibleEntries)),
+                'max_files' => $maxFiles,
+                'max_bytes' => $maxBytes,
+                'skipped_files' => $skippedFiles,
+                'skipped_bytes' => $skippedBytes,
+            ];
+            $this->diagnosticLog('blame_snapshot_result', [
+                'enabled' => false,
+                'reason' => $reason,
+                ...$details,
+                'elapsed_ms' => (int)round((microtime(true) - $blameStartedAt) * 1000),
+            ]);
+            return ['enabled' => false, 'reason' => $reason, 'details' => $details];
         }
 
         $treeSha = strtolower(trim((string)($tree['sha'] ?? '')));
@@ -889,7 +894,7 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
             if (!is_dir($cacheDir)) {
                 @mkdir($cacheDir, 0700, true);
             }
-            $cacheFile = rtrim($cacheDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . hash('sha256', $owner . '/' . $repo . ':' . $treeSha) . '.json';
+            $cacheFile = rtrim($cacheDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . hash('sha256', $owner . '/' . $repo . ':' . $treeSha . ':' . $maxFiles . ':' . $maxBytes) . '.json';
             if (is_file($cacheFile)) {
                 $cached = json_decode((string)@file_get_contents($cacheFile), true);
                 if (is_array($cached) && ($cached['tree_sha'] ?? '') === $treeSha && ($cached['enabled'] ?? false) === true) {
@@ -905,6 +910,8 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
                         'enabled' => true,
                         'cached' => true,
                         'files' => count($cachedFiles),
+                        'partial' => (bool)($cached['partial'] ?? false),
+                        'skipped_files' => (int)($cached['skipped_files'] ?? 0),
                         'elapsed_ms' => (int)round((microtime(true) - $blameStartedAt) * 1000),
                     ]);
                     return array_merge($cached, ['cached' => true]);
@@ -973,6 +980,12 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
             'reason' => '',
             'tree_sha' => $treeSha,
             'files' => $snapshotFiles,
+            'partial' => $partial,
+            'skipped_files' => $skippedFiles,
+            'skipped_bytes' => $skippedBytes,
+            'selected_bytes' => $bytes,
+            'max_files' => $maxFiles,
+            'max_bytes' => $maxBytes,
             'cached' => false,
         ];
         if ($cacheFile !== null) {
@@ -983,6 +996,9 @@ class GitHubIntegration implements GitHubProjectGatewayInterface
             'enabled' => true,
             'cached' => false,
             'files' => count($snapshotFiles),
+            'partial' => $partial,
+            'skipped_files' => $skippedFiles,
+            'skipped_bytes' => $skippedBytes,
             'tree_sha' => $treeSha,
             'elapsed_ms' => (int)round((microtime(true) - $blameStartedAt) * 1000),
         ]);

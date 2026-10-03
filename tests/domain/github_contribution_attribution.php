@@ -152,6 +152,27 @@ $require(
 );
 $require(GitHubBlameLocAttributor::languageForPath('Main.java') === 'Java', 'linguaggio blame errato');
 
+$selectedSnapshot = GitHubBlameLocAttributor::selectSnapshotFiles([
+    ['path' => 'src/First.php', 'size' => 4],
+    ['path' => 'docs/Large.md', 'size' => 8],
+    ['path' => 'src/Third.php', 'size' => 3],
+], 3, 10);
+$require($selectedSnapshot['files'] === [
+    ['path' => 'src/First.php', 'bytes' => 4],
+    ['path' => 'src/Third.php', 'bytes' => 3],
+], 'selezione blame non rispetta il limite byte mantenendo i file analizzabili');
+$require($selectedSnapshot['partial'] === true, 'selezione blame parziale non dichiarata');
+$require($selectedSnapshot['skipped_files'] === 1, 'numero file blame saltati errato');
+$require($selectedSnapshot['skipped_bytes'] === 8, 'byte blame saltati errati');
+
+$selectedByCount = GitHubBlameLocAttributor::selectSnapshotFiles([
+    ['path' => 'one.php', 'size' => 1],
+    ['path' => 'two.php', 'size' => 1],
+    ['path' => 'three.php', 'size' => 1],
+], 2, 100);
+$require(count($selectedByCount['files']) === 2, 'selezione blame non rispetta il limite file');
+$require($selectedByCount['skipped_files'] === 1, 'file oltre il limite non conteggiato');
+
 $disabledBlameLoc = GitHubBlameLocAttributor::disabled('timeout', [
     'files' => 2,
     'total' => 4,
