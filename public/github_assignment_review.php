@@ -3813,8 +3813,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         }
 
         const githubMetadataCache = new Map();
-        function githubMetadataCacheKey(repoFull, ref) {
-            return repoFull + '@' + (ref || 'main');
+        function githubMetadataCacheKey(repoFull, ref, studentId) {
+            const normalizedStudentId = String(studentId || '').trim();
+            const baseKey = repoFull + '@' + (ref || 'main');
+            return baseKey + '#' + normalizedStudentId;
         }
 
         async function fetchGithubReviewStream(url, options, onEvent) {
@@ -3915,7 +3917,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 return container?._metadataData || null;
             }
             container.dataset.studentId = studentId || container.dataset.studentId || '';
-            const cacheKey = githubMetadataCacheKey(repoFull, ref);
+            const cacheKey = githubMetadataCacheKey(repoFull, ref, studentId);
             const requestToken = githubReviewRequestToken(state, 'metadata');
             container.dataset.metadataRequestToken = requestToken;
             container.dataset.loading = '1';
