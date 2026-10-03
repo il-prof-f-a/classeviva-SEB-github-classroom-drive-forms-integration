@@ -655,6 +655,15 @@ if ($postAction === 'repo_metadata') {
             'count' => is_array($rawCommits) ? count($rawCommits) : 0,
             'truncated' => $commitTruncated,
         ]);
+        if ($stream) {
+            ghReviewStreamEmit([
+                'type' => 'metadata_progress',
+                'panel' => 'metadata',
+                'kind' => 'commits',
+                'complete' => false,
+                'total' => count($rawCommits),
+            ]);
+        }
 
         // Branch e issue non devono attendere l'analisi dell'origine di ogni
         // commit: su repository grandi quella fase può richiedere molto
@@ -711,6 +720,13 @@ if ($postAction === 'repo_metadata') {
         }
         $branches = GitHubContributionAttribution::attributeBranches($branches, $metadataIdentities);
         if ($stream) {
+            ghReviewStreamEmit([
+                'type' => 'metadata_progress',
+                'panel' => 'metadata',
+                'kind' => 'branches',
+                'complete' => false,
+                'total' => count($branches),
+            ]);
             foreach ($branches as $branchRow) {
                 ghReviewStreamEmit([
                     'type' => 'metadata_item',
@@ -724,6 +740,7 @@ if ($postAction === 'repo_metadata') {
                 'panel' => 'metadata',
                 'kind' => 'branches',
                 'complete' => true,
+                'total' => count($branches),
             ]);
         }
 
@@ -755,6 +772,13 @@ if ($postAction === 'repo_metadata') {
         $issues = GitHubReviewMetadata::normalizeIssues($rawIssues, [], $owner, $repo);
         $issues = GitHubContributionAttribution::attributeIssues($issues, $metadataIdentities);
         if ($stream) {
+            ghReviewStreamEmit([
+                'type' => 'metadata_progress',
+                'panel' => 'metadata',
+                'kind' => 'issues',
+                'complete' => false,
+                'total' => count($issues),
+            ]);
             foreach ($issues as $issueRow) {
                 ghReviewStreamEmit([
                     'type' => 'metadata_item',
@@ -863,6 +887,7 @@ if ($postAction === 'repo_metadata') {
                 'panel' => 'metadata',
                 'kind' => 'commits',
                 'complete' => true,
+                'total' => count($commitPayload),
             ]);
         }
 
@@ -902,6 +927,7 @@ if ($postAction === 'repo_metadata') {
                 'panel' => 'metadata',
                 'kind' => 'issues',
                 'complete' => true,
+                'total' => count($issues),
             ]);
         }
 
@@ -931,6 +957,11 @@ if ($postAction === 'repo_metadata') {
             'tags' => $tagsBySha,
             'truncated' => $commitTruncated,
             'warnings' => array_values(array_unique($warnings)),
+            'metadata_totals' => [
+                'commits' => count($commitPayload),
+                'branches' => count($branches),
+                'issues' => count($issues),
+            ],
             'metadata_progress' => [
                 'commits' => true,
                 'branches' => true,
@@ -3720,6 +3751,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 '</div>' + details + '</div></li>';
         }
 
+        function countStudentOwnedMetadata(items) {
+            return (Array.isArray(items) ? items : []).reduce(function (count, item) {
+                return count + (item && (item.student_owned === true || item.student_owned === 1 || item.student_owned === '1') ? 1 : 0);
+            }, 0);
+        }
+
+        function metadataTotal(items, candidate) {
+            const fallback = Array.isArray(items) ? items.length : 0;
+            const parsed = Number(candidate);
+            return Number.isFinite(parsed) && parsed >= fallback ? parsed : fallback;
+        }
+
         function scrollFirstCommitIntoView(container) {
             const list = container && container.parentElement
                 ? container.parentElement.querySelector('.github-commits-list')
@@ -3745,14 +3788,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 : {};
             const progress = Object.assign({commits: false, branches: false, issues: false}, previousProgress,
                 data && data.metadata_progress && typeof data.metadata_progress === 'object' ? data.metadata_progress : {});
+            const totals = Object.assign({commits: commits.length, branches: branches.length, issues: issues.length},
+                data && data.metadata_totals && typeof data.metadata_totals === 'object' ? data.metadata_totals : {});
+            const commitOwnedCount = countStudentOwnedMetadata(commits);
+            const branchOwnedCount = countStudentOwnedMetadata(branches);
+            const issueOwnedCount = countStudentOwnedMetadata(issues);
+            const commitTotal = metadataTotal(commits, totals.commits);
+            const branchTotal = metadataTotal(branches, totals.branches);
+            const issueTotal = metadataTotal(issues, totals.issues);
             if (container) container._metadataProgress = progress;
             if (container) container._issuesPanelExpanded = issueExpanded;
             const badgeClass = function (key) {
                 return progress[key] === true ? 'badge text-bg-secondary' : 'badge text-bg-secondary github-metadata-loading';
             };
-            let html = '<div class="d-flex flex-wrap gap-2 mb-2"><span class="' + badgeClass('commits') + '" data-metadata-badge="commits">Commit: ' + escapeHtml(commits.length) + '</span>' +
-                '<span class="' + badgeClass('branches') + '" data-metadata-badge="branches">Branch: ' + escapeHtml(branches.length) + '</span>' +
-                '<span class="' + badgeClass('issues') + '" data-metadata-badge="issues">Issue: ' + escapeHtml(issues.length) + '</span></div>';
+            let html = '<div class="d-flex flex-wrap gap-2 mb-2"><span class="' + badgeClass('commits') + '" data-metadata-badge="commits">Commit: ' + escapeHtml(commitOwnedCount) + ' di ' + escapeHtml(commitTotal) + '</span>' +
+                '<span class="' + badgeClass('branches') + '" data-metadata-badge="branches">Branch: ' + escapeHtml(branchOwnedCount) + ' di ' + escapeHtml(branchTotal) + '</span>' +
+                '<span class="' + badgeClass('issues') + '" data-metadata-badge="issues">Issue: ' + escapeHtml(issueOwnedCount) + ' di ' + escapeHtml(issueTotal) + '</span></div>';
 
             html += '<div class="github-branches mb-2"><strong><i class="bi bi-diagram-3"></i> Branch (' + escapeHtml(branches.length) + ')</strong>: ';
             html += branches.length ? branches.map(function (branch) {
@@ -3913,6 +3964,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 if (Object.prototype.hasOwnProperty.call(streamState.metadata_progress || {}, progressKey)) {
                     streamState.metadata_progress[progressKey] = event.complete === true;
                 }
+                if (!streamState.metadata_totals || typeof streamState.metadata_totals !== 'object') {
+                    streamState.metadata_totals = {commits: null, branches: null, issues: null};
+                }
+                const streamTotal = Number(event.total);
+                if (Object.prototype.hasOwnProperty.call(streamState.metadata_totals, progressKey)
+                    && Number.isFinite(streamTotal) && streamTotal >= 0) {
+                    streamState.metadata_totals[progressKey] = streamTotal;
+                }
                 return;
             }
             if (event.type !== 'metadata_item') return;
@@ -3972,7 +4031,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             container.innerHTML = '<div class="text-muted"><i class="bi bi-hourglass-split"></i> Caricamento issue, branch, tag e commit…</div>';
             try {
                 const body = new URLSearchParams({action: 'repo_metadata', repo: repoFull, student_id: studentId || '', csrf_token: REVIEW_CSRF_TOKEN, stream: '1'});
-                const streamState = {ok: true, repo: repoFull, ref: ref || 'main', commits: [], branches: [], issues: [], tags: {}, warnings: [], truncated: false, metadata_progress: {commits: false, branches: false, issues: false}};
+                const streamState = {ok: true, repo: repoFull, ref: ref || 'main', commits: [], branches: [], issues: [], tags: {}, warnings: [], truncated: false, metadata_totals: {commits: null, branches: null, issues: null}, metadata_progress: {commits: false, branches: false, issues: false}};
                 const handleStreamEvent = function (event) {
                     if (!isGithubReviewRequestCurrent(row, state, container, 'metadataRequestToken', requestToken)) return;
                     if (event.type === 'metadata_item' || event.type === 'metadata_progress') {

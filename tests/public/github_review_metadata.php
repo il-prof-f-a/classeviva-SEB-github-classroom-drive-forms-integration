@@ -85,6 +85,13 @@ $require(str_contains($review, 'github-issue-panel-toggle-bottom'), 'pulsante in
 $require(str_contains($review, 'justify-content: flex-start;'), 'pulsante inferiore issue non allineato a sinistra');
 $require(str_contains($review, 'scrollFirstCommitIntoView'), 'scroll sul primo commit dopo la compressione issue assente');
 $require(str_contains($review, 'firstCommit.scrollIntoView'), 'scroll fluido sul primo commit assente');
+$require(str_contains($review, 'metadata_totals'), 'totali metadati non conservati durante lo streaming');
+$require(str_contains($review, 'countStudentOwnedMetadata'), 'conteggio contributi studente nel riepilogo assente');
+$require(str_contains($review, "Commit: ' + escapeHtml(commitOwnedCount) + ' di '"), 'riepilogo commit senza forma studente di totale');
+$require(str_contains($review, "Branch: ' + escapeHtml(branchOwnedCount) + ' di '"), 'riepilogo branch senza forma studente di totale');
+$require(str_contains($review, "Issue: ' + escapeHtml(issueOwnedCount) + ' di '"), 'riepilogo issue senza forma studente di totale');
+$require(str_contains($review, "'total' => count(\$rawCommits)"), 'totale commit non inviato nello stream');
+$require(str_contains($review, "'metadata_totals' =>"), 'totali metadati assenti dalla risposta finale');
 $require(str_contains($review, 'github-metadata-panel-loading'), 'pannello issue senza stato lampeggiante di caricamento');
 $require(str_contains($review, 'github-meta-toggle'), 'titolo commit non espandibile');
 $require(str_contains($review, 'github-meta-details'), 'dettagli commit collassabili assenti');
