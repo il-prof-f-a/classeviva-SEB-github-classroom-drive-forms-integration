@@ -2643,6 +2643,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 	            background-color: transparent;
 	            border-color: #f0c27b;
 	        }
+	        .github-issue-panel-footer {
+	            display: flex;
+	            align-items: center;
+            justify-content: flex-start;
+	            min-height: 2.15rem;
+	            margin: .65rem -.6rem -.45rem;
+	            padding: .25rem .6rem;
+	            background-color: #fff4e5;
+	            border-top: 1px solid #f0c27b;
+	            border-radius: 0 0 .375rem .375rem;
+	        }
+	        .github-issue-panel-toggle-bottom {
+	            color: #a45100 !important;
+	            text-decoration: none;
+	        }
+	        .github-issue-panel-toggle-bottom:hover {
+	            color: #7a3b00 !important;
+	            text-decoration: underline;
+	        }
         @keyframes github-metadata-badge-pulse {
             0%, 100% {
                 opacity: .72;
@@ -3701,6 +3720,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 '</div>' + details + '</div></li>';
         }
 
+        function scrollFirstCommitIntoView(container) {
+            const list = container && container.parentElement
+                ? container.parentElement.querySelector('.github-commits-list')
+                : null;
+            const firstCommit = list ? list.querySelector('li.list-group-item') : null;
+            if (!firstCommit) return;
+            requestAnimationFrame(function () {
+                firstCommit.scrollIntoView({behavior: 'smooth', block: 'start'});
+            });
+        }
+
         function renderRepoMetadata(container, data, repoFull) {
             const branches = Array.isArray(data.branches) ? data.branches : [];
             const issues = Array.isArray(data.issues) ? data.issues : [];
@@ -3780,6 +3810,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 });
                 html += '</div>';
             }
+            html += '<div class="github-issue-panel-footer" data-issue-collapse-control="bottom">' +
+                '<button type="button" class="btn btn-link p-0 github-issue-panel-toggle-bottom"' +
+                ' data-bs-toggle="collapse" data-bs-target="#' + escapeHtml(issuePanelId) + '"' +
+                ' aria-controls="' + escapeHtml(issuePanelId) + '" aria-expanded="' + (issueExpanded ? 'true' : 'false') + '"' +
+                ' title="Comprimi o espandi le issue">' +
+                '<i class="bi bi-chevron-up me-1"></i>Comprimi issue</button></div>';
             html += '</div></div>';
             if (warnings.length) {
                 html += '<div class="alert alert-warning py-1 px-2 small mt-2 mb-0">' + warnings.map(escapeHtml).join('<br>') + '</div>';
@@ -3795,6 +3831,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 });
                 issueCollapse.addEventListener('hidden.bs.collapse', function () {
                     container._issuesPanelExpanded = false;
+                    scrollFirstCommitIntoView(container);
                 });
             }
 

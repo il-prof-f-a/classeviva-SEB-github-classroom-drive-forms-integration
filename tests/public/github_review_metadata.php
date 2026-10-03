@@ -80,6 +80,11 @@ $require(str_contains($review, 'compareCommits'), 'origine branch non analizzata
 $require(str_contains($review, 'github-issue-toggle'), 'titolo issue non espandibile');
 $require(str_contains($review, 'github-issue-details'), 'dettagli issue collassabili assenti');
 $require(str_contains($review, 'data-metadata-collapse="issues"'), 'pannello issue senza contenitore collassabile');
+$require(str_contains($review, 'github-issue-panel-footer'), 'barra inferiore issue assente');
+$require(str_contains($review, 'github-issue-panel-toggle-bottom'), 'pulsante inferiore per comprimere le issue assente');
+$require(str_contains($review, 'justify-content: flex-start;'), 'pulsante inferiore issue non allineato a sinistra');
+$require(str_contains($review, 'scrollFirstCommitIntoView'), 'scroll sul primo commit dopo la compressione issue assente');
+$require(str_contains($review, 'firstCommit.scrollIntoView'), 'scroll fluido sul primo commit assente');
 $require(str_contains($review, 'github-metadata-panel-loading'), 'pannello issue senza stato lampeggiante di caricamento');
 $require(str_contains($review, 'github-meta-toggle'), 'titolo commit non espandibile');
 $require(str_contains($review, 'github-meta-details'), 'dettagli commit collassabili assenti');
