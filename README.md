@@ -6,6 +6,10 @@ UDA Smart è una piattaforma PHP per progettare e gestire Unità di Apprendiment
 
 Il repository contiene il codice distribuibile e template privi di credenziali. Non servono Composer, PHP o MySQL installati sul computer se si usa Docker.
 
+## Presentazione su Medium
+
+https://automatizzo.conilcodice.it/dal-contenuto-al-voto-in-registro-come-automatizzare-lintera-uda-con-una-sola-piattaforma-5373f73ad93c?postPublishedType=repub
+
 ## Stato del progetto e documenti legali
 
 UDA Smart è distribuito come codice da installare e amministrare autonomamente: la pubblicazione del repository non apre una piattaforma pubblica e non autorizza, da sola, il trattamento di dati scolastici. Lo stage dell'autore è una sperimentazione personale ancora in fase di test, non approvata dall'istituzione scolastica e limitata agli account indicati da `TEST_ALLOWED_EMAILS`.
