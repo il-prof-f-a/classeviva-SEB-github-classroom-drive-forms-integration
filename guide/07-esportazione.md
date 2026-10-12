@@ -40,3 +40,17 @@ La pagina prepara un archivio ZIP protetto da una password obbligatoria, con i c
 
 - [← Precedente Valutazioni e registro](06-valutazioni.md)
 - [Fine del percorso → Torna all’indice](index.md)
+
+## Contenuto effettivo del pacchetto
+
+La pagina di esportazione indica che il pacchetto può contenere:
+
+- documento Word con le informazioni e le sezioni didattiche selezionate;
+- file Excel con voti, valutazioni e risposte ai test;
+- materiali, obiettivi, rubriche, laboratorio, domande, test e statistiche secondo le caselle spuntate.
+
+Nella consultazione dell’UDA UML risultavano 0 obiettivi, 2 materiali, 6 rubriche, 0 elementi di laboratorio, 16 domande e 1 classe nel riepilogo dell’esportazione. Questi valori sono un’istantanea della UDA e possono cambiare dopo nuove associazioni.
+
+## Protezione e trattamento dei dati
+
+Il pacchetto può contenere nominativi, voti, giudizi, risposte e riferimenti a servizi esterni. Usa una password diversa dalle credenziali dell’applicazione, consegnala tramite un canale separato e non caricare lo ZIP in repository pubbliche o issue. Anche un archivio protetto non deve essere trattato come materiale da pubblicare: il nome del file, la password e i link inclusi possono comunque rivelare informazioni.

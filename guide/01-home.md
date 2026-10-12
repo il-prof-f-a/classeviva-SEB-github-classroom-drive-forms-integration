@@ -38,3 +38,32 @@ La home raccoglie le unità didattiche e permette di restringere l’elenco. Per
 
 - [← Indietro Indice della guida](index.md)
 - [Prossimo → Scheda UDA e gruppi](02-uda.md)
+
+## Mappa completa della navigazione
+
+La barra superiore e il menu laterale separano la consultazione dell’UDA dalla configurazione dei servizi. Questa distinzione aiuta a capire dove cercare una funzione prima di modificare dati.
+
+| Area | Pagine principali | Scopo |
+| --- | --- | --- |
+| UDA | Materiali, Obiettivi, Crea Nuova UDA | Costruzione e consultazione dei contenuti didattici. |
+| Configurazione | Integrazioni Utente, Database, Pulizia tabelle, Autenticazione Google, Token GitHub, Template GitHub | Collegamento dei servizi e manutenzione tecnica. |
+| Mappature | Gruppi didattici, Assignment GitHub | Collegamento tra classi, studenti, repository e attività. |
+| Valutazioni | Gestione voti, ClasseViva, Rubrica orale, Laboratorio | Inserimento, revisione e pubblicazione delle valutazioni. |
+| Diagnostica | Test integrazioni API, Test sistema, Stato sistema avanzato | Verifica dell’ambiente e dei connettori. |
+
+## Procedura guidata per una nuova UDA
+
+**Crea Nuova UDA** apre un wizard articolato in sette passaggi: **Info Generali**, **Classi e integrazioni**, **Materiali**, **Obiettivi**, **Domande**, **Test** e **Riepilogo**. I pulsanti di avanzamento salvano o preparano i dati del wizard secondo il passaggio corrente; prima dell’ultimo invio controlla sempre il riepilogo.
+
+Per una UDA già esistente il percorso equivalente è più breve: apri la scheda, verifica i gruppi, completa materiali e obiettivi, prepara domande e test, poi passa a valutazioni, pubblicazione o esportazione.
+
+## Azioni da distinguere durante la consultazione
+
+| Tipo | Esempi | Effetto |
+| --- | --- | --- |
+| Lettura | Visualizza, filtri, stato sistema, anteprime | Non modifica l’archivio. |
+| Salvataggio | Salva modifiche, associa gruppi, importa, salva voto | Scrive dati nel database o nella UDA. |
+| Operazione esterna | Pubblica su Classroom, invia a ClasseViva, crea Forms, assignment GitHub | Scrive anche su un servizio remoto o rende visibile un contenuto. |
+| Distruttiva | Elimina, rimuovi assegnazione, pulizia tabelle, reset rubrica | Può rendere difficili o impossibili i ripristini. |
+
+Questa guida apre le pagine e ne descrive i controlli, ma durante la ricognizione non sono state eseguite operazioni di salvataggio, pubblicazione, cancellazione, pulizia o invio a servizi esterni.

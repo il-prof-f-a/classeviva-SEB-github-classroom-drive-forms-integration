@@ -69,3 +69,36 @@ La pagina raggiunta da **Classi / Destinatari** mostra le assegnazioni esistenti
 
 - [← Precedente Home e ricerca](01-home.md)
 - [Prossimo → Materiali e obiettivi](03-materiali-obiettivi.md)
+
+## Ciclo di vita consigliato
+
+Il dettaglio dell’UDA funziona come centro di controllo. Un percorso completo può essere letto così:
+
+1. **Dati generali:** titolo, argomento, disciplina, periodo e stato.
+2. **Destinatari:** gruppi didattici e relative integrazioni.
+3. **Contenuti:** materiali e obiettivi.
+4. **Verifica:** domande, test e attività.
+5. **Valutazione:** rubriche, laboratorio e voti.
+6. **Distribuzione:** Classroom, repository GitHub o registro ClasseViva.
+7. **Conservazione:** esportazione protetta dell’UDA.
+
+La sequenza non obbliga a usare ogni servizio, ma rende esplicito il punto in cui ogni pagina si colloca. Prima di pubblicare conviene mantenere l’UDA in **Bozza** e controllare la pagina di riepilogo.
+
+## Cosa mostra la scheda UML
+
+La scheda consultata per l’esempio riporta due gruppi destinatari, due materiali, nessun obiettivo associato, sedici domande e tre prove. I conteggi sono indicatori di stato: non significano che il contenuto sia automaticamente pubblicato o sincronizzato.
+
+| Blocco | Domanda di controllo |
+| --- | --- |
+| Informazioni generali | Titolo, argomento, disciplina e anno sono corretti? |
+| Gruppi didattici | I destinatari corrispondono alle classi effettive? |
+| Materiali | I link sono raggiungibili con l’account degli studenti? |
+| Obiettivi | Gli obiettivi sono associati, non solo presenti nel repertorio? |
+| Domande e test | Le domande e le prove appartengono alla fase didattica corretta? |
+| Orale/laboratorio | La rubrica e la griglia sono state configurate prima dei voti? |
+
+## Pubblicazione dalla scheda
+
+Il pulsante **Pubblica su Google Classroom** apre una pagina separata con la selezione delle classi e dei contenuti da inviare. La pagina di pubblicazione permette di scegliere materiali, domande/test, obiettivi e notifiche; l’invio può creare argomenti e materiali in Classroom. Verifica sempre la classe selezionata e considera l’azione come esterna e persistente.
+
+Il pulsante **Elimina** è invece locale ma distruttivo. Prima di usarlo, esporta l’UDA se serve una copia e controlla di avere selezionato l’identificativo corretto.

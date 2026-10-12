@@ -49,3 +49,29 @@ I materiali raccolgono le risorse didattiche dell’UDA; gli obiettivi collegano
 
 - [← Precedente Scheda UDA e gruppi](02-uda.md)
 - [Prossimo → Domande](04-domande.md)
+
+## Aggiungere un link senza caricare un file
+
+Il comando **Aggiungi Link** apre un modulo con questi campi:
+
+| Campo | Indicazione |
+| --- | --- |
+| UDA | Unità a cui associare la risorsa. |
+| Tipo materiale | Documento, foglio, presentazione, immagine, video, YouTube, link, sito, risorsa o altro. |
+| Titolo | Nome leggibile dagli utenti; obbligatorio. |
+| URL | Indirizzo completo della risorsa; obbligatorio. |
+| Descrizione | Contesto o istruzioni per l’uso. |
+
+Il link viene registrato nell’UDA dopo **Aggiungi**. Per risorse riservate, assicurati che i destinatari abbiano i permessi sul servizio remoto: l’applicazione non rende automaticamente pubblico un file Drive o Classroom.
+
+## Selezione da Drive e importazione da Classroom
+
+**Seleziona da Drive** usa il selettore Google autorizzato e associa il file scelto. **Importa da Argomento Classroom** propone invece materiali già collegati a un argomento della classe. In entrambi i casi controlla titolo, origine e autorizzazioni prima di confermare.
+
+## Repertorio degli obiettivi
+
+La pagina generale degli obiettivi offre filtri per tipologia, area, livello Bloom e testo. Nella ricognizione il repertorio generale conteneva 66 voci, mentre la schermata di selezione per UML ne mostrava 61 disponibili e 0 già associate: i numeri possono differire perché le due pagine applicano contesti o filtri diversi.
+
+Ogni scheda può riportare codice, livello Bloom, peso, descrizione, competenza, area e parole chiave. La selezione non è ancora un’associazione: l’operazione diventa effettiva solo con **Associa Selezionati a UDA**. Usa il contatore del pulsante per verificare quante voci sono in coda.
+
+> **Controllo didattico:** un obiettivo presente nel repertorio non compare automaticamente nell’UDA. Dopo l’associazione torna al dettaglio dell’UDA e verifica il conteggio aggiornato.

@@ -37,3 +37,26 @@ Questa pagina organizza le prove associate a UML, divise per momento didattico. 
 
 - [← Precedente Domande](04-domande.md)
 - [Prossimo → Valutazioni e registro](06-valutazioni.md)
+
+## Leggere una scheda di test
+
+Le schede osservate possono riportare piattaforma, fase didattica, titolo, stato, link studente/docente e azioni di gestione. Lo stato **Bozza** indica che la prova è ancora in preparazione; non equivale a una prova già pubblicata o consegnata.
+
+| Azione | Uso prudente |
+| --- | --- |
+| Link Studenti | Controlla quale vista riceveranno gli studenti. |
+| Link Docente | Verifica la vista di correzione o supervisione. |
+| Importa risultati | Carica un file o una sorgente e mostra un’anteprima delle corrispondenze. |
+| Modifica | Aggiorna i parametri della prova. |
+| Crea assegnazione GitHub | Avvia la configurazione di repository, organizzazione, scadenza e consegna. |
+| Pubblica su Classroom | Trasmette l’attività al corso selezionato; è un’operazione esterna. |
+
+## Prima di assegnare o pubblicare
+
+1. Controlla che la prova sia nella fase corretta: prerequisito, intermedia o finale.
+2. Verifica che il gruppo destinatario sia quello atteso.
+3. Apri l’anteprima dei link studente e docente.
+4. Se importi risultati, controlla le corrispondenze senza fidarti solo del nome visualizzato.
+5. Pubblica o crea l’assignment solo dopo avere verificato organizzazione, repository template e scadenza.
+
+La ricognizione ha lasciato tutte le prove nello stato originale e non ha inviato attività a Classroom, GitHub o altri servizi.

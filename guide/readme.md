@@ -1,6 +1,6 @@
 # Guida utente del portale didattico
 
-Questa guida accompagna nella consultazione dell’UDA **UML**, collegata ai gruppi **4L** e **4L Informatica**, e nelle relative funzioni per materiali, obiettivi, domande, prove, valutazioni e pubblicazione sul registro.
+Questa guida accompagna nella consultazione dell’UDA **UML**, collegata ai gruppi **4L** e **4L Informatica**, e nelle relative funzioni per materiali, obiettivi, domande, prove, valutazioni, integrazioni e pubblicazione sul registro.
 
 ![Flusso UDA Smart dal contenuto al voto](../public/assets/img/uda-system.webp)
 
@@ -23,8 +23,25 @@ Per il rendering grafico completo è disponibile anche la [versione HTML](index.
 5. [Test e attività](05-test.md)
 6. [Valutazioni e registro](06-valutazioni.md)
 7. [Esportazione](07-esportazione.md)
+8. [Integrazioni e credenziali](08-integrazioni.md)
+9. [Gruppi, roster e GitHub Classroom](09-gruppi-e-github.md)
+10. [Stato, database e debug](10-stato-e-debug.md)
 
-Le schermate e gli esempi riportano solo il percorso dell’UDA indicata. I conteggi descrivono lo stato osservato al momento della ricognizione e possono cambiare.
+## Mappa completa delle pagine
+
+| Area | Pagine osservate | Uso principale |
+| --- | --- | --- |
+| Navigazione | Dashboard, Materiali, Obiettivi, Guida, Crea Nuova UDA, Stato Sistema | Entrare nel flusso e verificare il contesto |
+| UDA | Visualizza, Modifica, Assegna classi, Pubblica Classroom, Esporta | Gestire il ciclo di vita dell’unità |
+| Contenuti | Materiali, Obiettivi, Domande, Test e attività | Preparare risorse, traguardi e prove |
+| Valutazione | Voti, Rubrica orale, Laboratorio +/−, Gestione voti ClasseViva | Registrare, controllare e pubblicare valutazioni |
+| Integrazioni | ClasseViva, Google Classroom/Drive/Forms, Mail, AI, GitHub | Collegare provider e configurare credenziali |
+| Gruppi | Gruppi didattici, mapping studenti, assignment e template GitHub | Collegare classi e repository |
+| Diagnostica | Test sistema, stato avanzato, test integrazioni API, database, pulizia tabelle | Capire errori senza eseguire operazioni distruttive |
+
+Le schermate e gli esempi riportano solo il percorso dell’UDA indicata. I conteggi descrivono lo stato osservato durante la ricognizione live del 12 ottobre 2026 e possono cambiare.
+
+Le immagini pubblicate sono solo quelle che non mostrano account, credenziali o roster reali. Per le pagine sensibili la guida riporta i campi e il flusso, ma non riproduce dati personali o identificativi esterni.
 
 ## Anteprima dei capitoli
 
@@ -83,3 +100,21 @@ La guida riunisce griglia di laboratorio, rubrica orale, inserimento dei voti e 
 L’ultimo capitolo descrive la scelta delle sezioni e la generazione del pacchetto esportabile dell’UDA.
 
 [Apri il capitolo Markdown](07-esportazione.md) · [versione HTML](07-esportazione.html)
+
+### 8. Integrazioni e credenziali
+
+La configurazione di ClasseViva, Google, posta, AI e GitHub è descritta per scheda, con una distinzione tra verifica in sola lettura e operazioni che scrivono su servizi esterni.
+
+[Apri il capitolo Markdown](08-integrazioni.md)
+
+### 9. Gruppi e GitHub Classroom
+
+Il capitolo tratta gruppi didattici, mappatura degli studenti, template, assignment e revisione. Le pagine che mostrano roster o repository reali sono descritte senza ripubblicare i dati live.
+
+[Apri il capitolo Markdown](09-gruppi-e-github.md)
+
+### 10. Stato e debug
+
+Una checklist per leggere stato sistema, test, database, cleanup e problemi di integrazione senza eseguire operazioni distruttive.
+
+[Apri il capitolo Markdown](10-stato-e-debug.md)

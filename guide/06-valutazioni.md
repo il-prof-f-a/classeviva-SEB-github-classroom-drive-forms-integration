@@ -65,3 +65,31 @@ Seleziona il gruppo nel menu e consulta gli indicatori prima di assegnare una va
 
 - [← Precedente Test e attività](05-test.md)
 - [Prossimo → Esportazione](07-esportazione.md)
+
+## Rubrica orale
+
+La pagina della rubrica orale mostra sei indicatori e il comando **Reset Rubrica**. Il reset è distruttivo: cancella la configurazione della rubrica e le valutazioni collegate all’UDA, quindi non va usato per una semplice verifica.
+
+Prima di valutare, seleziona la classe e controlla che l’UDA e la materia siano corrette. La rubrica deve essere configurata prima di registrare i giudizi, perché gli indicatori definiscono il contesto della valutazione.
+
+## Griglia di laboratorio
+
+La griglia collega UDA, classe e materia e mostra gli indicatori per ogni studente. Nella pagina osservata il comportamento è esplicitato così:
+
+- una cella grigia rappresenta un voto già registrato oltre la soglia prevista;
+- una cella evidenziata rappresenta una valutazione in coda, ancora modificabile;
+- i pulsanti **+** e **−** aggiungono o riducono la valutazione in coda;
+- dopo due ore la valutazione in coda passa automaticamente a registrata;
+- **Salva tutti i voti** invia le modifiche, mentre **Forza pubblicazione annotazioni** può renderle visibili sul registro.
+
+La pagina include anche l’opzione per mostrare le descrizioni degli indicatori e un riepilogo di valutazioni in coda/registrate. Controlla il riepilogo prima del salvataggio: l’azione riguarda più studenti e più indicatori contemporaneamente.
+
+## Tre livelli di gestione dei voti
+
+| Pagina | Funzione |
+| --- | --- |
+| Voti dell’UDA | Inserimento manuale di voto, tipo e giudizio associati all’unità. |
+| Gestione voti ClasseViva | Selezione di classe e materia per lavorare con il registro esterno. |
+| Verifica voti | Controllo degli elementi sincronizzati, in attesa o con errore. |
+
+Se il voto deve restare interno, lavora nella pagina dell’UDA. Se deve raggiungere ClasseViva, usa il flusso di pubblicazione e poi verifica lo stato: non considerare sufficiente il solo salvataggio locale.
