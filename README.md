@@ -10,6 +10,17 @@ Il repository contiene il codice distribuibile e template privi di credenziali. 
 
 https://automatizzo.conilcodice.it/dal-contenuto-al-voto-in-registro-come-automatizzare-lintera-uda-con-una-sola-piattaforma-5373f73ad93c?postPublishedType=repub
 
+## Guida utente
+
+La guida documenta il percorso dell’UDA **UML** per i gruppi **4L** e **4L Informatica**, con schermate e istruzioni per materiali, obiettivi, domande, test, valutazioni ed esportazione.
+
+![Flusso UDA Smart dal contenuto al voto](public/assets/img/uda-system.webp)
+
+- [Leggi la guida in formato Markdown, visualizzabile direttamente su GitHub](guide/readme.md)
+- [Apri la versione HTML navigabile](guide/index.html) — il rendering completo di HTML e CSS avviene quando la cartella è servita da un web server o da GitHub Pages.
+
+GitHub non esegue i file HTML nella vista del repository: per questo la cartella `guide/` mantiene sia l’edizione HTML/CSS interattiva sia un README Markdown con i contenuti principali e le immagini, leggibile direttamente online.
+
 ## Stato del progetto e documenti legali
 
 UDA Smart è distribuito come codice da installare e amministrare autonomamente: la pubblicazione del repository non apre una piattaforma pubblica e non autorizza, da sola, il trattamento di dati scolastici. Lo stage dell'autore è una sperimentazione personale ancora in fase di test, non approvata dall'istituzione scolastica e limitata agli account indicati da `TEST_ALLOWED_EMAILS`.
