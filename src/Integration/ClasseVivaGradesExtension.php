@@ -37,10 +37,9 @@ trait ClasseVivaGradesExtension
      */
     public function getStudentGrades(string $studentId, string $classId, string $subjectId): array
     {
-        // Fai login web se necessario
-        if (!$this->phpSessionId) {
-            $this->authenticateWeb();
-        }
+        // ClasseViva non permette più di generare una sessione PHP dal token
+        // REST: il vecchio scraping del registro non è più supportato.
+        throw new Exception(ClasseVivaAPI::UNSUPPORTED_WEB_SESSION_MESSAGE);
 
         try {
             // Recupera HTML della pagina registro

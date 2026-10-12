@@ -24,7 +24,6 @@ final class ClasseVivaSessionStore
         'expire',
         'expires_in',
         'release',
-        'php_session_id',
     ];
 
     private array $session;
@@ -89,6 +88,8 @@ final class ClasseVivaSessionStore
 
     public function clearPhpSessionId(): void
     {
+        // Compatibilità con sessioni precedenti: i payload nuovi non
+        // ammettono più PHPSESSID e quindi non c'è nulla da rigenerare.
         if (isset($this->session[self::AUTH_KEY]['token_payload']['php_session_id'])) {
             unset($this->session[self::AUTH_KEY]['token_payload']['php_session_id']);
             $this->session[self::AUTH_KEY]['last_activity_at'] = time();

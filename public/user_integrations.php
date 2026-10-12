@@ -145,13 +145,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['section'])) {
                     throw new Exception("Inserisci username e password ClasseViva per rigenerare il token.");
                 }
                 $cvApi = new ClasseVivaAPI($config);
-                $cvApi->authenticate($username, $password);
+                if (!$cvApi->authenticate($username, $password)) {
+                    throw new Exception('Autenticazione REST ClasseViva non riuscita.');
+                }
                 unset($_POST['token_username'], $_POST['token_password']);
                 $username = null;
                 $password = null;
-                if (!$cvApi->getPhpSessionToken()) {
-                    throw new Exception("Impossibile generare la sessione web ClasseViva dal token.");
-                }
                 $tokenPayload = $cvApi->getTokenPayload();
                 if (!$tokenPayload) {
                     throw new Exception("Impossibile ottenere il token ClasseViva.");
@@ -817,17 +816,17 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
                         <div class="card-body">
                             <?php if ($classevivaTokenState['ready']): ?>
                                 <p class="mb-1">Il token è valido e può essere usato dalle API.</p>
-                                <small class="text-muted">Se vuoi rigenerarlo, utilizza la procedura di rinnovo ClasseViva.</small>
+                                <small class="text-muted">Se vuoi rigenerarlo, utilizza la procedura di rinnovo del token REST ClasseViva.</small>
                             <?php else: ?>
-                                <p class="mb-1 text-muted">Rigenera la sessione ClasseViva quando necessario.</p>
+                                <p class="mb-1 text-muted">Rigenera il token REST ClasseViva quando necessario.</p>
                                 <div class="mt-2">
                                     <button type="button" class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#cvTokenModal">
-                                        <i class="bi bi-shield-lock"></i> Rigenera token
+                                        <i class="bi bi-shield-lock"></i> Rigenera token REST
                                     </button>
                                 </div>
                             <?php endif; ?>
                             <p class="text-muted small mt-2 mb-0">
-                                Username e password vengono usati una sola volta e subito rimossi. Token REST e PHPSESSID restano soltanto nella sessione PHP corrente e non vengono salvati nel database.
+                                Username e password vengono usati una sola volta e subito rimossi. Viene conservato soltanto il token REST nella sessione PHP corrente; la sessione web PHPSESSID non è più supportata.
                             </p>
                         </div>
                     </div>
@@ -939,13 +938,13 @@ $configurationHeaderClass = $configurationIssue ? 'bg-danger text-white' : 'bg-p
                         <input type="hidden" name="cv_period_date_1" value="<?= htmlspecialchars($classevivaConfig['period_date_1'] ?? '01-31') ?>">
                         <input type="hidden" name="cv_period_date_2" value="<?= htmlspecialchars($classevivaConfig['period_date_2'] ?? '') ?>">
                         <div class="modal-header">
-                            <h5 class="modal-title" id="cvTokenModalLabel">Rigenera token ClasseViva</h5>
+                            <h5 class="modal-title" id="cvTokenModalLabel">Rigenera token REST ClasseViva</h5>
                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                         </div>
                         <div class="modal-body">
-                            <p>Inserisci le credenziali ClasseViva per ottenere una nuova sessione.</p>
+                            <p>Inserisci le credenziali ClasseViva per ottenere un nuovo token REST.</p>
                             <p class="text-muted small">
-                                Le credenziali transitano nel server solo per il login REST e vengono subito rimosse. Token REST e PHPSESSID restano soltanto nella sessione PHP corrente.
+                                Le credenziali transitano nel server solo per il login REST e vengono subito rimosse. Viene conservato soltanto il token REST nella sessione PHP corrente; la sessione web PHPSESSID non è più supportata.
                             </p>
                             <div class="mb-3">
                                 <label class="form-label">Username ClasseViva</label>

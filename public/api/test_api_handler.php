@@ -558,8 +558,8 @@ function runClasseVivaTest($config, $test) {
                 'visible_to_student' => true
             ];
 
-            // Usa publishAnnotationWeb come in pubblica_plusminus.php
-            $result = $cvApi->publishAnnotationWeb($annotationData);
+            // Usa l'endpoint REST; il vecchio ponte web/PHPSESSID è dismesso.
+            $result = $cvApi->publishAnnotation($annotationData);
 
             // Dopo la pubblicazione, recupera l'evento_id per permettere il cleanup
             $eventoId = null;
@@ -569,7 +569,7 @@ function runClasseVivaTest($config, $test) {
                 usleep(800000); // 0.8 secondi
 
                 // Prima prova: cerca con filtro data
-                $annotations = $cvApi->getStudentAnnotationsWeb($studentId, $classId, $annotationData['date']);
+                $annotations = $cvApi->getStudentAnnotations($studentId, $annotationData['date'], $annotationData['date']);
                 $annotationsFound = count($annotations);
 
                 // Cerca l'annotazione appena inserita (stesso testo con marker)
@@ -587,7 +587,7 @@ function runClasseVivaTest($config, $test) {
 
                 // Fallback 2: cerca senza filtro data (tutte le annotazioni dello studente)
                 if ($eventoId === null) {
-                    $allAnnotations = $cvApi->getStudentAnnotationsWeb($studentId, $classId, null);
+                    $allAnnotations = $cvApi->getStudentAnnotations($studentId);
                     $annotationsFound = count($allAnnotations);
                     if (!empty($allAnnotations)) {
                         // Prendi l'annotazione con evento_id più alto (presumibilmente la più recente)

@@ -266,9 +266,9 @@ ClasseViva viene abilitata con `CLASSEVIVA_ENABLED=true` solo quando serve. L'in
 
 Il login è avviato dall'utente nel browser, ma username e password transitano via HTTPS nel processo PHP dell'installazione, che esegue una singola richiesta di login REST verso ClasseViva. Non è quindi corretto descrivere questa integrazione come esclusivamente browser-side. Le credenziali non vengono scritte in log, file, sessione o database e le variabili applicative vengono eliminate subito dopo la richiesta; PHP e il sistema operativo non possono tuttavia garantire la cancellazione fisica immediata di ogni copia dalla memoria RAM.
 
-Dopo il login il server conserva soltanto il token REST nella sessione PHP corrente. Il token REST viene usato per ottenere `PHPSESSID` direttamente da ClasseViva, senza inviare di nuovo username e password. Anche `PHPSESSID` resta nella sessione PHP e viene rigenerato dal token REST quando la sessione web non è più valida. Se il token REST risulta scaduto o non valido, token e `PHPSESSID` vengono eliminati e l'interfaccia richiede nuovamente le credenziali tramite popup.
+Dopo il login il server conserva soltanto il token REST nella sessione PHP corrente. Il token viene usato direttamente dagli endpoint REST verificati per leggere classi, studenti e materie; username e password non vengono riutilizzati e non vengono salvati. ClasseViva non permette più di generare dal token REST una sessione web `PHPSESSID`: le operazioni che richiedono l'interfaccia web (per esempio lettura/scrittura del registro voti) restituiscono esplicitamente `funzione non più supportata a causa di incompatibilità con il sistema`.
 
-Token REST e `PHPSESSID` non sono salvati in `INTEGRAZIONI_UTENTE` né in altre tabelle del database. Il browser riceve solo il cookie identificativo della sessione dell'applicazione, configurato `HttpOnly`, `SameSite=Lax`, senza scadenza persistente e `Secure` quando il sito usa HTTPS. Il logout elimina i token, distrugge i dati di sessione e fa scadere il cookie. Alla chiusura del browser il cookie di sessione non è più disponibile; l'eventuale dato server-side non è cancellabile in modo sincrono alla chiusura di tutte le finestre e viene rimosso dal garbage collector PHP dopo il timeout di inattività definito da `SESSION_IDLE_TIMEOUT`.
+Il token REST non è salvato in `INTEGRAZIONI_UTENTE` né in altre tabelle del database. Il browser riceve solo il cookie identificativo della sessione dell'applicazione, configurato `HttpOnly`, `SameSite=Lax`, senza scadenza persistente e `Secure` quando il sito usa HTTPS. Il logout elimina il token, distrugge i dati di sessione e fa scadere il cookie. Alla chiusura del browser il cookie di sessione non è più disponibile; l'eventuale dato server-side non è cancellabile in modo sincrono alla chiusura di tutte le finestre e viene rimosso dal garbage collector PHP dopo il timeout di inattività definito da `SESSION_IDLE_TIMEOUT`.
 
 L'utilizzatore deve verificare di essere autorizzato ad accedere ai dati e di rispettare condizioni d'uso, regolamenti scolastici e normativa applicabile. L'uso dell'integrazione avviene sotto la responsabilità dell'utilizzatore; nei limiti consentiti dalla legge, l'autore non risponde di sospensioni dell'account, indisponibilità, perdita o alterazione di dati, violazioni di condizioni contrattuali o altri danni derivanti dall'uso delle API non ufficiali.
 
@@ -323,7 +323,7 @@ Prima di `setup_database.php`, creare database e utente MySQL e compilare `DB_HO
 
 ## Test
 
-Suite statica e funzionale, inclusi ciclo session-only ClasseViva, scambio token REST verso `PHPSESSID`, timeout e logout:
+Suite statica e funzionale, inclusi ciclo REST-only ClasseViva, timeout, logout e stub espliciti delle operazioni web non supportate:
 
 ```bash
 composer test

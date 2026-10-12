@@ -219,30 +219,12 @@ foreach ($queue as $ev) {
     $publishSuccess = false;
     $softReason = null;
     try {
-        // prova web, poi REST
-        $resWeb = $cv->publishAnnotationWeb($annotationData);
-        $idAnnot = $resWeb['id'] ?? ($resWeb['annotation_id'] ?? null);
+        // Da oggi si usa soltanto l'endpoint REST; il ponte web/PHPSESSID è dismesso.
+        $res = $cv->publishAnnotation($annotationData);
+        $idAnnot = $res['id'] ?? ($res['annotation_id'] ?? null);
         $publishSuccess = true;
-    } catch (Exception $exWeb) {
-        $msg = strtolower($exWeb->getMessage() ?? '');
-        // Alcuni endpoint rispondono 405 ma l'annotazione risulta comunque salvata lato RE
-        if (str_contains($msg, '405') || str_contains($msg, 'method not allowed') || str_contains($msg, 'nessun endpoint disponibile')) {
-            $publishSuccess = true;
-            $softReason = $exWeb->getMessage();
-        }
-        try {
-            $res = $cv->publishAnnotation($annotationData);
-            $idAnnot = $res['id'] ?? ($res['annotation_id'] ?? null);
-            $publishSuccess = true;
-        } catch (Exception $exRest) {
-            $msg2 = strtolower($exRest->getMessage() ?? '');
-            if (str_contains($msg2, '405') || str_contains($msg2, 'method not allowed') || str_contains($msg2, 'nessun endpoint disponibile')) {
-                $publishSuccess = true;
-                $softReason = $softReason ?: $exRest->getMessage();
-            } else {
-                $errors[] = "Studente {$idStud}: " . $exRest->getMessage();
-            }
-        }
+    } catch (Exception $exRest) {
+        $errors[] = "Studente {$idStud}: " . $exRest->getMessage();
     }
 
     if ($publishSuccess) {

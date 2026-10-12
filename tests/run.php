@@ -137,10 +137,20 @@ $classeVivaSessionCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/class
 exec($classeVivaSessionCommand . ' 2>&1', $classeVivaSessionOutput, $classeVivaSessionExitCode);
 if ($classeVivaSessionExitCode === 0) {
     $passes++;
-    echo "PASS: autenticazione ClasseViva limitata alla sessione PHP\n";
+    echo "PASS: autenticazione ClasseViva REST-only e sessione applicativa\n";
 } else {
     $failures[] = 'ClasseViva session auth: ' . implode(' | ', $classeVivaSessionOutput);
-    echo "FAIL: autenticazione ClasseViva limitata alla sessione PHP\n";
+    echo "FAIL: autenticazione ClasseViva REST-only e sessione applicativa\n";
+}
+
+$classeVivaRestOnlyCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/classeviva_rest_only.php');
+exec($classeVivaRestOnlyCommand . ' 2>&1', $classeVivaRestOnlyOutput, $classeVivaRestOnlyExitCode);
+if ($classeVivaRestOnlyExitCode === 0) {
+    $passes++;
+    echo "PASS: API ClasseViva REST-only e stub web incompatibili\n";
+} else {
+    $failures[] = 'ClasseViva REST-only: ' . implode(' | ', $classeVivaRestOnlyOutput);
+    echo "FAIL: API ClasseViva REST-only e stub web incompatibili\n";
 }
 
 $localUrlCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/local_url_configuration.php');

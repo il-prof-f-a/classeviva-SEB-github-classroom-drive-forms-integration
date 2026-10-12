@@ -11,6 +11,14 @@ final class PublicError
     public static function message(Throwable $error, string $context = 'application'): string
     {
         $id = bin2hex(random_bytes(8));
+        $rawMessage = trim($error->getMessage());
+        // Messaggio statico e non sensibile: deve arrivare all'utente quando
+        // una funzione ClasseViva legacy è stata dismessa intenzionalmente.
+        $unsupportedClasseViva = 'funzione non più supportata a causa di incompatibilità con il sistema';
+        if ($rawMessage === $unsupportedClasseViva) {
+            error_log('[' . $id . '] ' . $context . ': ' . $rawMessage);
+            return $unsupportedClasseViva;
+        }
         $detail = preg_replace(
             '/\b(token|password|secret|api[_-]?key|authorization)\s*[=:]\s*[^\s,;]+/i',
             '$1=[redacted]',

@@ -16,6 +16,15 @@ use InvalidArgumentException;
  */
 class ClasseVivaAPI
 {
+    /**
+     * ClasseViva non espone più un ponte supportato dal token REST alla
+     * sessione PHP del portale web. Le operazioni che dipendevano da
+     * PHPSESSID restano nominativamente disponibili solo per compatibilità,
+     * ma falliscono in modo esplicito senza effettuare chiamate web.
+     */
+    public const UNSUPPORTED_WEB_SESSION_MESSAGE =
+        'funzione non più supportata a causa di incompatibilità con il sistema';
+
     private ClientInterface $client;
     private array $config;
     private string $baseUrl;
@@ -107,6 +116,19 @@ class ClasseVivaAPI
     }
 
     /**
+     * Stub compatibile per il precedente login web ClasseViva.
+     *
+     * Il login REST e il portale web usano sessioni diverse e ClasseViva non
+     * permette più di generare PHPSESSID dal server dell'applicazione.
+     */
+    public function authenticateWebSession(string $username, string $password): ?string
+    {
+        // Stub intenzionale: il login REST non può più essere convertito in
+        // PHPSESSID e ClasseViva non supporta più questo flusso dal server.
+        throw new Exception(self::UNSUPPORTED_WEB_SESSION_MESSAGE);
+    }
+
+    /**
      * Recupera la lista delle classi
      *
      * @return array Lista delle classi
@@ -178,21 +200,23 @@ class ClasseVivaAPI
      */
     public function getSubjects(): array
     {
-        $this->ensureAuthenticated();
-
-        try {
-            $response = $this->client->get('/teacher/subjects', [
-                'headers' => [
-                    'Z-Auth-Token' => $this->token
-                ]
-            ]);
-
-            $data = json_decode($response->getBody(), true);
-            return $data['subjects'] ?? [];
-
-        } catch (GuzzleException $e) {
-            throw new Exception("Errore recupero materie: " . $e->getMessage());
+        // /teacher/subjects non è più disponibile. Le materie del docente
+        // sono incluse nell'endpoint REST classi/studenti già supportato.
+        $classes = $this->getClassesWithTeacherSubjects();
+        $subjects = [];
+        $seen = [];
+        foreach ($classes as $class) {
+            foreach (($class['subjects'] ?? []) as $subject) {
+                $id = (string)($subject['id'] ?? '');
+                if ($id === '' || isset($seen[$id])) {
+                    continue;
+                }
+                $seen[$id] = true;
+                $subjects[] = $subject;
+            }
         }
+
+        return $subjects;
     }
 
     /**
@@ -319,45 +343,25 @@ class ClasseVivaAPI
     }
 
     /**
-     * Ottiene il PHP Session Token (PHPSESSID) per accesso interfaccia web
+     * Stub compatibile per il precedente scambio REST → PHPSESSID.
      *
-     * IMPORTANTE: Questo token è necessario per operazioni web-based come
-     * pubblicazione voti, note, ecc. Usare con ESTREMA cautela.
-     *
-     * @return string|null Session token (PHPSESSID) o null se fallito
+     * @throws Exception sempre, perché il ponte web non è più supportato.
      */
     public function getPhpSessionToken(): ?string
     {
-        if (empty($this->token)) {
-            throw new Exception("Token REST ClasseViva mancante per generare la sessione web");
-        }
+        // Stub intenzionale: il token REST non genera più PHPSESSID.
+        throw new Exception(self::UNSUPPORTED_WEB_SESSION_MESSAGE);
+    }
 
-        try {
-            $response = $this->client->get('https://web.spaggiari.eu/cvv/app/default/regvoti.php', [
-                'headers' => [
-                    'Z-Auth-Token' => $this->token,
-                    'User-Agent' => 'Mozilla/5.0',
-                ],
-                'allow_redirects' => false,
-                'http_errors' => false,
-                'timeout' => $this->config['timeout'] ?? 30,
-            ]);
+    private function storePhpSessionId(string $phpSessionId): string
+    {
+        $this->phpSessionId = $phpSessionId;
+        $this->storedPhpSessionId = $phpSessionId;
+        $this->tokenMeta ??= ['token' => $this->token];
+        $this->tokenMeta['php_session_id'] = $phpSessionId;
+        $this->persistTokenPayloadToPhpSession();
 
-            foreach ($response->getHeader('Set-Cookie') as $cookie) {
-                if (preg_match('/(?:^|;\s*)PHPSESSID=([^;]+)/i', $cookie, $matches)) {
-                    $this->phpSessionId = $matches[1];
-                    $this->storedPhpSessionId = $matches[1];
-                    $this->tokenMeta ??= ['token' => $this->token];
-                    $this->tokenMeta['php_session_id'] = $matches[1];
-                    $this->persistTokenPayloadToPhpSession();
-                    return $matches[1];
-                }
-            }
-
-            return null;
-        } catch (GuzzleException $e) {
-            throw new Exception("Errore ottenimento session token: " . $e->getMessage());
-        }
+        return $phpSessionId;
     }
 
     /**
@@ -502,6 +506,11 @@ class ClasseVivaAPI
             return;
         }
 
+        // Conserva esclusivamente i metadati del token REST: scarta campi
+        // del precedente ponte web e qualsiasi dato non necessario.
+        $payload = array_intersect_key($payload, array_flip([
+            'token', 'user_id', 'ident', 'created', 'expire', 'expires_in', 'release'
+        ]));
         $this->tokenMeta = $payload;
         $this->token = $payload['token'];
         $this->userId = $payload['user_id'] ?? $this->userId;
@@ -513,48 +522,15 @@ class ClasseVivaAPI
             return;
         }
         $this->setTokenPayload($payload);
-        // Se nel payload è presente un PHPSESSID già valido, conservalo
-        if (!empty($payload['php_session_id'])) {
-            $this->phpSessionId = $payload['php_session_id'];
-            $this->storedPhpSessionId = $payload['php_session_id'];
-        }
+        // Eventuali PHPSESSID presenti in vecchie sessioni vengono ignorati:
+        // da oggi l'integrazione usa esclusivamente il token REST.
     }
 
 
-    /**
-     * Garantisce che esista un PHPSESSID valido.
-     * Usa la sessione web corrente se valida; in caso contrario la rigenera
-     * dal token REST senza conservare o riutilizzare le credenziali.
-     */
+    /** Stub interno per il precedente flusso PHPSESSID. */
     private function ensurePhpSession(): void
     {
-        if (!empty($this->phpSessionId)) {
-            if ($this->pingWebSession(true)) {
-                return;
-            }
-
-            $this->phpSessionId = null;
-            $this->storedPhpSessionId = null;
-            unset($this->tokenMeta['php_session_id']);
-            if (session_status() === PHP_SESSION_ACTIVE) {
-                $store = new ClasseVivaSessionStore($_SESSION);
-                $store->clearPhpSessionId();
-            }
-        }
-
-        if (!empty($this->storedPhpSessionId)) {
-            $this->phpSessionId = $this->storedPhpSessionId;
-            return;
-        }
-
-        if (!empty($this->token) && $this->getPhpSessionToken()) {
-            return;
-        }
-
-        throw new Exception(
-            "Sessione web ClasseViva non disponibile. " .
-            "Rigenera il token ClasseViva dalla finestra di autenticazione."
-        );
+        throw new Exception(self::UNSUPPORTED_WEB_SESSION_MESSAGE);
     }
 
     /**
@@ -563,6 +539,8 @@ class ClasseVivaAPI
      */
     public function validateToken(bool $throwOnFailure = false, bool $pingSession = false): bool
     {
+        // $pingSession resta nella firma per compatibilità; è intenzionalmente
+        // ignorato perché non esiste più una sessione web da mantenere viva.
         if (empty($this->token)) {
             if ($throwOnFailure) {
                 throw new Exception("Token ClasseViva mancante o incompleto");
@@ -588,9 +566,8 @@ class ClasseVivaAPI
             if (!$isValid && $throwOnFailure) {
                 throw new Exception("Token ClasseViva non valido o scaduto");
             }
-            if ($isValid && $pingSession) {
-                $this->pingWebSession();
-            }
+            // $pingSession è mantenuto solo per compatibilità con i chiamanti
+            // legacy; il controllo REST non apre più sessioni PHP del portale.
             return $isValid;
         } catch (GuzzleException $e) {
             if ($throwOnFailure) {
@@ -600,51 +577,10 @@ class ClasseVivaAPI
         }
     }
 
-    /**
-     * Esegue un ping leggero alla sessione web (PHPSESSID) per mantenerla viva.
-     */
+    /** Stub compatibile per il precedente ping della sessione web. */
     public function pingWebSession(bool $force = false): bool
     {
-        if (!$force && session_status() === PHP_SESSION_ACTIVE) {
-            $lastPing = $_SESSION['cv_web_ping_at'] ?? 0;
-            if (is_numeric($lastPing) && (time() - (int)$lastPing) < 300) {
-                return true;
-            }
-        }
-
-        if (empty($this->phpSessionId) && !empty($this->storedPhpSessionId)) {
-            $this->phpSessionId = $this->storedPhpSessionId;
-        }
-
-        if (empty($this->phpSessionId)) {
-            return false;
-        }
-
-        try {
-            $response = $this->client->get('https://web.spaggiari.eu/cvv/app/default/regvoti.php', [
-                'headers' => [
-                    'Cookie' => 'PHPSESSID=' . $this->phpSessionId,
-                    'User-Agent' => 'Mozilla/5.0'
-                ],
-                'timeout' => 8,
-                'allow_redirects' => false,
-                'http_errors' => false,
-            ]);
-
-            $statusCode = $response->getStatusCode();
-            $location = strtolower($response->getHeaderLine('Location'));
-            $redirectsToLogin = str_contains($location, '/auth-') || str_contains($location, 'login');
-            if ($statusCode >= 200 && $statusCode < 400 && !$redirectsToLogin) {
-                if (session_status() === PHP_SESSION_ACTIVE) {
-                    $_SESSION['cv_web_ping_at'] = time();
-                }
-                return true;
-            }
-        } catch (GuzzleException $e) {
-            // Best effort: non bloccare il flusso
-        }
-
-        return false;
+        throw new Exception(self::UNSUPPORTED_WEB_SESSION_MESSAGE);
     }
 
     private function persistTokenPayloadToPhpSession(): void
@@ -1073,11 +1009,11 @@ class ClasseVivaAPI
         return -1;
     }
 
-        public function publishGrade(array $gradeData): array
+    public function publishGrade(array $gradeData): array
     {
-        // Fai SEMPRE login web fresco per ogni operazione (come richiesto da ClasseViva)
-        $this->ensureAuthenticated();
-        $this->ensurePhpSession();
+        // Stub intenzionale: la pubblicazione sul registro richiede ancora
+        // l'interfaccia web/PHPSESSID, non disponibile tramite REST.
+        throw new Exception(self::UNSUPPORTED_WEB_SESSION_MESSAGE);
 
         if (empty($gradeData['date'])) {
             if (!empty($gradeData['data_valutazione'])) {
@@ -1311,17 +1247,10 @@ class ClasseVivaAPI
     }
 
 
-    /**
-     * Compatibilità interna: genera PHPSESSID dal token REST.
-     *
-     * @return void
-     * @throws Exception Se login fallisce
-     */
+    /** Stub interno per il precedente login web. */
     private function authenticateWeb(): void
     {
-        if (!$this->getPhpSessionToken()) {
-            throw new Exception("PHPSESSID non trovato nella risposta ClasseViva");
-        }
+        throw new Exception(self::UNSUPPORTED_WEB_SESSION_MESSAGE);
     }
 
     /**
@@ -1341,9 +1270,8 @@ class ClasseVivaAPI
      */
     public function publishAnnotationWeb(array $annotationData): array
     {
-        // Usa il PHPSESSID salvato nel token (non più credenziali)
-        $this->ensureAuthenticated();
-        $this->ensurePhpSession();
+        // Stub intenzionale: questa variante usa l'interfaccia web/PHPSESSID.
+        throw new Exception(self::UNSUPPORTED_WEB_SESSION_MESSAGE);
 
         // Valida dati obbligatori
         $required = ["student_id", "text", "date"];
@@ -1435,10 +1363,9 @@ class ClasseVivaAPI
      */
     public function getStudentGrades(string $studentId, string $classId, string $subjectId, ?string $gradeDate = null): array
     {
-
-        //$this->loadTemporaryTokenFromConstants();
-        $this->ensureAuthenticated();
-        $this->ensurePhpSession();
+        // Stub intenzionale: il registro voti è esposto solo dall'interfaccia
+        // web e non esiste un endpoint REST docente equivalente verificato.
+        throw new Exception(self::UNSUPPORTED_WEB_SESSION_MESSAGE);
 
 
         try {
@@ -1617,9 +1544,8 @@ class ClasseVivaAPI
      */
     public function deleteGrade(array $gradeData): array
     {
-        // Usa il PHPSESSID salvato nel token (non più credenziali)
-        $this->ensureAuthenticated();
-        $this->ensurePhpSession();
+        // Stub intenzionale: la cancellazione richiede PHPSESSID.
+        throw new Exception(self::UNSUPPORTED_WEB_SESSION_MESSAGE);
 
         // Valida dati obbligatori
         $required = ['evento_id', 'student_id', 'class_id', 'subject_id'];
@@ -1689,9 +1615,8 @@ class ClasseVivaAPI
      */
     public function deleteAnnotation(array $annotationData): array
     {
-        // Usa il PHPSESSID salvato nel token
-        $this->ensureAuthenticated();
-        $this->ensurePhpSession();
+        // Stub intenzionale: la cancellazione richiede PHPSESSID.
+        throw new Exception(self::UNSUPPORTED_WEB_SESSION_MESSAGE);
 
         // Valida dati obbligatori
         $required = ['evento_id', 'student_id', 'date'];
@@ -1765,8 +1690,8 @@ class ClasseVivaAPI
      */
     public function getStudentAnnotationsWeb(string $studentId, string $classId, ?string $date = null): array
     {
-        $this->ensureAuthenticated();
-        $this->ensurePhpSession();
+        // Stub intenzionale: il recupero HTML richiede PHPSESSID.
+        throw new Exception(self::UNSUPPORTED_WEB_SESSION_MESSAGE);
 
         try {
             // La pagina gioprof_note.php mostra tutte le note della classe

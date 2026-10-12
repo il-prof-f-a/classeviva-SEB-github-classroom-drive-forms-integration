@@ -51,14 +51,12 @@ try {
     }
 
     $cvApi = new ClasseVivaAPI($config);
-    $cvApi->authenticate($username, $password);
+    if (!$cvApi->authenticate($username, $password)) {
+        throw new Exception('Autenticazione REST ClasseViva non riuscita.');
+    }
     unset($_POST['token_username'], $_POST['token_password']);
     $username = null;
     $password = null;
-
-    if (!$cvApi->getPhpSessionToken()) {
-        throw new Exception('Impossibile generare la sessione web ClasseViva dal token.');
-    }
     $tokenPayload = $cvApi->getTokenPayload();
     if (!$tokenPayload) {
         throw new Exception('Impossibile ottenere il token ClasseViva.');

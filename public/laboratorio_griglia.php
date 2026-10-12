@@ -323,7 +323,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
                     $testo .= "\\nNote: " . implode('; ', array_slice($commenti, 0, 3));
                 }
 
-                // Tipo e colore coerente con prevalenza di +/-, usato da publishAnnotationWeb
+                // Tipo e colore coerente con prevalenza di +/- per l'endpoint REST.
                 $tipoAnnotazione = 'neutral';
                 if ($positivi > $negativi) $tipoAnnotazione = 'positive';
                 if ($negativi > $positivi) $tipoAnnotazione = 'negative';
@@ -341,21 +341,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
                     'visible_to_student' => true
                 ];
 
-                $idAnnot = null;
                 try {
-                    // Preferisci la via web se disponibile (più permissiva)
-                    $result = $cvAPI->publishAnnotationWeb($annotationData);
+                    $result = $cvAPI->publishAnnotation($annotationData);
                     $idAnnot = $result['id'] ?? ($result['annotation_id'] ?? null);
-                } catch (Exception $eWeb) {
-                    // Fallback REST
-                    try {
-                        $result = $cvAPI->publishAnnotation($annotationData);
-                        $idAnnot = $result['id'] ?? ($result['annotation_id'] ?? null);
-                    } catch (Exception $eRest) {
-                        // Se falliscono entrambe, logga ma prosegui
-                        error_log("Annotazione non pubblicata su ClasseViva per studente {$studenteId}: WEB=" . $eWeb->getMessage() . " REST=" . $eRest->getMessage());
-                        $idAnnot = null;
-                    }
+                } catch (Exception $eRest) {
+                    $errors[] = "Studente {$studenteId}: " . $eRest->getMessage();
+                    error_log("Annotazione non pubblicata su ClasseViva per studente {$studenteId}: " . $eRest->getMessage());
+                    continue;
                 }
 
                 foreach ($evidenze as $ev) {
@@ -393,7 +385,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pubbl
             }
         }
 
-        echo json_encode(['ok' => true, 'registrate' => $registrate, 'errors' => []]);
+        echo json_encode(['ok' => $errors === [], 'registrate' => $registrate, 'errors' => $errors]);
         exit;
 
     } catch (Exception $e) {

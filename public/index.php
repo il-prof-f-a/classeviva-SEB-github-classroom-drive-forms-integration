@@ -315,7 +315,7 @@ function sortLink(string $field, string $label, string $currentField, string $cu
     if ($isDebugUser) {
         $headerActions .= '<a href="status.php" class="btn btn-outline-secondary btn-sm"><i class="bi bi-speedometer2"></i> Stato Sistema</a>';
     }
-    $headerActions .= '<a href="guida_portale.php" class="btn btn-outline-info btn-sm" target="_blank"><i class="bi bi-book"></i> Guida</a>'
+    $headerActions .= '<a href="../guide/readme.md" class="btn btn-outline-info btn-sm" target="_blank"><i class="bi bi-book"></i> Guida</a>'
         . '<a href="uda_create.php" class="btn btn-primary btn-sm"><i class="bi bi-plus-circle"></i> Crea Nuova UDA</a>'
         . '<a href="logout.php" class="btn btn-outline-danger btn-sm"><i class="bi bi-box-arrow-right"></i> Logout</a>';
     include __DIR__ . '/partials/app_header.php';

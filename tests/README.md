@@ -24,7 +24,7 @@ quando le relative DLL sono presenti nella directory delle estensioni. Nel profi
 full l'assenza di `ZipArchive`, Git o Node non viene considerata un successo: i test
 che dipendono da tali prerequisiti devono essere realmente eseguiti.
 
-Copre il contratto di pubblicabilità: file di distribuzione, asset applicativi, lint PHP, include letterali, configurazione `.env`, endpoint diagnostici, URL specifici dello staging, autoload Composer e regole Git. La suite verifica anche il ciclo ClasseViva session-only: scambio token REST verso `PHPSESSID`, assenza di credenziali e token nel database, timeout, rinnovo e logout.
+Copre il contratto di pubblicabilità: file di distribuzione, asset applicativi, lint PHP, include letterali, configurazione `.env`, endpoint diagnostici, URL specifici dello staging, autoload Composer e regole Git. La suite verifica anche il ciclo ClasseViva REST-only: assenza di credenziali e PHPSESSID nel payload, timeout, rinnovo, logout e stub espliciti delle operazioni web non più compatibili.
 
 Il test di integrazione MySQL viene eseguito separatamente tramite Docker Compose e `scripts/setup_database.php --validate`.
 
