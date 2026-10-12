@@ -10,19 +10,19 @@ Questa pagina è l’edizione **Markdown compatibile con GitHub**: GitHub visual
 
 ## Apri la guida
 
-[Vai all’indice HTML navigabile](index.html)
+[Vai all’indice Markdown completo](index.md)
 
-Apri l’indice HTML dal collegamento qui sopra quando la cartella è servita da un web server o da GitHub Pages: i link relativi funzionano anche se il portale usa un host o una porta diversi.
+Per il rendering grafico completo è disponibile anche la [versione HTML](index.html), da aprire quando la cartella è servita da un web server o da GitHub Pages.
 
 ## Percorso consigliato
 
-1. [Home e ricerca dell’UDA](01-home.html)
-2. [Scheda UDA, modifica e gruppi](02-uda.html)
-3. [Materiali e obiettivi](03-materiali-obiettivi.html)
-4. [Domande](04-domande.html)
-5. [Test e attività](05-test.html)
-6. [Valutazioni e registro](06-valutazioni.html)
-7. [Esportazione](07-esportazione.html)
+1. [Home e ricerca dell’UDA](01-home.md)
+2. [Scheda UDA, modifica e gruppi](02-uda.md)
+3. [Materiali e obiettivi](03-materiali-obiettivi.md)
+4. [Domande](04-domande.md)
+5. [Test e attività](05-test.md)
+6. [Valutazioni e registro](06-valutazioni.md)
+7. [Esportazione](07-esportazione.md)
 
 Le schermate e gli esempi riportano solo il percorso dell’UDA indicata. I conteggi descrivono lo stato osservato al momento della ricognizione e possono cambiare.
 
@@ -34,7 +34,7 @@ Le schermate e gli esempi riportano solo il percorso dell’UDA indicata. I cont
 
 Filtri e tabella permettono di individuare l’UDA. Le azioni sulla riga aprono la scheda, i materiali, le domande, i test e le valutazioni collegate.
 
-[Apri il capitolo HTML](01-home.html)
+[Apri il capitolo Markdown](01-home.md) · [versione HTML](01-home.html)
 
 ### 2. Scheda UDA e gruppi
 
@@ -42,7 +42,7 @@ Filtri e tabella permettono di individuare l’UDA. Le azioni sulla riga aprono 
 
 La scheda raccoglie dati generali, collegamenti e assegnazioni ai gruppi. La guida distingue la modifica dei metadati dalla gestione dei destinatari.
 
-[Apri il capitolo HTML](02-uda.html)
+[Apri il capitolo Markdown](02-uda.md) · [versione HTML](02-uda.html)
 
 ### 3. Materiali e obiettivi
 
@@ -50,7 +50,7 @@ La scheda raccoglie dati generali, collegamenti e assegnazioni ai gruppi. La gui
 
 Il capitolo mostra come filtrare i materiali sull’UDA e come cercare e associare gli obiettivi senza perdere il contesto di lavoro.
 
-[Apri il capitolo HTML](03-materiali-obiettivi.html)
+[Apri il capitolo Markdown](03-materiali-obiettivi.md) · [versione HTML](03-materiali-obiettivi.html)
 
 ### 4. Domande
 
@@ -58,7 +58,7 @@ Il capitolo mostra come filtrare i materiali sull’UDA e come cercare e associa
 
 Sono descritti archivio, inserimento, modifica, importazione strutturata e generazione assistita delle domande.
 
-[Apri il capitolo HTML](04-domande.html)
+[Apri il capitolo Markdown](04-domande.md) · [versione HTML](04-domande.html)
 
 ### 5. Test e attività
 
@@ -66,7 +66,7 @@ Sono descritti archivio, inserimento, modifica, importazione strutturata e gener
 
 Il capitolo illustra la gestione delle prove e il collegamento di attività già esistenti all’UDA.
 
-[Apri il capitolo HTML](05-test.html)
+[Apri il capitolo Markdown](05-test.md) · [versione HTML](05-test.html)
 
 ### 6. Valutazioni e registro
 
@@ -74,7 +74,7 @@ Il capitolo illustra la gestione delle prove e il collegamento di attività già
 
 La guida riunisce griglia di laboratorio, rubrica orale, inserimento dei voti e pubblicazione selettiva sul registro.
 
-[Apri il capitolo HTML](06-valutazioni.html)
+[Apri il capitolo Markdown](06-valutazioni.md) · [versione HTML](06-valutazioni.html)
 
 ### 7. Esportazione
 
@@ -82,4 +82,4 @@ La guida riunisce griglia di laboratorio, rubrica orale, inserimento dei voti e 
 
 L’ultimo capitolo descrive la scelta delle sezioni e la generazione del pacchetto esportabile dell’UDA.
 
-[Apri il capitolo HTML](07-esportazione.html)
+[Apri il capitolo Markdown](07-esportazione.md) · [versione HTML](07-esportazione.html)

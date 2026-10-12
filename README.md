@@ -17,9 +17,10 @@ La guida documenta il percorso dell’UDA **UML** per i gruppi **4L** e **4L Inf
 ![Flusso UDA Smart dal contenuto al voto](public/assets/img/uda-system.webp)
 
 - [Leggi la guida in formato Markdown, visualizzabile direttamente su GitHub](guide/readme.md)
-- [Apri la versione HTML navigabile](guide/index.html) — il rendering completo di HTML e CSS avviene quando la cartella è servita da un web server o da GitHub Pages.
+- [Apri l’indice completo in Markdown](guide/index.md)
+- [Apri la versione HTML navigabile](guide/index.html) — mantenuta come fallback per il rendering completo tramite web server o GitHub Pages.
 
-GitHub non esegue i file HTML nella vista del repository: per questo la cartella `guide/` mantiene sia l’edizione HTML/CSS interattiva sia un README Markdown con i contenuti principali e le immagini, leggibile direttamente online.
+GitHub non esegue i file HTML nella vista del repository: per questo la cartella `guide/` contiene ora l’edizione Markdown completa, leggibile direttamente online, oltre ai file HTML/CSS mantenuti come fallback interattivo.
 
 ## Stato del progetto e documenti legali
 
