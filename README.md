@@ -18,7 +18,7 @@ La guida documenta il percorso dell’UDA **UML** per i gruppi **4L** e **4L Inf
 
 - [Leggi la guida in formato Markdown, visualizzabile direttamente su GitHub](guide/readme.md)
 - [Apri l’indice completo in Markdown](guide/index.md)
-- [Apri la versione HTML navigabile](guide/index.html) — mantenuta come fallback per il rendering completo tramite web server o GitHub Pages.
+- [Apri la guida utente in Markdown](guide/readme.md) — versione principale, visualizzata direttamente da GitHub.
 
 GitHub non esegue i file HTML nella vista del repository: per questo la cartella `guide/` contiene ora l’edizione Markdown completa, leggibile direttamente online, oltre ai file HTML/CSS mantenuti come fallback interattivo.
 

@@ -12,7 +12,7 @@ Questa pagina è l’edizione **Markdown compatibile con GitHub**: GitHub visual
 
 [Vai all’indice Markdown completo](index.md)
 
-Per il rendering grafico completo è disponibile anche la [versione HTML](index.html), da aprire quando la cartella è servita da un web server o da GitHub Pages.
+La guida è mantenuta esclusivamente in Markdown, così GitHub può visualizzarla direttamente con testo formattato, tabelle, collegamenti e immagini.
 
 ## Percorso consigliato
 
@@ -51,7 +51,7 @@ Le immagini pubblicate sono solo quelle che non mostrano account, credenziali o 
 
 Filtri e tabella permettono di individuare l’UDA. Le azioni sulla riga aprono la scheda, i materiali, le domande, i test e le valutazioni collegate.
 
-[Apri il capitolo Markdown](01-home.md) · [versione HTML](01-home.html)
+[Apri il capitolo Markdown](01-home.md)
 
 ### 2. Scheda UDA e gruppi
 
@@ -59,7 +59,7 @@ Filtri e tabella permettono di individuare l’UDA. Le azioni sulla riga aprono 
 
 La scheda raccoglie dati generali, collegamenti e assegnazioni ai gruppi. La guida distingue la modifica dei metadati dalla gestione dei destinatari.
 
-[Apri il capitolo Markdown](02-uda.md) · [versione HTML](02-uda.html)
+[Apri il capitolo Markdown](02-uda.md)
 
 ### 3. Materiali e obiettivi
 
@@ -67,7 +67,7 @@ La scheda raccoglie dati generali, collegamenti e assegnazioni ai gruppi. La gui
 
 Il capitolo mostra come filtrare i materiali sull’UDA e come cercare e associare gli obiettivi senza perdere il contesto di lavoro.
 
-[Apri il capitolo Markdown](03-materiali-obiettivi.md) · [versione HTML](03-materiali-obiettivi.html)
+[Apri il capitolo Markdown](03-materiali-obiettivi.md)
 
 ### 4. Domande
 
@@ -75,7 +75,7 @@ Il capitolo mostra come filtrare i materiali sull’UDA e come cercare e associa
 
 Sono descritti archivio, inserimento, modifica, importazione strutturata e generazione assistita delle domande.
 
-[Apri il capitolo Markdown](04-domande.md) · [versione HTML](04-domande.html)
+[Apri il capitolo Markdown](04-domande.md)
 
 ### 5. Test e attività
 
@@ -83,7 +83,7 @@ Sono descritti archivio, inserimento, modifica, importazione strutturata e gener
 
 Il capitolo illustra la gestione delle prove e il collegamento di attività già esistenti all’UDA.
 
-[Apri il capitolo Markdown](05-test.md) · [versione HTML](05-test.html)
+[Apri il capitolo Markdown](05-test.md)
 
 ### 6. Valutazioni e registro
 
@@ -91,7 +91,7 @@ Il capitolo illustra la gestione delle prove e il collegamento di attività già
 
 La guida riunisce griglia di laboratorio, rubrica orale, inserimento dei voti e pubblicazione selettiva sul registro.
 
-[Apri il capitolo Markdown](06-valutazioni.md) · [versione HTML](06-valutazioni.html)
+[Apri il capitolo Markdown](06-valutazioni.md)
 
 ### 7. Esportazione
 
@@ -99,7 +99,7 @@ La guida riunisce griglia di laboratorio, rubrica orale, inserimento dei voti e 
 
 L’ultimo capitolo descrive la scelta delle sezioni e la generazione del pacchetto esportabile dell’UDA.
 
-[Apri il capitolo Markdown](07-esportazione.md) · [versione HTML](07-esportazione.html)
+[Apri il capitolo Markdown](07-esportazione.md)
 
 ### 8. Integrazioni e credenziali
 
