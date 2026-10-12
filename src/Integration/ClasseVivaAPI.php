@@ -49,14 +49,19 @@ class ClasseVivaAPI
 
         $this->applyStoredToken($this->config['token'] ?? null);
 
+        $headers = [
+            'Content-Type' => 'application/json',
+            'User-Agent' => 'CVVS/std/4.2.3 Android/12',
+        ];
+        $apiKey = trim((string)($this->config['api_key'] ?? ''));
+        if ($apiKey !== '') {
+            $headers['Z-Dev-Apikey'] = $apiKey;
+        }
+
         $this->client = $client ?? new Client([
             'base_uri' => $this->baseUrl,
             'timeout' => $this->config['timeout'] ?? 30,
-            'headers' => [
-                'Content-Type' => 'application/json',
-                'User-Agent' => 'CVVS/std/4.2.3 Android/12',
-                'Z-Dev-Apikey' => 'XXXXXXXXX'
-            ]
+            'headers' => $headers,
         ]);
 
 		//$this->loadTemporaryToken();

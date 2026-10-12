@@ -208,6 +208,7 @@ function buildConfigFromEnv(): array {
         'classeviva' => [
             'enabled' => filter_var(env('CLASSEVIVA_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
             'base_url' => env('CLASSEVIVA_BASE_URL', ''),
+            'api_key' => env('CLASSEVIVA_API_KEY', ''),
             'timeout' => intval(env('CLASSEVIVA_TIMEOUT', 30)),
             'max_retries' => intval(env('CLASSEVIVA_MAX_RETRIES', 3)),
             'retry_delay' => intval(env('CLASSEVIVA_RETRY_DELAY', 5)),
