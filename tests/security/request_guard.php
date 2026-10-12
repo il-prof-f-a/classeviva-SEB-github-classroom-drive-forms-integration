@@ -18,7 +18,7 @@ $throws = static function (callable $callable, string $class): void {
     throw new RuntimeException('Eccezione attesa non generata');
 };
 
-$session = ['user_id' => 'USR_1', 'user_email' => 'email@email.it'];
+$session = ['user_id' => 'USR_1', 'user_email' => 'teacher@example.test'];
 $token = Csrf::token($session);
 Csrf::assertValid($session, $token);
 $throws(fn() => Csrf::assertValid($session, 'wrong'), RuntimeException::class);
@@ -65,7 +65,7 @@ foreach ([
         throw new RuntimeException('Bridge HTML attivato su risposta non HTML/download');
     }
 }
-$throws(fn() => Authorization::assertAdmin($session, ['email@email.it']), RuntimeException::class);
+$throws(fn() => Authorization::assertAdmin($session, ['admin@example.test']), RuntimeException::class);
 $throws(fn() => Authorization::assertAuthenticated([]), RuntimeException::class);
-Authorization::assertAdmin(['user_id' => 'USR_2', 'user_email' => 'email@email.it'], ['email@email.it']);
+Authorization::assertAdmin(['user_id' => 'USR_2', 'user_email' => 'admin@example.test'], ['admin@example.test']);
 fwrite(STDOUT, "PASS: guardie CSRF, metodo HTTP e ruolo.\n");

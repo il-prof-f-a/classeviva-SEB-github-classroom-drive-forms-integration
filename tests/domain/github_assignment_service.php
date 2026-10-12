@@ -44,7 +44,7 @@ if (!str_starts_with($teamName, 'esempio-team-2-') || strlen($teamName) > 100) {
 }
 
 // --- resolveStudents ---
-$svc = new GitHubAssignmentService('{cognome}.{nome}@{domain}', 'istituto.it');
+$svc = new GitHubAssignmentService('{cognome}.{nome}@{domain}', 'istituto.test');
 $matrix = [
     ['id_studente' => 'STD_1', 'identities' => [['provider' => 'google_classroom', 'external_user_id' => 'G1']]],
     ['id_studente' => 'STD_2', 'identities' => [['provider' => 'classeviva', 'external_user_id' => 'CV2']]],
@@ -56,7 +56,7 @@ $matrix = [
     ]],
 ];
 $rosters = [
-    'google_classroom' => [['id' => 'G1', 'name' => 'Mario Rossi', 'email' => 'email@email.it'], ['id' => 'G4', 'name' => 'Maria Bianchi', 'email' => 'email@email.it']],
+    'google_classroom' => [['id' => 'G1', 'name' => 'Mario Rossi', 'email' => 'mario.rossi@istituto.test'], ['id' => 'G4', 'name' => 'Maria Bianchi', 'email' => 'maria.bianchi@istituto.test']],
     'classeviva' => [['id' => 'CV2', 'nome' => 'Anna', 'cognome' => 'Bianchi'], ['id' => 'CV4', 'nome' => 'Maria', 'cognome' => 'Bianchi']],
 ];
 $resolved = $svc->resolveStudents($matrix, $rosters);
@@ -64,16 +64,16 @@ $byId = [];
 foreach ($resolved as $r) {
     $byId[$r['id_studente']] = $r;
 }
-if (($byId['STD_1']['email'] ?? '') !== 'email@email.it') {
+if (($byId['STD_1']['email'] ?? '') !== 'mario.rossi@istituto.test') {
     $failures[] = 'GC email errata';
 }
-if (($byId['STD_2']['email'] ?? '') !== 'email@email.it') {
+if (($byId['STD_2']['email'] ?? '') !== 'bianchi.anna@istituto.test') {
     $failures[] = 'CV email errata: ' . ($byId['STD_2']['email'] ?? '(vuota)');
 }
 if (($byId['STD_3']['email'] ?? '') !== '') {
     $failures[] = 'studente non in roster deve avere email vuota';
 }
-if (($byId['STD_4']['email'] ?? '') !== 'email@email.it') {
+if (($byId['STD_4']['email'] ?? '') !== 'bianchi.maria@istituto.test') {
     $failures[] = 'default (ClasseViva prima) errato: ' . ($byId['STD_4']['email'] ?? '(vuota)');
 }
 
@@ -83,7 +83,7 @@ $byIdGoogle = [];
 foreach ($resolvedGoogle as $r) {
     $byIdGoogle[$r['id_studente']] = $r;
 }
-if (($byIdGoogle['STD_4']['email'] ?? '') !== 'email@email.it') {
+if (($byIdGoogle['STD_4']['email'] ?? '') !== 'maria.bianchi@istituto.test') {
     $failures[] = 'lista_preferita google_classroom errata: ' . ($byIdGoogle['STD_4']['email'] ?? '(vuota)');
 }
 
@@ -92,13 +92,13 @@ if (($byIdGoogle['STD_4']['email'] ?? '') !== 'email@email.it') {
 // l'assignment, usando l'identificativo esterno come chiave runtime.
 $resolvedRosterOnly = $svc->resolveStudents([], [
     'google_classroom' => [
-        ['id' => 'G_ONLY_1', 'name' => 'Studente Classroom', 'email' => 'email@email.it'],
+        ['id' => 'G_ONLY_1', 'name' => 'Studente Classroom', 'email' => 'solo@istituto.test'],
     ],
 ], 'google_classroom');
 if (count($resolvedRosterOnly) !== 1
     || ($resolvedRosterOnly[0]['id_studente'] ?? '') !== 'G_ONLY_1'
     || ($resolvedRosterOnly[0]['nome'] ?? '') !== 'Studente Classroom'
-    || ($resolvedRosterOnly[0]['email'] ?? '') !== 'email@email.it') {
+    || ($resolvedRosterOnly[0]['email'] ?? '') !== 'solo@istituto.test') {
     $failures[] = 'gruppo solo Google Classroom senza membership non risolto dal roster';
 }
 

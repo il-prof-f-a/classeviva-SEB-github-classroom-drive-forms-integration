@@ -14,11 +14,11 @@ $failures = [];
 
 $cases = [
     // template, domain, nome, cognome, expected
-    ['{cognome}.{nome}@{domain}', 'franchettisalviani.net', 'Mario', 'Rossi', 'email@email.it'],
-    ['{nome}.{cognome}@{domain}', 'franchettisalviani.net', 'Luca', 'De Rossi', 'email@email.it'],
-    ['', 'franchettisalviani.net', 'Anna', 'Bianchi', 'email@email.it'],
-    ['{cognome}.{nome}@{domain}', 'istituto.it', 'Giò', "D'Angelo", 'email@email.it'],
-    ['{nome}{cognome}@{domain}', 'scuola.edu', 'Jean', 'Martin-Vidal', 'email@email.it'],
+    ['{cognome}.{nome}@{domain}', 'franchettisalviani.test', 'Mario', 'Rossi', 'rossi.mario@franchettisalviani.test'],
+    ['{nome}.{cognome}@{domain}', 'franchettisalviani.test', 'Luca', 'De Rossi', 'luca.derossi@franchettisalviani.test'],
+    ['', 'franchettisalviani.test', 'Anna', 'Bianchi', 'bianchi.anna@franchettisalviani.test'],
+    ['{cognome}.{nome}@{domain}', 'istituto.test', 'Giò', "D'Angelo", 'dangelo.gio@istituto.test'],
+    ['{nome}{cognome}@{domain}', 'scuola.test', 'Jean', 'Martin-Vidal', 'jeanmartinvidal@scuola.test'],
 ];
 
 foreach ($cases as $case) {

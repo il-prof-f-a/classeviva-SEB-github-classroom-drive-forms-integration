@@ -43,8 +43,8 @@ try {
 
     $require(
         LegalDocumentRenderer::firstValidAdminEmail(
-            ' non-valida , email@email.it, email@email.it'
-        ) === 'email@email.it',
+            ' non-valida , admin@example.test, second-admin@example.test'
+        ) === 'admin@example.test',
         'deve scegliere il primo indirizzo valido'
     );
     $require(
@@ -54,18 +54,18 @@ try {
 
     $rendered = $renderer->render(
         'privacy-policy',
-        'non-valida, email@email.it, email@email.it'
+        'non-valida, admin@example.test, second-admin@example.test'
     );
     $require(
-        str_contains($rendered, 'href="mailto:email@email.it"'),
+        str_contains($rendered, 'href="mailto:admin@example.test"'),
         'il link deve usare il primo indirizzo valido'
     );
     $require(
-        substr_count($rendered, 'email@email.it') === 2,
+        substr_count($rendered, 'admin@example.test') === 2,
         'l’indirizzo deve comparire soltanto nel link e nel testo'
     );
     $require(
-        !str_contains($rendered, 'email@email.it'),
+        !str_contains($rendered, 'second-admin@example.test'),
         'gli indirizzi successivi della allowlist non devono essere pubblicati'
     );
 
@@ -270,7 +270,7 @@ if (is_file($endpointPath)) {
     $endpointResult = $runEndpoint(
         $root,
         'privacy-policy',
-        'non-valida,email@email.it,email@email.it'
+        'non-valida,admin@example.test,second-admin@example.test'
     );
     $require($endpointResult['exit'] === 0, 'l’endpoint valido deve terminare senza errori');
     $require(is_array($endpointResult['result']), 'l’endpoint valido deve restituire HTML acquisibile');
@@ -281,11 +281,11 @@ if (is_file($endpointPath)) {
             'l’endpoint pubblico non deve avviare una sessione'
         );
         $require(
-            str_contains($endpointResult['result']['body'], 'mailto:email@email.it'),
+            str_contains($endpointResult['result']['body'], 'mailto:admin@example.test'),
             'l’endpoint deve usare il primo ADMIN_EMAILS valido'
         );
         $require(
-            !str_contains($endpointResult['result']['body'], 'email@email.it'),
+            !str_contains($endpointResult['result']['body'], 'second-admin@example.test'),
             'l’endpoint non deve pubblicare gli altri amministratori'
         );
     }
@@ -329,8 +329,8 @@ $runView = static function (string $applicationRoot, string $viewFile): array {
     $runnerPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'uda_legal_view_' . bin2hex(random_bytes(6)) . '.php';
     $viewPath = $applicationRoot . '/public/' . $viewFile;
     $runner = '<?php declare(strict_types=1); '
-        . ' putenv(\'ADMIN_EMAILS=email@email.it\');'
-        . ' $_ENV[\'ADMIN_EMAILS\'] = \'email@email.it\';'
+        . ' putenv(\'ADMIN_EMAILS=admin@example.test\');'
+        . ' $_ENV[\'ADMIN_EMAILS\'] = \'admin@example.test\';'
         . ' $_SERVER[\'SCRIPT_NAME\'] = ' . var_export('/public/' . $viewFile, true) . ';'
         . ' ob_start(); require ' . var_export($viewPath, true) . ';'
         . ' $body = ob_get_clean();'
@@ -373,7 +373,7 @@ foreach (
         "{$viewFile}: il viewer non deve avviare sessioni"
     );
     $require(
-        str_contains((string) $viewResult['result']['body'], 'mailto:email@email.it'),
+        str_contains((string) $viewResult['result']['body'], 'mailto:admin@example.test'),
         "{$viewFile}: il viewer deve risolvere il contatto dinamico"
     );
     $require(

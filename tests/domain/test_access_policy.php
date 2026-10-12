@@ -13,15 +13,15 @@ require_once $file;
 $config = [
     'security' => [
         'test_access' => [
-            'allowed_emails' => 'email@email.it, email@email.it',
+            'allowed_emails' => 'teacher@example.test, admin@example.test',
         ],
     ],
 ];
 
 $cases = [
-    ['email@email.it', true],
-    ['email@email.it', true],
-    ['email@email.it', false],
+    ['teacher@example.test', true],
+    ['ADMIN@EXAMPLE.TEST', true],
+    ['other@example.test', false],
     ['', false],
 ];
 foreach ($cases as [$email, $expected]) {
@@ -39,7 +39,7 @@ $failClosedConfig = [
         ],
     ],
 ];
-if (\App\Core\TestAccessPolicy::isAllowed('email@email.it', $failClosedConfig)) {
+if (\App\Core\TestAccessPolicy::isAllowed('teacher@example.test', $failClosedConfig)) {
     fwrite(STDERR, "FAIL: allowlist vuota non deve autorizzare account\n");
     exit(1);
 }
@@ -47,11 +47,11 @@ if (\App\Core\TestAccessPolicy::isAllowed('email@email.it', $failClosedConfig)) 
 $invalidEntriesConfig = [
     'security' => [
         'test_access' => [
-            'allowed_emails' => 'not-an-email, email@email.it, , not-an-email',
+            'allowed_emails' => 'not-an-email, ADMIN@EXAMPLE.TEST, , not-an-email',
         ],
     ],
 ];
-if (!\App\Core\TestAccessPolicy::isAllowed('email@email.it', $invalidEntriesConfig)) {
+if (!\App\Core\TestAccessPolicy::isAllowed('admin@example.test', $invalidEntriesConfig)) {
     fwrite(STDERR, "FAIL: normalizzazione allowlist inattesa\n");
     exit(1);
 }
