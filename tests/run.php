@@ -193,6 +193,16 @@ if ($integrationHintsExitCode === 0) {
     echo "FAIL: riepiloghi integrazioni sicuri con configurazioni vuote\n";
 }
 
+$backupRetentionCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/database/backup_retention.php');
+exec($backupRetentionCommand . ' 2>&1', $backupRetentionOutput, $backupRetentionExitCode);
+if ($backupRetentionExitCode === 0) {
+    $passes++;
+    echo "PASS: retention backup a 30 giorni\n";
+} else {
+    $failures[] = 'Retention backup: ' . implode(' | ', $backupRetentionOutput);
+    echo "FAIL: retention backup a 30 giorni\n";
+}
+
 if (filter_var(getenv('TEST_MYSQL') ?: false, FILTER_VALIDATE_BOOLEAN)) {
     $databaseCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/database_mysql.php');
     exec($databaseCommand . ' 2>&1', $databaseOutput, $databaseExitCode);

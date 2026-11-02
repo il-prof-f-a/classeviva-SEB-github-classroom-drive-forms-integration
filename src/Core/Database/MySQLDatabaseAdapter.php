@@ -384,6 +384,15 @@ class MySQLDatabaseAdapter implements DatabaseAdapterInterface
             throw new Exception("Impossibile scrivere file di backup: {$backupFile}");
         }
 
+        try {
+            BackupRetention::prune(
+                $backupDir,
+                (int)($this->config['database']['backup']['retention_days'] ?? 30)
+            );
+        } catch (\Throwable $e) {
+            error_log('Pulizia retention backup MySQL fallita: ' . $e->getMessage());
+        }
+
         return $backupFile;
     }
 

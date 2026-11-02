@@ -378,6 +378,15 @@ class SQLiteDatabaseAdapter implements DatabaseAdapterInterface
             throw new Exception("Impossibile creare backup");
         }
 
+        try {
+            BackupRetention::prune(
+                $backupDir,
+                (int)($this->config['database']['backup']['retention_days'] ?? 30)
+            );
+        } catch (\Throwable $e) {
+            error_log('Pulizia retention backup SQLite fallita: ' . $e->getMessage());
+        }
+
         return $backupFile;
     }
 
