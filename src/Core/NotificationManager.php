@@ -124,6 +124,48 @@ class NotificationManager
     }
 
     /**
+     * Invia una o più valutazioni allo studente con copia al docente.
+     * Le email dei destinatari devono essere già state risolte dal chiamante;
+     * questo metodo non usa mai il destinatario di test come fallback.
+     *
+     * @param array<string,mixed> $student
+     * @param list<array<string,mixed>> $grades
+     */
+    public function sendGradesEmail(
+        string $to,
+        string $cc,
+        string $activityTitle,
+        array $student,
+        array $grades
+    ): bool {
+        if (!($this->config['notifications']['email']['enabled'] ?? false)) {
+            return false;
+        }
+        if (filter_var($to, FILTER_VALIDATE_EMAIL) === false
+            || filter_var($cc, FILTER_VALIDATE_EMAIL) === false) {
+            $this->logger->warning('Grade email skipped because recipient or teacher CC is invalid');
+            return false;
+        }
+
+        try {
+            $mail = $this->createMailer();
+            $message = GradeEmailMessageBuilder::build($activityTitle, $student, $grades);
+            $mail->addAddress($to);
+            if (strcasecmp($to, $cc) !== 0) {
+                $mail->addCC($cc);
+            }
+            $mail->Subject = $message['subject'];
+            $mail->Body = $message['html'];
+            $mail->AltBody = $message['text'];
+
+            return $mail->send();
+        } catch (PHPMailerException $e) {
+            $this->logger->error('Failed to send grade email', ['error' => $e->getMessage()]);
+            return false;
+        }
+    }
+
+    /**
      * Crea istanza PHPMailer configurata
      */
     private function createMailer(): PHPMailer

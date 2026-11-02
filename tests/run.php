@@ -203,6 +203,26 @@ if ($backupRetentionExitCode === 0) {
     echo "FAIL: retention backup a 30 giorni\n";
 }
 
+$gradeEmailTests = [
+    ['path' => __DIR__ . '/domain/grade_email_message_builder.php', 'label' => 'builder email valutazioni'],
+    ['path' => __DIR__ . '/domain/grade_email_recipient_resolver.php', 'label' => 'resolver destinatari email valutazioni'],
+    ['path' => __DIR__ . '/public/grade_email_smtp.php', 'label' => 'invio SMTP valutazioni con CC docente'],
+    ['path' => __DIR__ . '/public/uda_grades_email_publication.php', 'label' => 'pubblicazione email alternativa nella pagina voti'],
+];
+foreach ($gradeEmailTests as $gradeEmailTest) {
+    $gradeEmailCommand = $phpCommand . ' ' . escapeshellarg($gradeEmailTest['path']);
+    $gradeEmailOutput = [];
+    $gradeEmailExitCode = 0;
+    exec($gradeEmailCommand . ' 2>&1', $gradeEmailOutput, $gradeEmailExitCode);
+    if ($gradeEmailExitCode === 0) {
+        $passes++;
+        echo "PASS: {$gradeEmailTest['label']}\n";
+    } else {
+        $failures[] = $gradeEmailTest['label'] . ': ' . implode(' | ', $gradeEmailOutput);
+        echo "FAIL: {$gradeEmailTest['label']}\n";
+    }
+}
+
 if (filter_var(getenv('TEST_MYSQL') ?: false, FILTER_VALIDATE_BOOLEAN)) {
     $databaseCommand = $phpCommand . ' ' . escapeshellarg(__DIR__ . '/database_mysql.php');
     exec($databaseCommand . ' 2>&1', $databaseOutput, $databaseExitCode);

@@ -5,7 +5,10 @@ require_once __DIR__ . '/../bootstrap.php';
 
 use App\Core\UDAManager;
 use App\Core\GradeImportStudentService;
+use App\Core\GradeEmailRecipientResolver;
+use App\Core\NotificationManager;
 use App\Core\RuntimeStudentNameService;
+use App\Core\Security\Csrf;
 use App\Integration\KahootAPI;
 use App\Integration\ClasseVivaAPI;
 use App\Core\Database\DatabaseFactory;
@@ -29,6 +32,17 @@ if ($cvEnabled && $cvHasToken && !$cvTokenValid) {
         ? "Token ClasseViva non valido: " . $cvTokenError
         : "Token ClasseViva non valido. Rigeneralo dalla pagina di configurazione integrazioni.";
 }
+
+$csrfToken = Csrf::token($_SESSION);
+$teacherEmail = strtolower(trim((string)($_SESSION['user_email'] ?? '')));
+$mailConfig = is_array($config['notifications']['email'] ?? null) ? $config['notifications']['email'] : [];
+$mailReady = !empty($mailConfig['enabled'])
+    && trim((string)($mailConfig['smtp_host'] ?? '')) !== ''
+    && trim((string)($mailConfig['smtp_user'] ?? '')) !== ''
+    && trim((string)($mailConfig['smtp_password'] ?? '')) !== ''
+    && trim((string)($mailConfig['from_address'] ?? '')) !== '';
+$emailPublicationAvailable = false;
+$emailPublicationReason = 'Nessun destinatario email disponibile per i voti di questa UDA.';
 
 $udaId = $_GET['id'] ?? null;
 $linkOrigineDefault = $udaId ? app_url('public/uda_grades.php?id=' . urlencode((string)$udaId)) : '';
@@ -76,6 +90,7 @@ try {
     $classeVivaAPI = $cvReady ? new ClasseVivaAPI($config) : null;
     $currentUserId = (string)($_SESSION['user_id'] ?? ($config['user_id'] ?? 'system'));
     $gradeImportService = new GradeImportStudentService($dbAdapter, $currentUserId);
+    $gradeEmailRecipientResolver = new GradeEmailRecipientResolver($dbAdapter, $currentUserId, $config);
     $runtimeNameService = new RuntimeStudentNameService($dbAdapter, $currentUserId, $config);
     $runtimeNamesByGroup = [];
 
@@ -126,6 +141,16 @@ try {
         $voto['id_materia'] = $voto['cv_subject_id'] ?? '';
         $voto['nome_materia'] = $voto['cv_subject_name'] ?? 'Materia';
 
+        // Le email vengono risolte solo in memoria dalla roster attiva del
+        // gruppo o dal template scolastico configurato: non sono persistite.
+        $emailRecipient = null;
+        if ($groupId !== '' && $internalStudentId !== '') {
+            $emailRecipient = $gradeEmailRecipientResolver->resolve($groupId, $internalStudentId);
+        }
+        $voto['email_recipient'] = $emailRecipient;
+        $voto['email_available'] = is_array($emailRecipient)
+            && filter_var((string)($emailRecipient['email'] ?? ''), FILTER_VALIDATE_EMAIL) !== false;
+
         $voti[] = $voto;
     }
 
@@ -133,6 +158,19 @@ try {
     $stats = $udaManager->getStatistics($udaId);
 } catch (Exception $e) {
     $error = $e->getMessage();
+}
+
+$emailPublishableCount = count(array_filter(
+    $voti,
+    static fn(array $voto): bool => !empty($voto['email_available'])
+));
+if (!$mailReady) {
+    $emailPublicationReason = 'Configurazione SMTP non disponibile: configura Mail / Notifiche.';
+} elseif (filter_var($teacherEmail, FILTER_VALIDATE_EMAIL) === false) {
+    $emailPublicationReason = 'Email del docente non disponibile nella sessione di accesso.';
+} elseif ($emailPublishableCount > 0) {
+    $emailPublicationAvailable = true;
+    $emailPublicationReason = '';
 }
 
 // Import da Kahoot CSV
@@ -382,6 +420,82 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_registro']
         $error = "Errore pubblicazione registro: " . $e->getMessage();
     }
 }
+
+// Invia voti via email come alternativa alla pubblicazione sul registro.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_email'])) {
+    try {
+        Csrf::assertValid($_SESSION, Csrf::providedToken($_POST, $_SERVER));
+        if (!$emailPublicationAvailable) {
+            throw new Exception($emailPublicationReason);
+        }
+
+        $selectedVoti = array_values(array_unique(array_filter(
+            array_map('strval', (array)($_POST['voti_ids'] ?? [])),
+            static fn(string $id): bool => trim($id) !== ''
+        )));
+        if ($selectedVoti === []) {
+            throw new Exception('Seleziona almeno un voto da inviare via email.');
+        }
+
+        $votiById = [];
+        foreach ($voti as $voto) {
+            $votiById[(string)($voto['id_voto'] ?? '')] = $voto;
+        }
+
+        $mailGroups = [];
+        foreach ($selectedVoti as $votoId) {
+            $voto = $votiById[$votoId] ?? null;
+            if (!is_array($voto) || empty($voto['email_available']) || !is_array($voto['email_recipient'] ?? null)) {
+                throw new Exception('Uno dei voti selezionati non ha un destinatario email valido.');
+            }
+
+            $recipient = $voto['email_recipient'];
+            $recipientEmail = strtolower(trim((string)($recipient['email'] ?? '')));
+            if (filter_var($recipientEmail, FILTER_VALIDATE_EMAIL) === false) {
+                throw new Exception('Uno dei voti selezionati non ha un destinatario email valido.');
+            }
+            $studentKey = trim((string)($voto['internal_student_id'] ?? $voto['id_studente'] ?? ''))
+                . '|' . $recipientEmail;
+            $mailGroups[$studentKey] ??= [
+                'student' => [
+                    'nome' => (string)($recipient['nome'] ?? $voto['nome_studente'] ?? ''),
+                    'cognome' => (string)($recipient['cognome'] ?? $voto['cognome_studente'] ?? ''),
+                ],
+                'to' => $recipientEmail,
+                'grades' => [],
+            ];
+            $mailGroups[$studentKey]['grades'][] = $voto;
+        }
+
+        $notificationManager = new NotificationManager($config);
+        $sent = 0;
+        $failed = 0;
+        foreach ($mailGroups as $mailGroup) {
+            if ($notificationManager->sendGradesEmail(
+                (string)$mailGroup['to'],
+                $teacherEmail,
+                (string)($uda->titolo ?? 'Valutazione'),
+                (array)$mailGroup['student'],
+                (array)$mailGroup['grades']
+            )) {
+                $sent++;
+            } else {
+                $failed++;
+            }
+        }
+
+        if ($sent === 0) {
+            throw new Exception('Nessuna email è stata inviata. Controlla la configurazione SMTP.');
+        }
+        $success = $sent . ($sent === 1 ? ' email inviata' : ' email inviate') . ' con copia al docente.';
+        if ($failed > 0) {
+            $error = $failed . ($failed === 1 ? ' email non è stata inviata.' : ' email non sono state inviate.');
+        }
+        header("refresh:1;url=?id=" . urlencode($udaId));
+    } catch (Exception $e) {
+        $error = "Errore invio valutazioni via email: " . $e->getMessage();
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="it">
@@ -536,6 +650,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_registro']
                                 <button type="button" class="btn btn-sm btn-light" data-bs-toggle="modal" data-bs-target="#publishModal">
                                     <i class="bi bi-cloud-upload"></i> Pubblica su Registro
                                 </button>
+                                <button type="button" class="btn btn-sm btn-warning"
+                                        data-bs-toggle="modal" data-bs-target="#publishEmailModal"
+                                        title="<?= htmlspecialchars($emailPublicationAvailable ? 'Invia le valutazioni selezionate via email' : $emailPublicationReason) ?>"
+                                        <?= $emailPublicationAvailable ? '' : 'disabled' ?> >
+                                    <i class="bi bi-envelope"></i> Pubblica voti via email
+                                </button>
                                 <button type="button" class="btn btn-sm btn-danger" data-bs-toggle="modal" data-bs-target="#deleteAllModal">
                                     <i class="bi bi-trash"></i> Cancella Voti
                                 </button>
@@ -633,6 +753,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_registro']
                 <a href="uda_view.php?id=<?= urlencode($udaId) ?>" class="btn btn-secondary">
                     <i class="bi bi-arrow-left"></i> Torna all'UDA
                 </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Pubblicazione Email -->
+    <div class="modal fade" id="publishEmailModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <form method="POST">
+                    <?= Csrf::hiddenField($_SESSION) ?>
+                    <input type="hidden" name="publish_to_email" value="1">
+                    <div class="modal-header bg-warning">
+                        <h5 class="modal-title"><i class="bi bi-envelope"></i> Pubblica voti via email</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>
+                            Le valutazioni selezionate saranno raggruppate per studente e inviate alla sua email,
+                            con copia al docente. La pubblicazione sul registro non viene modificata.
+                        </p>
+                        <?php if (!$emailPublicationAvailable): ?>
+                            <div class="alert alert-warning mb-0">
+                                <i class="bi bi-exclamation-triangle"></i>
+                                <?= htmlspecialchars($emailPublicationReason) ?>
+                            </div>
+                        <?php elseif (!empty($voti)): ?>
+                            <?php $hasEmailPublishable = false; ?>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="selectAllEmail" checked>
+                                <label class="form-check-label fw-semibold" for="selectAllEmail">
+                                    Seleziona tutti i voti con email disponibile
+                                </label>
+                            </div>
+                            <?php foreach ($voti as $voto): ?>
+                                <?php $emailAvailable = !empty($voto['email_available']); ?>
+                                <?php if ($emailAvailable) { $hasEmailPublishable = true; } ?>
+                                <div class="form-check">
+                                    <input class="form-check-input email-publish-checkbox" type="checkbox" name="voti_ids[]"
+                                           value="<?= htmlspecialchars((string)$voto['id_voto']) ?>"
+                                           id="email_voto_<?= htmlspecialchars((string)$voto['id_voto']) ?>"
+                                           <?= $emailAvailable ? 'checked' : 'disabled' ?>>
+                                    <label class="form-check-label" for="email_voto_<?= htmlspecialchars((string)$voto['id_voto']) ?>">
+                                        <?= htmlspecialchars(trim((string)($voto['cognome_studente'] ?? '') . ' ' . (string)($voto['nome_studente'] ?? ''))) ?>
+                                        - Voto: <strong><?= htmlspecialchars(formatGradeValue($voto['voto'])) ?></strong>
+                                        - <?= htmlspecialchars(ucfirst((string)($voto['tipo_valutazione'] ?? 'valutazione'))) ?>
+                                        <?php if ($emailAvailable): ?>
+                                            <span class="badge bg-success ms-2">Email disponibile</span>
+                                        <?php else: ?>
+                                            <span class="badge bg-secondary ms-2">Email non disponibile</span>
+                                        <?php endif; ?>
+                                    </label>
+                                </div>
+                            <?php endforeach; ?>
+                            <?php if (!$hasEmailPublishable): ?>
+                                <div class="alert alert-warning mt-3 mb-0">Nessun voto ha un destinatario email valido.</div>
+                            <?php endif; ?>
+                        <?php else: ?>
+                            <div class="alert alert-info mb-0">Nessun voto disponibile per questa UDA.</div>
+                        <?php endif; ?>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
+                        <button type="submit" class="btn btn-warning" <?= empty($voti) || !$emailPublicationAvailable ? 'disabled' : '' ?>>
+                            <i class="bi bi-envelope"></i> Invia valutazioni selezionate
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
@@ -875,6 +1062,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['publish_to_registro']
             const master = document.getElementById('selectAllPublish');
             if (!master) return;
             const items = Array.from(document.querySelectorAll('.publish-checkbox'));
+            function syncMaster() {
+                const enabled = items.filter(cb => !cb.disabled);
+                const all = enabled.length > 0 && enabled.every(cb => cb.checked);
+                const some = enabled.some(cb => cb.checked);
+                master.checked = all;
+                master.indeterminate = !all && some;
+            }
+            master.addEventListener('change', () => {
+                items.forEach(cb => {
+                    if (!cb.disabled) cb.checked = master.checked;
+                });
+                master.indeterminate = false;
+            });
+            items.forEach(cb => cb.addEventListener('change', syncMaster));
+            syncMaster();
+        })();
+        (function () {
+            const master = document.getElementById('selectAllEmail');
+            if (!master) return;
+            const items = Array.from(document.querySelectorAll('.email-publish-checkbox'));
             function syncMaster() {
                 const enabled = items.filter(cb => !cb.disabled);
                 const all = enabled.length > 0 && enabled.every(cb => cb.checked);
