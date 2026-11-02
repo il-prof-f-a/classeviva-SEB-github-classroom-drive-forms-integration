@@ -537,6 +537,7 @@ $architectureTests = [
     'teaching groups' => __DIR__ . '/domain/teaching_groups.php',
     'teaching group catalog' => __DIR__ . '/domain/teaching_group_catalog.php',
     'teaching group student matrix' => __DIR__ . '/domain/teaching_group_student_matrix.php',
+    'student roster matcher' => __DIR__ . '/domain/student_roster_matcher.php',
     'teaching group remap cleanup' => __DIR__ . '/domain/teaching_group_remap_cleanup.php',
     'teaching group matrix context' => __DIR__ . '/domain/teaching_group_matrix_context.php',
     'teaching groups page markup' => __DIR__ . '/public/teaching_groups_page_markup.php',

@@ -23,6 +23,11 @@ foreach (['syncRoster', 'matrix', 'linkIdentities', 'unlinkIdentity', 'save_stud
         $failures[] = "gestione studenti incompleta: {$studentsNeedle}";
     }
 }
+foreach (['StudentRosterMatcher', 'suggestMappings', 'mappingProviders', '$runtimeNameService->providerRoster($mappingProvider', '$studentService->syncRoster($groupId, $mappingProvider'] as $mappingNeedle) {
+    if (!str_contains($markup, $mappingNeedle)) {
+        $failures[] = "matching roster o sincronizzazione pre-salvataggio mancante: {$mappingNeedle}";
+    }
+}
 foreach (['teaching_groups_flash', 'student_sync', 'display_names', 'Roster sincronizzato'] as $flashNeedle) {
     if (!str_contains($markup, $flashNeedle)) {
         $failures[] = "flash roster mancante: {$flashNeedle}";
